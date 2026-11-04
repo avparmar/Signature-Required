@@ -1,6 +1,38 @@
-/** Headless game runner (placeholder until the core loop exists; see issue #3 and #8). */
-import { Rng } from '@sr/core';
+/**
+ * Headless runner. For now it generates and prints towns:
+ *   npm run sim -- town [seed]           print one town
+ *   npm run sim -- towns [count]         fairness stats over many seeds
+ */
+import { generateTown, makeTownConfig, renderTown } from '@sr/core';
 
-const seed = Number(process.argv[2] ?? 1);
-const rng = new Rng(seed);
-console.log(`Signature Required sim: seed ${seed}, first roll ${rng.int(1, 6)}. Nothing to simulate yet.`);
+const [cmd = 'town', arg] = process.argv.slice(2);
+
+if (cmd === 'town') {
+  const seed = Number(arg ?? 1);
+  const t = generateTown(makeTownConfig({ seed }));
+  const count = (k: string) => t.locations.filter((l) => l.kind === k).length;
+  console.log(renderTown(t));
+  console.log(
+    `\nseed ${seed}: ${t.graph.nodes.length} nodes, ${t.graph.edges.length} streets, ` +
+      `${count('producer')} producers, ${count('consumer')} consumers, ${count('depot')} depot sites ` +
+      `(attempt ${t.attempts}${t.fair ? '' : ', NOT fair'})`,
+  );
+  for (const f of t.fairness)
+    console.log(`  company ${f.company}: ${f.nearby} nearby, ${f.pairs} complete goods, score ${f.score.toFixed(1)}`);
+  console.log('\nKey: M/B/F producer, m/b/f consumer (milk, bread, fuel), # depot site, 0-4 starting depots');
+} else if (cmd === 'towns') {
+  const n = Number(arg ?? 200);
+  let unfair = 0;
+  let attempts = 0;
+  let worst = 1;
+  for (let s = 1; s <= n; s++) {
+    const t = generateTown(makeTownConfig({ seed: s }));
+    if (!t.fair) unfair++;
+    attempts += t.attempts;
+    const sc = t.fairness.map((f) => f.score);
+    worst = Math.min(worst, Math.min(...sc) / Math.max(...sc));
+  }
+  console.log(`${n} towns: ${unfair} not fair, avg attempts ${(attempts / n).toFixed(1)}, worst start ratio ${worst.toFixed(2)}`);
+} else {
+  console.log('usage: npm run sim -- town [seed] | towns [count]');
+}
