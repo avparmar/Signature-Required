@@ -184,8 +184,8 @@ export class Game {
         if (e.type === 'delivered') {
           // Every delivery pays the company now and adds the same amount to its next dividend.
           const c = this.companies[e.company];
-          c.treasury += e.price;
-          c.pot += e.price;
+          c.treasury += e.price * this.cfg.money.deliveryToTreasury;
+          c.pot += e.price * this.cfg.money.deliveryToPot;
         }
         this.emit('all', e);
       },

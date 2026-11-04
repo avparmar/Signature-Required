@@ -124,11 +124,11 @@ export class Bot {
     const perMin = Math.max(recentPerMin, estPerMin);
     // Trucks bought now take a while to pay off; discount the last stretch a little.
     const mins = Math.max(0, this.minutesLeft(obs) - 1);
-    const dividends = (perMin * mins) / c.shares.length;
+    const m = this.cfg.money;
+    const dividends = (perMin * m.deliveryToPot * mins) / c.shares.length;
     // Final payout: a share of everything the company holds by then. Money spent on trucks and
     // depots still counts (at purchase price), and delivery income also piles up in the treasury.
-    const m = this.cfg.money;
-    const endHoldings = c.assets + c.treasury + extraCash + futureRaise + perMin * mins;
+    const endHoldings = c.assets + c.treasury + extraCash + futureRaise + perMin * m.deliveryToTreasury * mins;
     const bonus =
       m.finalBonus === 'earnings'
         ? (m.finalEarningsMultiple * perMin * (m.payoutEverySec / 60)) / c.shares.length

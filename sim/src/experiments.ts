@@ -167,6 +167,44 @@ if (which === 'final') {
     ],
     games,
   );
+} else if (which === 'split') {
+  // Where delivery income goes: both (today), split, or dividends only (SAR-style: companies
+  // grow only from share auctions). 16x16 town, scaled-up trucks, 10% bonus.
+  const base: GameConfigOverrides = {
+    trucks: { speed: 0.35 },
+    depots: { truckPrice: 15, capacity: 6 },
+    cycles: { produceBase: 6, demandBase: [4, 8] },
+    town: { blocksX: 16, blocksY: 16, producersPerGood: [4, 5], consumersPerGood: [7, 11], extraDepotSites: [18, 27] },
+  };
+  const bonus = { finalBonus: 'assets' as const, finalAssetShare: 0.1 };
+  print(
+    [
+      run('Both get the full price (today)', { ...bonus, deliveryToTreasury: 1, deliveryToPot: 1 }, games, base),
+      run('Split: half to company, half to shareholders', { ...bonus, deliveryToTreasury: 0.5, deliveryToPot: 0.5 }, games, base),
+      run('SAR: all to shareholders, company gets nothing', { ...bonus, deliveryToTreasury: 0, deliveryToPot: 1 }, games, base),
+      run('SAR, $30 trucks', { ...bonus, deliveryToTreasury: 0, deliveryToPot: 1 }, games, { ...base, depots: { truckPrice: 30, capacity: 6 } }),
+    ],
+    games,
+  );
+} else if (which === 'sar') {
+  // Dividends-only (SAR-style) variations: truck and depot prices.
+  const base: GameConfigOverrides = {
+    trucks: { speed: 0.35 },
+    cycles: { produceBase: 6, demandBase: [4, 8] },
+    town: { blocksX: 16, blocksY: 16, producersPerGood: [4, 5], consumersPerGood: [7, 11], extraDepotSites: [18, 27] },
+  };
+  const sar = { finalBonus: 'assets' as const, finalAssetShare: 0.1, deliveryToTreasury: 0, deliveryToPot: 1 };
+  const depots = (truckPrice: number, depotBase: number, depotPerBlock = 10) => ({ ...base, depots: { truckPrice, capacity: 6, depotBase, depotPerBlock } });
+  print(
+    [
+      run('SAR, $15 trucks, $80 depots', sar, games, depots(15, 80)),
+      run('SAR, $15 trucks, $40 depots', sar, games, depots(15, 40, 5)),
+      run('SAR, $20 trucks, $40 depots', sar, games, depots(20, 40, 5)),
+      run('SAR, $25 trucks, $40 depots', sar, games, depots(25, 40, 5)),
+      run('SAR, $20 trucks, $25 depots', sar, games, depots(20, 25, 3)),
+    ],
+    games,
+  );
 } else {
-  console.log('usage: npm run experiments -- final|income|shortlist|scale|map [games]');
+  console.log('usage: npm run experiments -- final|income|shortlist|scale|map|split|sar [games]');
 }
