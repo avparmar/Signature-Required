@@ -4,6 +4,7 @@
  * Same config + same actions at the same ticks = same game, every time.
  */
 import { makeGameConfig, type GameConfig, type GameConfigOverrides } from './config.js';
+import { depotPrice, distanceToNetwork } from './depots.js';
 import { initLocations, updateCycles, type CycleEvent, type LocationState } from './economy.js';
 import { Rng } from './rng.js';
 import { TruckSystem, validateOrders, type Stop, type Truck, type TruckEvent } from './trucks.js';
@@ -34,7 +35,11 @@ export type Phase = 'running' | 'ended';
 export type Action =
   | { type: 'noop' }
   /** Replace a truck's repeating orders (presidents of the truck's company only). */
-  | { type: 'setOrders'; truck: number; stops: Stop[] };
+  | { type: 'setOrders'; truck: number; stops: Stop[] }
+  /** Buy a truck for a company, based at one of its depots (presidents only; from the treasury). */
+  | { type: 'buyTruck'; company: number; depot: number }
+  /** Buy a free depot site for a company (presidents only; from the treasury). */
+  | { type: 'buyDepot'; company: number; site: number };
 
 export interface QueuedAction {
   player: number;
@@ -45,6 +50,8 @@ export type GameEvent =
   | CycleEvent
   | TruckEvent
   | { type: 'start'; t: number }
+  | { type: 'boughtTruck'; t: number; company: number; truck: number; depot: number; price: number }
+  | { type: 'boughtDepot'; t: number; company: number; site: number; price: number }
   | { type: 'end'; t: number }
   | { type: 'rejected'; t: number; action: Action; reason: string };
 
@@ -67,6 +74,8 @@ export interface Observation {
   trucks: (Truck & { x: number; y: number })[];
   /** Trucks queued or loading at each location (location id -> truck ids, in arrival order). */
   queues: Record<number, number[]>;
+  /** Owner company of each depot site (site location id -> company); free sites are absent. */
+  depots: Record<number, number>;
 }
 
 // ------------------------------------------------------------------ game
@@ -82,6 +91,8 @@ export class Game {
   /** Dynamic state of every producer and consumer (depot sites aren't included). */
   readonly locations: LocationState[];
   readonly trucks: TruckSystem;
+  /** Which company owns each depot site (site location id -> company). */
+  readonly depotOwner = new Map<number, number>();
   /** Location state by town location id. */
   private locById = new Map<number, LocationState>();
   /** Every action ever applied, with the tick it took effect: enough to replay the game. */
@@ -107,6 +118,7 @@ export class Game {
     }));
     this.locations = initLocations(this.town.locations, cfg.cycles, this.rng);
     for (const l of this.locations) this.locById.set(l.id, l);
+    for (const l of this.town.locations) if (l.startCompany !== null) this.depotOwner.set(l.id, l.startCompany);
     this.trucks = new TruckSystem(
       this.town.graph,
       cfg.trucks,
@@ -175,6 +187,33 @@ export class Game {
         this.trucks.setOrders(truck, action.stops.map((st) => ({ ...st, via: st.via ? [...st.via] : undefined })), this.t);
         break;
       }
+      case 'buyTruck': {
+        const c = this.companies[action.company];
+        if (!c) return reject(`no company ${action.company}`);
+        if (!this.presidents(c.id).includes(player)) return reject('only a president can spend company money');
+        if (this.depotOwner.get(action.depot) !== c.id) return reject('that depot belongs to someone else (or nobody)');
+        if (this.trucksAt(action.depot) >= this.cfg.depots.capacity) return reject('that depot is full');
+        const price = this.cfg.depots.truckPrice;
+        if (c.treasury < price) return reject(`the treasury has $${c.treasury.toFixed(2)}; a truck costs $${price}`);
+        c.treasury -= price;
+        const truck = this.trucks.add(c.id, action.depot, this.town.locations[action.depot].node);
+        this.emit('all', { type: 'boughtTruck', t: this.t, company: c.id, truck: truck.id, depot: action.depot, price });
+        break;
+      }
+      case 'buyDepot': {
+        const c = this.companies[action.company];
+        if (!c) return reject(`no company ${action.company}`);
+        if (!this.presidents(c.id).includes(player)) return reject('only a president can spend company money');
+        const site = this.town.locations[action.site];
+        if (!site || site.kind !== 'depot') return reject(`no depot site ${action.site}`);
+        if (this.depotOwner.has(site.id)) return reject('that site is already taken');
+        const price = this.depotPriceFor(c.id, site.id);
+        if (c.treasury < price) return reject(`the treasury has $${c.treasury.toFixed(2)}; this depot costs $${price}`);
+        c.treasury -= price;
+        this.depotOwner.set(site.id, c.id);
+        this.emit('all', { type: 'boughtDepot', t: this.t, company: c.id, site: site.id, price });
+        break;
+      }
       default:
         return reject(`unknown action ${(action as { type: string }).type}`);
     }
@@ -193,11 +232,31 @@ export class Game {
     return out;
   }
 
-  /** Put a new truck at a company's starting depot (no cost or capacity checks yet; see #6). */
+  /**
+   * Put a free truck at a company's starting depot, skipping price and capacity checks.
+   * For tests and demos only; real games buy trucks with the buyTruck action.
+   */
   addTruck(company: number): Truck {
     const depot = this.town.locations.find((l) => l.startCompany === company);
     if (!depot) throw new Error(`company ${company} has no starting depot`);
-    return this.trucks.add(company, depot.node);
+    return this.trucks.add(company, depot.id, depot.node);
+  }
+
+  /** Trucks based at a depot site. */
+  trucksAt(site: number): number {
+    return this.trucks.trucks.filter((t) => t.depot === site).length;
+  }
+
+  /** Depot sites a company owns. */
+  depotsOf(company: number): number[] {
+    return [...this.depotOwner].filter(([, c]) => c === company).map(([s]) => s).sort((a, b) => a - b);
+  }
+
+  /** What a depot site would cost this company now (rises with distance from its depots). */
+  depotPriceFor(company: number, site: number): number {
+    const own = this.depotsOf(company).map((s) => this.town.locations[s].node);
+    const d = distanceToNetwork(this.town.graph, this.town.locations[site].node, own);
+    return depotPrice(this.cfg.depots, d);
   }
 
   /** Dynamic state of a producer or consumer, by its town location id. */
@@ -232,6 +291,7 @@ export class Game {
         ...this.trucks.position(t),
       })),
       queues: Object.fromEntries([...this.trucks.queues].map(([k, v]) => [k, [...v]])),
+      depots: Object.fromEntries(this.depotOwner),
     };
   }
 
@@ -245,6 +305,7 @@ export class Game {
       locations: this.locations,
       trucks: this.trucks.trucks,
       queues: [...this.trucks.queues].sort((a, b) => a[0] - b[0]),
+      depots: [...this.depotOwner].sort((a, b) => a[0] - b[0]),
     });
     let h = 0x811c9dc5;
     for (let i = 0; i < s.length; i++) {
