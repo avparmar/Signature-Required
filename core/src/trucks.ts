@@ -69,7 +69,7 @@ export interface Truck {
 
 export type TruckEvent =
   | { type: 'loaded'; t: number; truck: number; company: number; location: number; good: number }
-  | { type: 'delivered'; t: number; truck: number; company: number; location: number; good: number; origin: number }
+  | { type: 'delivered'; t: number; truck: number; company: number; location: number; good: number; origin: number; price: number }
   | { type: 'truckIdle'; t: number; truck: number; company: number; reason: string };
 
 /** Why a set of orders is invalid, or null if it's fine. */
@@ -252,7 +252,7 @@ export class TruckSystem {
         if (!deliverPallet(l, origin)) continue; // satisfied: wait for the next cycle
         const cargo = truck.cargo!;
         truck.cargo = null;
-        this.emit({ type: 'delivered', t: now, truck: id, company: truck.company, location, good: cargo.good, origin: cargo.origin });
+        this.emit({ type: 'delivered', t: now, truck: id, company: truck.company, location, good: cargo.good, origin: cargo.origin, price: l.price });
       }
       truck.state = 'servicing';
       truck.busyUntil = now + this.cfg.serviceSec;

@@ -75,7 +75,12 @@ if (cmd === 'town') {
   const grown = g.locations.filter((l) => l.growth > 0).length;
   const shrunk = g.locations.filter((l) => l.growth < 0).length;
   console.log(`seed ${seed}, ${perCompany} trucks per company, 15 minutes (${ms.toFixed(0)} ms):`);
-  delivered.slice(0, g.cfg.players).forEach((n, c) => console.log(`  company ${c}: ${n} pallets delivered (${(n / perCompany / 15).toFixed(2)} per truck per minute)`));
+  delivered.slice(0, g.cfg.players).forEach((n, c) =>
+    console.log(
+      `  company ${c}: ${n} pallets delivered (${(n / perCompany / 15).toFixed(2)} per truck per minute), ` +
+        `treasury $${g.companies[c].treasury.toFixed(0)}; player ${c} (1 share) ends with $${g.players[c].cash.toFixed(2)}`,
+    ),
+  );
   console.log(`  locations grown: ${grown}, shrunk: ${shrunk}, unchanged: ${g.locations.length - grown - shrunk}`);
 } else {
   console.log('usage: npm run sim -- town [seed] | towns [count] | game [seed] | trucks [seed] [n]');

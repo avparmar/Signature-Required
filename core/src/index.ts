@@ -11,3 +11,4 @@ export * from './game.js';
 export * from './economy.js';
 export * from './trucks.js';
 export * from './depots.js';
+export * from './money.js';

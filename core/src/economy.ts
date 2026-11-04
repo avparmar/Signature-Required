@@ -64,6 +64,8 @@ export interface LocationState {
   served: number;
   /** Served share of recent cycles, newest last. */
   history: number[];
+  /** Consumers: what they pay per pallet (set by the money rules; 0 for producers). */
+  price: number;
 }
 
 export type CycleEvent =
@@ -95,6 +97,7 @@ export function initLocations(locs: Location[], cfg: CycleConfig, rng: Rng): Loc
         cycleAmount: 0,
         served: 0,
         history: [],
+        price: 0,
       };
     });
 }
