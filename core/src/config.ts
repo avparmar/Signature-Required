@@ -1,3 +1,4 @@
+import { DEFAULT_DEPOTS, type DepotConfig } from './depots.js';
 import { DEFAULT_CYCLES, type CycleConfig } from './economy.js';
 import { makeTownConfig, type TownConfig } from './town.js';
 import { DEFAULT_TRUCKS, type TruckConfig } from './trucks.js';
@@ -25,9 +26,10 @@ export interface GameConfig {
   town: TownConfig;
   cycles: CycleConfig;
   trucks: TruckConfig;
+  depots: DepotConfig;
 }
 
-export const DEFAULT_GAME: Omit<GameConfig, 'town' | 'companies' | 'cycles' | 'trucks'> = {
+export const DEFAULT_GAME: Omit<GameConfig, 'town' | 'companies' | 'cycles' | 'trucks' | 'depots'> = {
   seed: 1,
   players: 4,
   sharesPerCompany: 5,
@@ -37,10 +39,11 @@ export const DEFAULT_GAME: Omit<GameConfig, 'town' | 'companies' | 'cycles' | 't
   startingTreasury: 0,
 };
 
-export type GameConfigOverrides = Partial<Omit<GameConfig, 'town' | 'cycles' | 'trucks'>> & {
+export type GameConfigOverrides = Partial<Omit<GameConfig, 'town' | 'cycles' | 'trucks' | 'depots'>> & {
   town?: Partial<TownConfig>;
   cycles?: Partial<CycleConfig>;
   trucks?: Partial<TruckConfig>;
+  depots?: Partial<DepotConfig>;
 };
 
 export function makeGameConfig(o: GameConfigOverrides = {}): GameConfig {
@@ -57,5 +60,6 @@ export function makeGameConfig(o: GameConfigOverrides = {}): GameConfig {
     town: makeTownConfig({ seed, companies, ...o.town }),
     cycles: { ...DEFAULT_CYCLES, ...o.cycles },
     trucks: { ...DEFAULT_TRUCKS, ...o.trucks },
+    depots: { ...DEFAULT_DEPOTS, ...o.depots },
   } as GameConfig;
 }

@@ -46,6 +46,8 @@ export type TruckState =
 export interface Truck {
   id: number;
   company: number;
+  /** Depot (town location id) this truck belongs to; counts against its capacity. */
+  depot: number;
   state: TruckState;
   /** Node the truck is at, or last passed. */
   node: number;
@@ -95,10 +97,11 @@ export class TruckSystem {
     private emit: (e: TruckEvent) => void,
   ) {}
 
-  add(company: number, node: number): Truck {
+  add(company: number, depot: number, node: number): Truck {
     const t: Truck = {
       id: this.trucks.length,
       company,
+      depot,
       state: 'idle',
       node,
       route: [],
