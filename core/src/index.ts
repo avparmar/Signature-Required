@@ -12,3 +12,4 @@ export * from './economy.js';
 export * from './trucks.js';
 export * from './depots.js';
 export * from './money.js';
+export * from './auctions.js';

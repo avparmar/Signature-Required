@@ -49,7 +49,8 @@ if (cmd === 'town') {
 } else if (cmd === 'trucks') {
   const seed = Number(arg ?? 1);
   const perCompany = Number(process.argv[4] ?? 3);
-  const g = newGame({ seed });
+  // Skips the opening auctions: shares are handed out directly below (bots arrive in #8).
+  const g = newGame({ seed, auctions: { openingRound: false } });
   // No auctions or bots yet: make each player president of their own company and send its trucks
   // round the nearest producer -> consumer pair.
   for (let c = 0; c < g.cfg.players; c++) {

@@ -37,15 +37,15 @@ describe('Game loop', () => {
   });
 
   it('applies actions at the start of the next tick, in the order they arrived', () => {
-    const g = newGame();
+    const g = newGame({ auctions: { openingRound: false } });
     g.step();
     g.act(2, { type: 'noop' });
     g.act(0, { type: 'noop' });
     expect(g.actionLog).toHaveLength(0);
     g.step();
     expect(g.actionLog).toEqual([
-      { tick: 1, player: 2, action: { type: 'noop' } },
-      { tick: 1, player: 0, action: { type: 'noop' } },
+      { step: 1, tick: 1, player: 2, action: { type: 'noop' } },
+      { step: 1, tick: 1, player: 0, action: { type: 'noop' } },
     ]);
   });
 
