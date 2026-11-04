@@ -111,9 +111,13 @@ export class Bot {
     const dividends = (perMin * mins) / c.shares.length;
     // Final payout: a share of everything the company holds by then. Money spent on trucks and
     // depots still counts (at purchase price), and delivery income also piles up in the treasury.
+    const m = this.cfg.money;
     const endHoldings = c.assets + c.treasury + extraCash + futureRaise + perMin * mins;
-    const assets = (this.cfg.money.finalAssetShare * endHoldings) / c.shares.length;
-    return dividends + assets;
+    const bonus =
+      m.finalBonus === 'earnings'
+        ? (m.finalEarningsMultiple * perMin * (m.payoutEverySec / 60)) / c.shares.length
+        : (m.finalAssetShare * endHoldings) / c.shares.length;
+    return dividends + bonus;
   }
 
   private bid(obs: Observation): Action | null {

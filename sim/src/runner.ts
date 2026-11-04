@@ -8,7 +8,20 @@ export interface GameResult {
   cash: number[];
   winner: number;
   /** Per company: deliveries, trucks, depots, treasury, shares sold. */
-  companies: { deliveries: number; trucks: number; depots: number; treasury: number; sharesSold: number; owners: (number | null)[] }[];
+  companies: {
+    deliveries: number;
+    trucks: number;
+    depots: number;
+    treasury: number;
+    sharesSold: number;
+    owners: (number | null)[];
+    /** Everything one share of this company paid out over the game (dividends + final bonus). */
+    paidPerShare: number;
+    /** Of which, the final bonus. */
+    bonusPerShare: number;
+    /** Average winning bid for this company's shares. */
+    avgPrice: number;
+  }[];
   /** Winning bids, in order. */
   auctions: { t: number; company: number; amount: number; opening: boolean }[];
   /** Dividends paid in total, per payout (5 entries for a 15-minute game). */
@@ -24,15 +37,35 @@ export function runGame(overrides: GameConfigOverrides, personalities: BotPerson
   const g = new Game(cfg);
   const bots = Array.from({ length: cfg.players }, (_, p) => new Bot(p, g.town, cfg, personalities[p] ?? PERSONALITIES.balanced));
   const deliveries = new Array(cfg.companies).fill(0);
+  const paidPerShare = new Array(cfg.companies).fill(0);
+  const bonusPerShare = new Array(cfg.companies).fill(0);
   const auctions: GameResult['auctions'] = [];
   const payouts: number[] = [];
   let soldOutAt: number | null = null;
   let payoutRound = -1;
   let lastPayoutT = -1;
 
+  const record = (events: ReturnType<Game['drainEvents']>, phase: string) => {
+    for (const e of events) {
+      if (e.type === 'delivered') deliveries[e.company]++;
+      if (e.type === 'auctionWon') auctions.push({ t: e.t, company: e.company, amount: e.amount, opening: phase === 'opening' });
+      if (e.type === 'payout') {
+        if (e.t !== lastPayoutT) {
+          payoutRound++;
+          lastPayoutT = e.t;
+          payouts.push(0);
+        }
+        payouts[payoutRound] += Object.values(e.paid).reduce((a, b) => a + b, 0);
+        paidPerShare[e.company] += e.perShare + e.bonusPerShare;
+        bonusPerShare[e.company] += e.bonusPerShare;
+      }
+    }
+  };
+
   const pending: Map<number, ReturnType<Game['drainEvents']>> = new Map(bots.map((b) => [b.me, []]));
   const thinkSteps = Math.max(1, Math.round(1 / cfg.tickSec));
   const orderRng = new Rng(cfg.seed * 31 + 7);
+  let phase: string = g.phase;
   while (!g.done) {
     // Shuffle who acts first each step, so no seat systematically wins ties (e.g. two bots bidding
     // the same minimum in the same step).
@@ -40,40 +73,19 @@ export function runGame(overrides: GameConfigOverrides, personalities: BotPerson
     // Bots answer auctions every step; otherwise they look once a second (much faster).
     const look = g.auction !== null || g.steps % thinkSteps === 0;
     for (const bot of order) {
-      pending.get(bot.me)!.push(...g.drainEvents(bot.me));
+      const fresh = g.drainEvents(bot.me);
+      if (bot.me === 0) record(fresh, phase); // stats come from one player's (public) events
+      pending.get(bot.me)!.push(...fresh);
       if (!look) continue;
       const events = pending.get(bot.me)!;
       pending.set(bot.me, []);
-      if (bot.me === 0) {
-        for (const e of events) {
-          if (e.type === 'delivered') deliveries[e.company]++;
-          if (e.type === 'auctionWon') auctions.push({ t: e.t, company: e.company, amount: e.amount, opening: g.phase === 'opening' || e.t === 0 });
-          if (e.type === 'payout') {
-            if (e.t !== lastPayoutT) {
-              payoutRound++;
-              lastPayoutT = e.t;
-              payouts.push(0);
-            }
-            payouts[payoutRound] += Object.values(e.paid).reduce((a, b) => a + b, 0);
-          }
-        }
-      }
       for (const a of bot.decide(g.observe(bot.me), events)) g.act(bot.me, a);
     }
+    phase = g.phase;
     g.step();
     if (soldOutAt === null && g.companies.every((c) => c.shares.every((s) => s !== null))) soldOutAt = g.t / 60;
   }
-  // Events from the final step (last payout).
-  for (const e of g.drainEvents(0)) {
-    if (e.type === 'payout') {
-      if (e.t !== lastPayoutT) {
-        payoutRound++;
-        lastPayoutT = e.t;
-        payouts.push(0);
-      }
-      payouts[payoutRound] += Object.values(e.paid).reduce((a, b) => a + b, 0);
-    }
-  }
+  record(g.drainEvents(0), phase); // the final step (last payout)
   const cash = g.players.map((p) => p.cash);
   return {
     seed: cfg.seed,
@@ -81,6 +93,12 @@ export function runGame(overrides: GameConfigOverrides, personalities: BotPerson
     winner: cash.indexOf(Math.max(...cash)),
     companies: g.companies.map((c) => ({
       deliveries: deliveries[c.id],
+      paidPerShare: paidPerShare[c.id],
+      bonusPerShare: bonusPerShare[c.id],
+      avgPrice: (() => {
+        const xs = auctions.filter((a) => a.company === c.id).map((a) => a.amount);
+        return xs.length ? xs.reduce((x, y) => x + y, 0) / xs.length : 0;
+      })(),
       trucks: g.trucks.trucks.filter((t) => t.company === c.id).length,
       depots: g.depotsOf(c.id).length,
       treasury: c.treasury,

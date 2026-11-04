@@ -79,8 +79,8 @@ export type GameEvent =
       company: number;
       /** Dividend paid per share from the pot. */
       perShare: number;
-      /** Final payout only: assets paid per share. */
-      assetsPerShare: number;
+      /** Final payout only: the end-of-game bonus paid per share. */
+      bonusPerShare: number;
       final: boolean;
       /** What each shareholder received (player id -> amount). */
       paid: Record<number, number>;
@@ -441,13 +441,19 @@ export class Game {
 
   /**
    * Every company pays out its pot, one equal part per share; bank-held shares' parts go unpaid.
-   * The final payout also includes part of the company's assets.
+   * The final payout adds a bonus: part of the company's assets, or a multiple of its recent
+   * earnings, depending on the config.
    */
   private payDividends(final: boolean) {
     for (const c of this.companies) {
       const n = c.shares.length;
-      const assets = final ? this.cfg.money.finalAssetShare * (c.assets + Math.max(0, c.treasury)) : 0;
-      const amount = c.pot + assets;
+      const m = this.cfg.money;
+      const bonus = !final
+        ? 0
+        : m.finalBonus === 'earnings'
+          ? m.finalEarningsMultiple * c.pot
+          : m.finalAssetShare * (c.assets + Math.max(0, c.treasury));
+      const amount = c.pot + bonus;
       const paid = payPerShare(c.shares, amount);
       for (const [player, x] of paid) this.players[player].cash += x;
       this.emit('all', {
@@ -455,7 +461,7 @@ export class Game {
         t: this.t,
         company: c.id,
         perShare: c.pot / n,
-        assetsPerShare: assets / n,
+        bonusPerShare: bonus / n,
         final,
         paid: Object.fromEntries(paid),
       });

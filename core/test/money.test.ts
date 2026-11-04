@@ -84,7 +84,7 @@ describe('deliveries and dividends', () => {
     const payouts = of(g.drainEvents(0), 'payout').filter((e) => e.type === 'payout' && e.company === 0);
     expect(payouts.map((e) => e.t)).toEqual([180, 360, 540, 720, 900]);
     const last = payouts[4];
-    expect(last).toMatchObject({ final: true, assetsPerShare: (0.5 * 240) / 5 });
+    expect(last).toMatchObject({ final: true, bonusPerShare: (0.5 * 240) / 5 });
     expect(g.players[0].cash).toBeCloseTo(g.cfg.startingCash + 0.5 * 240);
   });
 
@@ -132,5 +132,20 @@ describe('location investment', () => {
     expect(g.location(producer.id)!.level).toBe(2);
     expect(of(g.drainEvents(0), 'rejected')).toHaveLength(1);
     expect(of(g.drainEvents(1), 'rejected')).toHaveLength(1);
+  });
+});
+
+describe('final bonus based on earnings', () => {
+  it('pays a multiple of the last period\'s earnings, ignoring assets', () => {
+    const g = newGame({ seed: 7, auctions: { openingRound: false }, money: { finalBonus: 'earnings', finalEarningsMultiple: 2 } });
+    g.companies[0].shares = [0, 0, 0, 0, 0];
+    g.companies[0].assets = 500;
+    g.companies[0].treasury = 500;
+    for (let i = 0; i < 8999; i++) g.step();
+    g.companies[0].pot = 30; // earned in the last stretch
+    const before = g.players[0].cash;
+    g.step();
+    expect(g.done).toBe(true);
+    expect(g.players[0].cash - before).toBeCloseTo(30 + 2 * 30);
   });
 });

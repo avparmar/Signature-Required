@@ -21,8 +21,15 @@ export interface MoneyConfig {
   premiumShare: number;
   /** Seconds between dividend payouts; the last payout is at the end of the game. */
   payoutEverySec: number;
-  /** Share of company assets (trucks and depots at purchase price, plus treasury) in the final payout. */
+  /**
+   * What the final payout adds on top of the pot:
+   * - 'assets': `finalAssetShare` of the company's assets (trucks and depots at purchase price, plus treasury)
+   * - 'earnings': `finalEarningsMultiple` x what the company earned since the previous payout
+   *   (a buy-out based on performance, so money invested is only rewarded if it earned)
+   */
+  finalBonus: 'assets' | 'earnings';
   finalAssetShare: number;
+  finalEarningsMultiple: number;
   /** Price to raise a location from level 1 to 2. */
   investBase: number;
   /** Each further level costs this much more (multiplied). */
@@ -34,7 +41,9 @@ export const DEFAULT_MONEY: MoneyConfig = {
   premiumPrice: 3,
   premiumShare: 0.25,
   payoutEverySec: 180,
+  finalBonus: 'assets',
   finalAssetShare: 0.5,
+  finalEarningsMultiple: 2,
   investBase: 60,
   investGrowth: 1.5,
 };
