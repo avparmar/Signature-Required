@@ -98,6 +98,8 @@ export interface Observation {
   me: number;
   tick: number;
   t: number;
+  /** Seconds since the very start, opening round included (auction cooldowns use this). */
+  elapsed: number;
   timeLeft: number;
   phase: Phase;
   players: Player[];
@@ -496,6 +498,7 @@ export class Game {
       me: player,
       tick: this.tick,
       t: this.t,
+      elapsed: this.elapsed,
       timeLeft: Math.max(0, this.cfg.durationSec - this.t),
       phase: this.phase,
       players: this.players.map((p) => ({ ...p })),
