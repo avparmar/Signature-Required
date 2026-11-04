@@ -1,0 +1,26 @@
+{
+  "name": "signature-required",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "core",
+    "sim",
+    "client"
+  ],
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "sim": "tsx sim/src/run.ts",
+    "dev": "npm run dev -w client",
+    "build": "npm run build -w client"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^5.0.4"
+  }
+}
