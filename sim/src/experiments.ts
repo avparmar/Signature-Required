@@ -205,6 +205,31 @@ if (which === 'final') {
     ],
     games,
   );
+} else if (which === 'depots') {
+  // Small depots (3 trucks) with big industries, and no minimum bid. Base: 16x16, cheap fast
+  // trucks, doubled goods, both company and shareholders paid in full, 10% bonus.
+  const base = (capacity: number, openingBid: number): GameConfigOverrides => ({
+    trucks: { speed: 0.35 },
+    depots: { truckPrice: 15, capacity },
+    cycles: { produceBase: 6, demandBase: [4, 8] },
+    town: { blocksX: 16, blocksY: 16, producersPerGood: [4, 5], consumersPerGood: [7, 11], extraDepotSites: [18, 27] },
+    auctions: { openingBid },
+  });
+  const money = { finalBonus: 'assets' as const, finalAssetShare: 0.1 };
+  const sar = { ...money, deliveryToTreasury: 0, deliveryToPot: 1 };
+  print(
+    [
+      run('6-truck depots, $20 minimum bid (reference)', money, games, base(6, 20)),
+      run('6-truck depots, no minimum bid', money, games, base(6, 0)),
+      run('3-truck depots, $20 minimum bid', money, games, base(3, 20)),
+      run('3-truck depots, no minimum bid', money, games, base(3, 0)),
+      run('SAR, $20 trucks, 3-truck depots, $40 depots', sar, games, {
+        ...base(3, 20),
+        depots: { truckPrice: 20, capacity: 3, depotBase: 40, depotPerBlock: 5 },
+      }),
+    ],
+    games,
+  );
 } else {
-  console.log('usage: npm run experiments -- final|income|shortlist|scale|map|split|sar [games]');
+  console.log('usage: npm run experiments -- final|income|shortlist|scale|map|split|sar|depots [games]');
 }
