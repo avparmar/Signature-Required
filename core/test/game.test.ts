@@ -8,7 +8,8 @@ describe('Game loop', () => {
     g.runToEnd();
     expect(g.done).toBe(true);
     expect(g.t).toBeCloseTo(900);
-    expect(g.drainEvents(0).map((e) => e.type)).toEqual(['start', 'end']);
+    const types = g.drainEvents(0).map((e) => e.type).filter((x) => x === 'start' || x === 'end');
+    expect(types).toEqual(['start', 'end']);
   });
 
   it('defaults to players + 1 companies, with one starting depot each', () => {

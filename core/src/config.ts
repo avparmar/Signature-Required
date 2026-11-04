@@ -1,3 +1,4 @@
+import { DEFAULT_CYCLES, type CycleConfig } from './economy.js';
 import { makeTownConfig, type TownConfig } from './town.js';
 
 /**
@@ -21,9 +22,10 @@ export interface GameConfig {
   /** Cash each company's treasury starts with. */
   startingTreasury: number;
   town: TownConfig;
+  cycles: CycleConfig;
 }
 
-export const DEFAULT_GAME: Omit<GameConfig, 'town' | 'companies'> = {
+export const DEFAULT_GAME: Omit<GameConfig, 'town' | 'companies' | 'cycles'> = {
   seed: 1,
   players: 4,
   sharesPerCompany: 5,
@@ -33,7 +35,10 @@ export const DEFAULT_GAME: Omit<GameConfig, 'town' | 'companies'> = {
   startingTreasury: 0,
 };
 
-export type GameConfigOverrides = Partial<Omit<GameConfig, 'town'>> & { town?: Partial<TownConfig> };
+export type GameConfigOverrides = Partial<Omit<GameConfig, 'town' | 'cycles'>> & {
+  town?: Partial<TownConfig>;
+  cycles?: Partial<CycleConfig>;
+};
 
 export function makeGameConfig(o: GameConfigOverrides = {}): GameConfig {
   const players = o.players ?? DEFAULT_GAME.players;
@@ -47,5 +52,6 @@ export function makeGameConfig(o: GameConfigOverrides = {}): GameConfig {
     seed,
     // The town shares the game's seed and has one starting depot per company.
     town: makeTownConfig({ seed, companies, ...o.town }),
+    cycles: { ...DEFAULT_CYCLES, ...o.cycles },
   } as GameConfig;
 }
