@@ -5,6 +5,7 @@
  */
 import { makeGameConfig, type GameConfig, type GameConfigOverrides } from './config.js';
 import { depotPrice, distanceToNetwork } from './depots.js';
+import { assignPrices, investCost, payPerShare } from './money.js';
 import { initLocations, updateCycles, type CycleEvent, type LocationState } from './economy.js';
 import { Rng } from './rng.js';
 import { TruckSystem, validateOrders, type Stop, type Truck, type TruckEvent } from './trucks.js';
@@ -20,6 +21,10 @@ export interface Player {
 export interface Company {
   id: number;
   treasury: number;
+  /** Money waiting for the next dividend payout. */
+  pot: number;
+  /** What the company has spent on trucks and depots (counts towards the final payout). */
+  assets: number;
   /** Owner (player id) of each share, or null while the bank still holds it. */
   shares: (number | null)[];
 }
@@ -39,7 +44,9 @@ export type Action =
   /** Buy a truck for a company, based at one of its depots (presidents only; from the treasury). */
   | { type: 'buyTruck'; company: number; depot: number }
   /** Buy a free depot site for a company (presidents only; from the treasury). */
-  | { type: 'buyDepot'; company: number; site: number };
+  | { type: 'buyDepot'; company: number; site: number }
+  /** Pay (from your own cash) to raise a producer or consumer one level. Anyone may. */
+  | { type: 'invest'; location: number };
 
 export interface QueuedAction {
   player: number;
@@ -52,6 +59,19 @@ export type GameEvent =
   | { type: 'start'; t: number }
   | { type: 'boughtTruck'; t: number; company: number; truck: number; depot: number; price: number }
   | { type: 'boughtDepot'; t: number; company: number; site: number; price: number }
+  | { type: 'invested'; t: number; player: number; location: number; level: number; price: number }
+  | {
+      type: 'payout';
+      t: number;
+      company: number;
+      /** Dividend paid per share from the pot. */
+      perShare: number;
+      /** Final payout only: assets paid per share. */
+      assetsPerShare: number;
+      final: boolean;
+      /** What each shareholder received (player id -> amount). */
+      paid: Record<number, number>;
+    }
   | { type: 'end'; t: number }
   | { type: 'rejected'; t: number; action: Action; reason: string };
 
@@ -68,7 +88,10 @@ export interface Observation {
   timeLeft: number;
   phase: Phase;
   players: Player[];
-  companies: (Company & { presidents: number[] })[];
+  /** Companies, with the pot shown as dividend per share (what one share will get next payout). */
+  companies: (Company & { presidents: number[]; dividendPerShare: number })[];
+  /** Game time of the next dividend payout. */
+  nextPayoutAt: number;
   /** Producers and consumers: stock, demand, level, growth, next cycle. */
   locations: LocationState[];
   trucks: (Truck & { x: number; y: number })[];
@@ -114,17 +137,29 @@ export class Game {
     this.companies = Array.from({ length: cfg.companies }, (_, id) => ({
       id,
       treasury: cfg.startingTreasury,
+      pot: 0,
+      assets: 0,
       shares: Array.from({ length: cfg.sharesPerCompany }, () => null),
     }));
     this.locations = initLocations(this.town.locations, cfg.cycles, this.rng);
     for (const l of this.locations) this.locById.set(l.id, l);
+    const prices = assignPrices(this.locations.filter((l) => l.kind === 'consumer').map((l) => l.id), cfg.money, this.rng);
+    for (const [id, price] of prices) this.locById.get(id)!.price = price;
     for (const l of this.town.locations) if (l.startCompany !== null) this.depotOwner.set(l.id, l.startCompany);
     this.trucks = new TruckSystem(
       this.town.graph,
       cfg.trucks,
       (id) => this.locById.get(id),
       (id) => this.town.locations[id].node,
-      (e) => this.emit('all', e),
+      (e) => {
+        if (e.type === 'delivered') {
+          // Every delivery pays the company now and adds the same amount to its next dividend.
+          const c = this.companies[e.company];
+          c.treasury += e.price;
+          c.pot += e.price;
+        }
+        this.emit('all', e);
+      },
     );
     this.events = Array.from({ length: cfg.players }, () => []);
     this.emit('all', { type: 'start', t: 0 });
@@ -160,7 +195,9 @@ export class Game {
     // (Issues #6–#7 add depots and money here.)
 
     this.tick++;
-    if (this.tick >= this.totalTicks) {
+    const ending = this.tick >= this.totalTicks;
+    if (ending || this.tick % this.payoutTicks === 0) this.payDividends(ending);
+    if (ending) {
       this.phase = 'ended';
       this.emit('all', { type: 'end', t: this.t });
     }
@@ -196,6 +233,7 @@ export class Game {
         const price = this.cfg.depots.truckPrice;
         if (c.treasury < price) return reject(`the treasury has $${c.treasury.toFixed(2)}; a truck costs $${price}`);
         c.treasury -= price;
+        c.assets += price;
         const truck = this.trucks.add(c.id, action.depot, this.town.locations[action.depot].node);
         this.emit('all', { type: 'boughtTruck', t: this.t, company: c.id, truck: truck.id, depot: action.depot, price });
         break;
@@ -210,8 +248,20 @@ export class Game {
         const price = this.depotPriceFor(c.id, site.id);
         if (c.treasury < price) return reject(`the treasury has $${c.treasury.toFixed(2)}; this depot costs $${price}`);
         c.treasury -= price;
+        c.assets += price;
         this.depotOwner.set(site.id, c.id);
         this.emit('all', { type: 'boughtDepot', t: this.t, company: c.id, site: site.id, price });
+        break;
+      }
+      case 'invest': {
+        const l = this.locById.get(action.location);
+        if (!l) return reject(`no producer or consumer ${action.location}`);
+        const price = investCost(this.cfg.money, l.level);
+        const p = this.players[player];
+        if (p.cash < price) return reject(`you have $${p.cash.toFixed(2)}; this costs $${price}`);
+        p.cash -= price;
+        l.level++;
+        this.emit('all', { type: 'invested', t: this.t, player, location: l.id, level: l.level, price });
         break;
       }
       default:
@@ -240,6 +290,41 @@ export class Game {
     const depot = this.town.locations.find((l) => l.startCompany === company);
     if (!depot) throw new Error(`company ${company} has no starting depot`);
     return this.trucks.add(company, depot.id, depot.node);
+  }
+
+  private get payoutTicks() {
+    return Math.max(1, Math.round(this.cfg.money.payoutEverySec / this.cfg.tickSec));
+  }
+
+  /** Game time of the next payout. */
+  get nextPayoutAt() {
+    const k = this.payoutTicks;
+    const next = (Math.floor(this.tick / k) + 1) * k;
+    return Math.min(next, this.totalTicks) * this.cfg.tickSec;
+  }
+
+  /**
+   * Every company pays out its pot, one equal part per share; bank-held shares' parts go unpaid.
+   * The final payout also includes part of the company's assets.
+   */
+  private payDividends(final: boolean) {
+    for (const c of this.companies) {
+      const n = c.shares.length;
+      const assets = final ? this.cfg.money.finalAssetShare * (c.assets + Math.max(0, c.treasury)) : 0;
+      const amount = c.pot + assets;
+      const paid = payPerShare(c.shares, amount);
+      for (const [player, x] of paid) this.players[player].cash += x;
+      this.emit('all', {
+        type: 'payout',
+        t: this.t,
+        company: c.id,
+        perShare: c.pot / n,
+        assetsPerShare: assets / n,
+        final,
+        paid: Object.fromEntries(paid),
+      });
+      c.pot = 0;
+    }
   }
 
   /** Trucks based at a depot site. */
@@ -280,7 +365,13 @@ export class Game {
       timeLeft: Math.max(0, this.cfg.durationSec - this.t),
       phase: this.phase,
       players: this.players.map((p) => ({ ...p })),
-      companies: this.companies.map((c) => ({ ...c, shares: [...c.shares], presidents: this.presidents(c.id) })),
+      companies: this.companies.map((c) => ({
+        ...c,
+        shares: [...c.shares],
+        presidents: this.presidents(c.id),
+        dividendPerShare: c.pot / c.shares.length,
+      })),
+      nextPayoutAt: this.nextPayoutAt,
       locations: this.locations.map((l) => ({ ...l, history: [...l.history] })),
       trucks: this.trucks.trucks.map((t) => ({
         ...t,

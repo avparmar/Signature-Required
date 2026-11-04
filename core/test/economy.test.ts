@@ -26,6 +26,7 @@ function loc(kind: 'producer' | 'consumer', o: Partial<LocationState> = {}): Loc
     cycleAmount: 0,
     served: 0,
     history: [],
+    price: 0,
     ...o,
   };
 }
