@@ -81,11 +81,12 @@ export class Game {
     this.town = generateTown(cfg.town);
     this.rng = new Rng(cfg.seed * 2654435761 + 17);
     this.players = Array.from({ length: cfg.players }, (_, id) => ({ id, cash: cfg.startingCash }));
-    // Stage 0: player i owns every share of company i; the extra company stays with the bank.
+    // Every company starts fully owned by the bank, with an empty treasury: shares are sold at
+    // auction (pre-game, then during play), and that money is what gets companies going.
     this.companies = Array.from({ length: cfg.companies }, (_, id) => ({
       id,
       treasury: cfg.startingTreasury,
-      shares: Array.from({ length: cfg.sharesPerCompany }, () => (id < cfg.players ? id : null)),
+      shares: Array.from({ length: cfg.sharesPerCompany }, () => null),
     }));
     this.events = Array.from({ length: cfg.players }, () => []);
     this.emit('all', { type: 'start', t: 0 });

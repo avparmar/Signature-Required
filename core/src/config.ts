@@ -16,7 +16,7 @@ export interface GameConfig {
   durationSec: number;
   /** Simulation step. Everything advances in whole ticks so games are reproducible. */
   tickSec: number;
-  /** Cash each player starts with. */
+  /** Cash each player starts with (to bid in share auctions; dividends are the only income after that). */
   startingCash: number;
   /** Cash each company's treasury starts with. */
   startingTreasury: number;
@@ -29,7 +29,7 @@ export const DEFAULT_GAME: Omit<GameConfig, 'town' | 'companies'> = {
   sharesPerCompany: 5,
   durationSec: 15 * 60,
   tickSec: 0.1,
-  startingCash: 0,
+  startingCash: 100,
   startingTreasury: 0,
 };
 

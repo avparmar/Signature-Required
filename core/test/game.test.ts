@@ -17,14 +17,14 @@ describe('Game loop', () => {
     expect(g.town.locations.filter((l) => l.startCompany !== null)).toHaveLength(4);
   });
 
-  it('gives each player all shares of their own company; the extra company stays with the bank', () => {
+  it('starts every company fully owned by the bank, with no president yet', () => {
     const g = newGame({ players: 4 });
-    for (let p = 0; p < 4; p++) {
-      expect(g.companies[p].shares).toEqual([p, p, p, p, p]);
-      expect(g.presidents(p)).toEqual([p]);
+    for (const c of g.companies) {
+      expect(c.shares).toEqual([null, null, null, null, null]);
+      expect(c.treasury).toBe(0);
+      expect(g.presidents(c.id)).toEqual([]);
     }
-    expect(g.companies[4].shares.every((s) => s === null)).toBe(true);
-    expect(g.presidents(4)).toEqual([]);
+    expect(g.players.every((p) => p.cash === g.cfg.startingCash)).toBe(true);
   });
 
   it('treats tied largest shareholders as co-presidents', () => {
@@ -89,8 +89,8 @@ describe('Game loop', () => {
     const o = g.observe(0);
     o.players[0].cash = 999;
     o.companies[0].shares[0] = 3;
-    expect(g.players[0].cash).toBe(0);
-    expect(g.companies[0].shares[0]).toBe(0);
+    expect(g.players[0].cash).toBe(g.cfg.startingCash);
+    expect(g.companies[0].shares[0]).toBe(null);
     expect(o.timeLeft).toBe(900);
   });
 });
