@@ -125,6 +125,25 @@ if (which === 'final') {
     ],
     games,
   );
+} else if (which === 'scale') {
+  // Adi's "more trucks" variant: half-price trucks, faster, twice the goods, depots hold twice as many.
+  const scale: GameConfigOverrides = {
+    trucks: { speed: 0.35 },
+    depots: { truckPrice: 15, capacity: 6 },
+    cycles: { produceBase: 6, demandBase: [4, 8] },
+  };
+  const rich = { palletPrice: 3, premiumPrice: 4 };
+  print(
+    [
+      run('A: today (50% of assets)', { finalBonus: 'assets', finalAssetShare: 0.5 }, games),
+      run('K: faster + $3/$4, 10% of assets', { ...rich, finalBonus: 'assets', finalAssetShare: 0.1 }, games, { trucks: { speed: 0.35 } }),
+      run('S1: scaled up, $2/$3, 50% of assets', { finalBonus: 'assets', finalAssetShare: 0.5 }, games, scale),
+      run('S2: scaled up, $2/$3, 20% of assets', { finalBonus: 'assets', finalAssetShare: 0.2 }, games, scale),
+      run('S3: scaled up, $2/$3, 10% of assets', { finalBonus: 'assets', finalAssetShare: 0.1 }, games, scale),
+      run('S4: scaled up, $3/$4, 10% of assets', { ...rich, finalBonus: 'assets', finalAssetShare: 0.1 }, games, scale),
+    ],
+    games,
+  );
 } else {
-  console.log('usage: npm run experiments -- final|income|shortlist [games]');
+  console.log('usage: npm run experiments -- final|income|shortlist|scale [games]');
 }

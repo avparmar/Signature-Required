@@ -41,10 +41,20 @@ export const PERSONALITIES: Record<string, BotPersonality> = {
   aggressive: { greed: 1.0, maxCashPerBid: 0.8, controlBonus: 0.4, investReserve: 40 },
 };
 
-/** Rough earning rate used before there's any history: deliveries per truck per minute. */
-const DELIVERIES_PER_TRUCK_MIN = 1.0;
-/** Trucks a single producer -> consumer route can usefully take (from the #5 demo). */
-const TRUCKS_PER_ROUTE = 3;
+/**
+ * Rules of thumb, scaled from what the #5 demo measured at the original settings (trucks at 0.25
+ * blocks/s made ~1 delivery a minute; a route saturated at ~3 trucks when a consumer wanted ~3
+ * pallets every 45s).
+ */
+function deliveriesPerTruckMin(cfg: GameConfig): number {
+  return 1.0 * (cfg.trucks.speed / 0.25);
+}
+function trucksPerRoute(cfg: GameConfig): number {
+  const demand = (cfg.cycles.demandBase[0] + cfg.cycles.demandBase[1]) / 2;
+  const supply = cfg.cycles.produceBase;
+  const palletsPerMin = (Math.min(demand, supply) * 60) / ((cfg.cycles.cycleSec[0] + cfg.cycles.cycleSec[1]) / 2);
+  return Math.max(1, Math.round(palletsPerMin / deliveriesPerTruckMin(cfg) * 0.75));
+}
 
 interface Route {
   producer: number;
@@ -59,6 +69,9 @@ export class Bot {
   /** Deliveries per company in the last few minutes (from events). */
   private recent: { t: number; company: number; price: number }[] = [];
 
+  private readonly perTruckMin: number;
+  private readonly perRoute: number;
+
   constructor(
     readonly me: number,
     private town: Town,
@@ -66,7 +79,10 @@ export class Bot {
     readonly personality: BotPersonality = PERSONALITIES.balanced,
     /** Seconds between full decisions (bids are answered every step). */
     private thinkEverySec = 1,
-  ) {}
+  ) {
+    this.perTruckMin = deliveriesPerTruckMin(cfg);
+    this.perRoute = trucksPerRoute(cfg);
+  }
 
   decide(obs: Observation, events: GameEvent[]): Action[] {
     for (const e of events) if (e.type === 'delivered') this.recent.push({ t: obs.t, company: e.company, price: e.price });
@@ -101,10 +117,10 @@ export class Bot {
     const futureRaise = unsoldAfter * extraCash;
     const canBuy = Math.floor((c.treasury + extraCash + futureRaise) / this.cfg.depots.truckPrice);
     const routes = this.routesFor(obs, company).length;
-    const fleet = Math.min(trucks + canBuy, capacity, routes * TRUCKS_PER_ROUTE);
+    const fleet = Math.min(trucks + canBuy, capacity, routes * this.perRoute);
     // Earning rate: what it's been doing recently, or the fleet estimate, whichever is higher.
     const recentPerMin = this.recent.filter((r) => r.company === company).reduce((s, r) => s + r.price, 0) / 3;
-    const estPerMin = fleet * DELIVERIES_PER_TRUCK_MIN * this.cfg.money.palletPrice;
+    const estPerMin = fleet * this.perTruckMin * this.cfg.money.palletPrice;
     const perMin = Math.max(recentPerMin, estPerMin);
     // Trucks bought now take a while to pay off; discount the last stretch a little.
     const mins = Math.max(0, this.minutesLeft(obs) - 1);
@@ -197,9 +213,9 @@ export class Bot {
     let bestScore = -Infinity;
     for (const r of this.routesFor(obs, company)) {
       const busy = Math.max(load.get(r.producer) ?? 0, load.get(r.consumer) ?? 0);
-      if (busy >= TRUCKS_PER_ROUTE + 1) continue;
+      if (busy >= this.perRoute + 1) continue;
       const price = obs.locations.find((l) => l.id === r.consumer)?.price ?? this.cfg.money.palletPrice;
-      const score = (price / (r.length + 4)) * (1 - busy / (TRUCKS_PER_ROUTE + 1));
+      const score = (price / (r.length + 4)) * (1 - busy / (this.perRoute + 1));
       if (score > bestScore) {
         bestScore = score;
         best = r;
