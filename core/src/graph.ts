@@ -125,3 +125,50 @@ export function distancesFrom(g: RoadGraph, from: number): Float64Array {
   }
   return d;
 }
+
+/**
+ * Shortest driving route between two nodes, as the list of nodes visited (from and to included).
+ * Null if unreachable. Ties are broken deterministically.
+ */
+export function shortestPath(g: RoadGraph, from: number, to: number): number[] | null {
+  if (from === to) return [from];
+  const d = new Float64Array(g.nodes.length).fill(Infinity);
+  const prev = new Int32Array(g.nodes.length).fill(-1);
+  d[from] = 0;
+  const heap = new MinHeap();
+  heap.push(from, 0);
+  while (heap.size) {
+    const { key, value: n } = heap.pop();
+    if (key > d[n]) continue;
+    if (n === to) break;
+    for (const { to: m, edge } of g.adj[n]) {
+      const nd = key + g.edges[edge].length;
+      if (nd < d[m] - 1e-12) {
+        d[m] = nd;
+        prev[m] = n;
+        heap.push(m, nd);
+      }
+    }
+  }
+  if (d[to] === Infinity) return null;
+  const path = [to];
+  while (path[path.length - 1] !== from) path.push(prev[path[path.length - 1]]);
+  return path.reverse();
+}
+
+/** Route through a sequence of nodes (start, waypoints..., end), joined into one node list. */
+export function routeVia(g: RoadGraph, nodes: number[]): number[] | null {
+  let route: number[] = [nodes[0]];
+  for (let i = 1; i < nodes.length; i++) {
+    const leg = shortestPath(g, nodes[i - 1], nodes[i]);
+    if (!leg) return null;
+    route = route.concat(leg.slice(1));
+  }
+  return route;
+}
+
+/** Length of the street between two adjacent nodes. */
+export function edgeLength(g: RoadGraph, a: number, b: number): number {
+  for (const { to, edge } of g.adj[a]) if (to === b) return g.edges[edge].length;
+  throw new Error(`nodes ${a} and ${b} are not adjacent`);
+}

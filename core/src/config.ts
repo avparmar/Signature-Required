@@ -1,5 +1,6 @@
 import { DEFAULT_CYCLES, type CycleConfig } from './economy.js';
 import { makeTownConfig, type TownConfig } from './town.js';
+import { DEFAULT_TRUCKS, type TruckConfig } from './trucks.js';
 
 /**
  * Every tunable in one place. Later issues add their own sections (cycles, trucks, money);
@@ -23,9 +24,10 @@ export interface GameConfig {
   startingTreasury: number;
   town: TownConfig;
   cycles: CycleConfig;
+  trucks: TruckConfig;
 }
 
-export const DEFAULT_GAME: Omit<GameConfig, 'town' | 'companies' | 'cycles'> = {
+export const DEFAULT_GAME: Omit<GameConfig, 'town' | 'companies' | 'cycles' | 'trucks'> = {
   seed: 1,
   players: 4,
   sharesPerCompany: 5,
@@ -35,9 +37,10 @@ export const DEFAULT_GAME: Omit<GameConfig, 'town' | 'companies' | 'cycles'> = {
   startingTreasury: 0,
 };
 
-export type GameConfigOverrides = Partial<Omit<GameConfig, 'town' | 'cycles'>> & {
+export type GameConfigOverrides = Partial<Omit<GameConfig, 'town' | 'cycles' | 'trucks'>> & {
   town?: Partial<TownConfig>;
   cycles?: Partial<CycleConfig>;
+  trucks?: Partial<TruckConfig>;
 };
 
 export function makeGameConfig(o: GameConfigOverrides = {}): GameConfig {
@@ -53,5 +56,6 @@ export function makeGameConfig(o: GameConfigOverrides = {}): GameConfig {
     // The town shares the game's seed and has one starting depot per company.
     town: makeTownConfig({ seed, companies, ...o.town }),
     cycles: { ...DEFAULT_CYCLES, ...o.cycles },
+    trucks: { ...DEFAULT_TRUCKS, ...o.trucks },
   } as GameConfig;
 }

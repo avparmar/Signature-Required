@@ -3,8 +3,9 @@
  *   npm run sim -- town [seed]           print one town
  *   npm run sim -- towns [count]         fairness stats over many seeds
  *   npm run sim -- game [seed]           run one (empty, for now) 15-minute game headless
+ *   npm run sim -- trucks [seed] [n]     each company runs n trucks on its nearest route (demo)
  */
-import { generateTown, makeTownConfig, newGame, renderTown } from '@sr/core';
+import { distancesFrom, generateTown, makeTownConfig, newGame, renderTown } from '@sr/core';
 
 const [cmd = 'town', arg] = process.argv.slice(2);
 
@@ -45,6 +46,37 @@ if (cmd === 'town') {
     `seed ${seed}: ${g.cfg.players} players, ${g.cfg.companies} companies, ${g.totalTicks} ticks ` +
       `(${g.cfg.durationSec}s game). Town ${(t1 - t0).toFixed(0)} ms, play ${(t2 - t1).toFixed(0)} ms. State ${g.stateHash()}.`,
   );
+} else if (cmd === 'trucks') {
+  const seed = Number(arg ?? 1);
+  const perCompany = Number(process.argv[4] ?? 3);
+  const g = newGame({ seed });
+  // No auctions or bots yet: make each player president of their own company and send its trucks
+  // round the nearest producer -> consumer pair.
+  for (let c = 0; c < g.cfg.players; c++) {
+    g.companies[c].shares[0] = c;
+    const depot = g.town.locations.find((l) => l.startCompany === c)!;
+    const d = distancesFrom(g.town.graph, depot.node);
+    const near = (kind: string, good?: number) =>
+      g.town.locations.filter((l) => l.kind === kind && (good === undefined || l.good === good)).sort((a, b) => d[a.node] - d[b.node])[0];
+    const p = near('producer');
+    const q = near('consumer', p.good!);
+    for (let i = 0; i < perCompany; i++) {
+      const t = g.addTruck(c);
+      g.act(c, { type: 'setOrders', truck: t.id, stops: [{ location: p.id, action: 'load' }, { location: q.id, action: 'unload' }] });
+    }
+  }
+  const delivered = new Array(g.cfg.companies).fill(0);
+  const t0 = performance.now();
+  while (!g.done) {
+    g.step();
+    for (const e of g.drainEvents(0)) if (e.type === 'delivered') delivered[e.company]++;
+  }
+  const ms = performance.now() - t0;
+  const grown = g.locations.filter((l) => l.growth > 0).length;
+  const shrunk = g.locations.filter((l) => l.growth < 0).length;
+  console.log(`seed ${seed}, ${perCompany} trucks per company, 15 minutes (${ms.toFixed(0)} ms):`);
+  delivered.slice(0, g.cfg.players).forEach((n, c) => console.log(`  company ${c}: ${n} pallets delivered (${(n / perCompany / 15).toFixed(2)} per truck per minute)`));
+  console.log(`  locations grown: ${grown}, shrunk: ${shrunk}, unchanged: ${g.locations.length - grown - shrunk}`);
 } else {
-  console.log('usage: npm run sim -- town [seed] | towns [count] | game [seed]');
+  console.log('usage: npm run sim -- town [seed] | towns [count] | game [seed] | trucks [seed] [n]');
 }
