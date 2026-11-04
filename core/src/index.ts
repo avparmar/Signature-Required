@@ -3,3 +3,6 @@
  * Everything that varies between games comes from the seeded Rng.
  */
 export { Rng } from './rng.js';
+export * from './graph.js';
+export * from './town.js';
+export { renderTown } from './ascii.js';
