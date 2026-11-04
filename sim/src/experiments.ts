@@ -8,6 +8,7 @@
  * - shares should keep selling (ideally sold out by mid-game).
  */
 import type { GameConfigOverrides, MoneyConfig } from '@sr/core';
+import { PERSONALITIES, type BotPersonality } from './bot.js';
 import { runGame, type GameResult } from './runner.js';
 
 const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
@@ -230,6 +231,43 @@ if (which === 'final') {
     ],
     games,
   );
+} else if (which === 'speculator') {
+  // Speculator bots (go all in on one company, keep a reserve for bargains) vs the balanced
+  // investor bot, with and without a minimum bid, on the proposed defaults.
+  const cfg = (openingBid: number): GameConfigOverrides => ({
+    trucks: { speed: 0.35 },
+    depots: { truckPrice: 15, capacity: 3 },
+    cycles: { produceBase: 6, demandBase: [4, 8] },
+    town: { blocksX: 16, blocksY: 16, producersPerGood: [4, 5], consumersPerGood: [7, 11], extraDepotSites: [18, 27] },
+    auctions: { openingBid },
+    money: { finalBonus: 'assets', finalAssetShare: 0.1 },
+  });
+  const S = PERSONALITIES.speculator;
+  const I = PERSONALITIES.balanced;
+  const variants: [string, number, BotPersonality[]][] = [
+    ['$20 minimum, 4 investors', 20, [I, I, I, I]],
+    ['$20 minimum, 1 speculator + 3 investors', 20, [S, I, I, I]],
+    ['No minimum, 4 investors', 0, [I, I, I, I]],
+    ['No minimum, 1 speculator + 3 investors', 0, [S, I, I, I]],
+    ['No minimum, 2 speculators + 2 investors', 0, [S, S, I, I]],
+    ['No minimum, 4 speculators', 0, [S, S, S, S]],
+  ];
+  console.log(`\nspeculator experiment (${games} games per variant)\n`);
+  console.log('| Variant | Shares sold (of 25) | Avg share price | Trucks per company | Depots per company | Speculators: avg final cash / wins | Investors: avg final cash / wins |');
+  console.log('|---|---|---|---|---|---|---|');
+  for (const [label, bid, seats] of variants) {
+    const results: GameResult[] = [];
+    for (let i = 0; i < games; i++) results.push(runGame({ ...cfg(bid), seed: 1 + i }, seats));
+    const r = summarise(label, results);
+    const side = (who: BotPersonality) => {
+      const idx = seats.map((p, i) => (p === who ? i : -1)).filter((i) => i >= 0);
+      if (idx.length === 0) return 'n/a';
+      const cash = avg(results.flatMap((g) => idx.map((i) => g.cash[i])));
+      const wins = results.filter((g) => idx.includes(g.winner)).length;
+      return `$${cash.toFixed(0)} / ${wins}`;
+    };
+    console.log(`| ${label} | ${r.sharesSold.toFixed(1)} | $${r.avgPrice.toFixed(0)} | ${r.trucks.toFixed(1)} | ${r.depots.toFixed(1)} | ${side(S)} | ${side(I)} |`);
+  }
 } else {
-  console.log('usage: npm run experiments -- final|income|shortlist|scale|map|split|sar|depots [games]');
+  console.log('usage: npm run experiments -- final|income|shortlist|scale|map|split|sar|depots|speculator [games]');
 }

@@ -33,12 +33,32 @@ export interface BotPersonality {
   controlBonus: number;
   /** Keep at least this much cash before investing in locations. */
   investReserve: number;
+  /**
+   * Speculator: believes developing a company it controls will pay off, so it picks one company
+   * and goes all in on it, valuing its shares as if the company will be fully funded and built
+   * out. It keeps a reserve to buy into other companies, but only at a discount.
+   */
+  speculator?: {
+    /** What it assumes the company's other shares will eventually sell for (never anchors on a $0 bid). */
+    assumedSharePrice: number;
+    /** Share of starting cash it won't spend on its own company, kept for bargains elsewhere. */
+    reserveFrac: number;
+    /** Buys into other companies only below this fraction of their value. */
+    discount: number;
+  };
 }
 
 export const PERSONALITIES: Record<string, BotPersonality> = {
   balanced: { greed: 0.8, maxCashPerBid: 0.6, controlBonus: 0.25, investReserve: 60 },
   cautious: { greed: 0.6, maxCashPerBid: 0.4, controlBonus: 0.1, investReserve: 90 },
   aggressive: { greed: 1.0, maxCashPerBid: 0.8, controlBonus: 0.4, investReserve: 40 },
+  speculator: {
+    greed: 1.0,
+    maxCashPerBid: 1.0,
+    controlBonus: 0.5,
+    investReserve: 40,
+    speculator: { assumedSharePrice: 25, reserveFrac: 0.25, discount: 0.5 },
+  },
 };
 
 /**
@@ -108,13 +128,17 @@ export class Bot {
   }
 
   /** Expected value of one share of a company if `extraCash` were added to its treasury. */
-  shareValue(obs: Observation, company: number, extraCash: number): number {
+  shareValue(obs: Observation, company: number, extraCash: number, optimistic = false): number {
     const c = obs.companies[company];
     const trucks = obs.trucks.filter((t) => t.company === company).length;
-    const capacity = Object.values(obs.depots).filter((o) => o === company).length * this.cfg.depots.capacity;
+    // An optimist assumes the company will buy the depots it needs; otherwise count what it has.
+    const capacity = optimistic
+      ? Infinity
+      : Object.values(obs.depots).filter((o) => o === company).length * this.cfg.depots.capacity;
     // The company will also raise money from its other unsold shares, at about this price.
     const unsoldAfter = Math.max(0, c.shares.filter((s) => s === null).length - 1);
-    const futureRaise = unsoldAfter * extraCash;
+    const assumed = optimistic ? Math.max(extraCash, this.personality.speculator?.assumedSharePrice ?? 0) : extraCash;
+    const futureRaise = unsoldAfter * assumed;
     const canBuy = Math.floor((c.treasury + extraCash + futureRaise) / this.cfg.depots.truckPrice);
     const routes = this.routesFor(obs, company).length;
     const fleet = Math.min(trucks + canBuy, capacity, routes * this.perRoute);
@@ -136,9 +160,55 @@ export class Bot {
     return dividends + bonus;
   }
 
+  /** Speculator's chosen company (decided at its first look). */
+  private target: number | null = null;
+
+  /** The company whose starting depot has the most routes nearby. */
+  private pickTarget(obs: Observation): number {
+    let best = 0;
+    let bestRoutes = -1;
+    for (const c of obs.companies) {
+      const n = this.routesFor(obs, c.id).length;
+      if (n > bestRoutes) {
+        bestRoutes = n;
+        best = c.id;
+      }
+    }
+    return best;
+  }
+
+  private speculatorBid(obs: Observation): Action | null {
+    const spec = this.personality.speculator!;
+    const a = obs.auction!;
+    if (this.target === null) this.target = this.pickTarget(obs);
+    const c = obs.companies[a.company];
+    // If someone else has locked up the target, switch to wherever it holds the most.
+    const mine = c.shares.filter((s) => s === this.me).length;
+    if (a.company !== this.target && mine > 0 && obs.companies[this.target].shares.every((s) => s !== null) && !obs.companies[this.target].presidents.includes(this.me))
+      this.target = a.company;
+    const me = obs.players[this.me];
+    const available = me.cash - me.held;
+    const min = minimumBid(a, this.cfg.auctions);
+    const value = this.shareValue(obs, a.company, min, true);
+    if (a.company === this.target) {
+      // All in on its own company, minus the reserve kept for bargains.
+      const reserve = spec.reserveFrac * this.cfg.startingCash;
+      if (min > available - reserve) return null;
+      const cap = Math.min(available - reserve, value * (1 + this.personality.controlBonus) * this.personality.greed);
+      if (min > cap) return null;
+      // It wants the company funded, not just owned: pay at least its assumed share price,
+      // even if nobody else is bidding (a $0 win would leave its own company broke).
+      return { type: 'bid', company: a.company, amount: Math.max(min, Math.min(spec.assumedSharePrice, cap)) };
+    }
+    // Elsewhere: only a bargain.
+    if (min > available || min > value * spec.discount) return null;
+    return { type: 'bid', company: a.company, amount: min };
+  }
+
   private bid(obs: Observation): Action | null {
     const a = obs.auction;
     if (!a || a.highBidder === this.me || a.seller === this.me) return null;
+    if (this.personality.speculator) return this.speculatorBid(obs);
     const me = obs.players[this.me];
     const available = me.cash - me.held;
     const min = minimumBid(a, this.cfg.auctions);
