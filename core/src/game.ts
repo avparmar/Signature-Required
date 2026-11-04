@@ -4,6 +4,7 @@
  * Same config + same actions at the same ticks = same game, every time.
  */
 import { makeGameConfig, type GameConfig, type GameConfigOverrides } from './config.js';
+import { initLocations, updateCycles, type CycleEvent, type LocationState } from './economy.js';
 import { Rng } from './rng.js';
 import { generateTown, type Town } from './town.js';
 
@@ -37,6 +38,7 @@ export interface QueuedAction {
 }
 
 export type GameEvent =
+  | CycleEvent
   | { type: 'start'; t: number }
   | { type: 'end'; t: number }
   | { type: 'rejected'; t: number; action: Action; reason: string };
@@ -55,6 +57,8 @@ export interface Observation {
   phase: Phase;
   players: Player[];
   companies: (Company & { presidents: number[] })[];
+  /** Producers and consumers: stock, demand, level, growth, next cycle. */
+  locations: LocationState[];
 }
 
 // ------------------------------------------------------------------ game
@@ -67,6 +71,10 @@ export class Game {
   phase: Phase = 'running';
   readonly players: Player[];
   readonly companies: Company[];
+  /** Dynamic state of every producer and consumer (depot sites aren't included). */
+  readonly locations: LocationState[];
+  /** Location state by town location id. */
+  private locById = new Map<number, LocationState>();
   /** Every action ever applied, with the tick it took effect: enough to replay the game. */
   readonly actionLog: { tick: number; player: number; action: Action }[] = [];
   private queue: QueuedAction[] = [];
@@ -88,6 +96,8 @@ export class Game {
       treasury: cfg.startingTreasury,
       shares: Array.from({ length: cfg.sharesPerCompany }, () => null),
     }));
+    this.locations = initLocations(this.town.locations, cfg.cycles, this.rng);
+    for (const l of this.locations) this.locById.set(l.id, l);
     this.events = Array.from({ length: cfg.players }, () => []);
     this.emit('all', { type: 'start', t: 0 });
   }
@@ -117,7 +127,8 @@ export class Game {
     this.queue = [];
     for (const q of queued) this.apply(q);
 
-    // (Issues #4–#7 add production, trucks and money here.)
+    for (const e of updateCycles(this.locations, this.t, this.cfg.cycles, this.rng)) this.emit('all', e);
+    // (Issues #5–#7 add trucks and money here.)
 
     this.tick++;
     if (this.tick >= this.totalTicks) {
@@ -156,6 +167,11 @@ export class Game {
     return out;
   }
 
+  /** Dynamic state of a producer or consumer, by its town location id. */
+  location(id: number): LocationState | undefined {
+    return this.locById.get(id);
+  }
+
   /** Players holding the most shares of a company (more than one means co-presidents). */
   presidents(company: number): number[] {
     const counts = new Map<number, number>();
@@ -173,12 +189,19 @@ export class Game {
       phase: this.phase,
       players: this.players.map((p) => ({ ...p })),
       companies: this.companies.map((c) => ({ ...c, shares: [...c.shares], presidents: this.presidents(c.id) })),
+      locations: this.locations.map((l) => ({ ...l, history: [...l.history] })),
     };
   }
 
   /** Short fingerprint of the full dynamic state, for checking two runs match. */
   stateHash(): string {
-    const s = JSON.stringify({ tick: this.tick, phase: this.phase, players: this.players, companies: this.companies });
+    const s = JSON.stringify({
+      tick: this.tick,
+      phase: this.phase,
+      players: this.players,
+      companies: this.companies,
+      locations: this.locations,
+    });
     let h = 0x811c9dc5;
     for (let i = 0; i < s.length; i++) {
       h ^= s.charCodeAt(i);
