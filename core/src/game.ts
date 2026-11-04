@@ -4,6 +4,7 @@
  * Same config + same actions at the same ticks = same game, every time.
  */
 import { makeGameConfig, type GameConfig, type GameConfigOverrides } from './config.js';
+import { minimumBid, type Auction, type AuctionEvent, type AuctionRequest } from './auctions.js';
 import { depotPrice, distanceToNetwork } from './depots.js';
 import { assignPrices, investCost, payPerShare } from './money.js';
 import { initLocations, updateCycles, type CycleEvent, type LocationState } from './economy.js';
@@ -16,6 +17,8 @@ import { generateTown, type Town } from './town.js';
 export interface Player {
   id: number;
   cash: number;
+  /** Part of `cash` held for this player's leading bid (can't be spent until released). */
+  held: number;
 }
 
 export interface Company {
@@ -29,7 +32,8 @@ export interface Company {
   shares: (number | null)[];
 }
 
-export type Phase = 'running' | 'ended';
+/** opening: the opening share auctions, before the game clock starts. */
+export type Phase = 'opening' | 'running' | 'ended';
 
 // ------------------------------------------------------------------ actions & events
 
@@ -46,7 +50,14 @@ export type Action =
   /** Buy a free depot site for a company (presidents only; from the treasury). */
   | { type: 'buyDepot'; company: number; site: number }
   /** Pay (from your own cash) to raise a producer or consumer one level. Anyone may. */
-  | { type: 'invest'; location: number };
+  | { type: 'invest'; location: number }
+  /** Bid on the current auction (company must match, so a late bid can't land on the next one). */
+  | { type: 'bid'; company: number; amount: number }
+  /**
+   * Put a share up for auction: a bank-held share (presidents only), or, once all of a company's
+   * shares are out, one of your own. Queues if another auction is running.
+   */
+  | { type: 'startAuction'; company: number };
 
 export interface QueuedAction {
   player: number;
@@ -56,6 +67,8 @@ export interface QueuedAction {
 export type GameEvent =
   | CycleEvent
   | TruckEvent
+  | AuctionEvent
+  | { type: 'open'; t: number }
   | { type: 'start'; t: number }
   | { type: 'boughtTruck'; t: number; company: number; truck: number; depot: number; price: number }
   | { type: 'boughtDepot'; t: number; company: number; site: number; price: number }
@@ -99,6 +112,12 @@ export interface Observation {
   queues: Record<number, number[]>;
   /** Owner company of each depot site (site location id -> company); free sites are absent. */
   depots: Record<number, number>;
+  /** The auction running now, if any. */
+  auction: Auction | null;
+  /** Auctions waiting to start, in order. */
+  auctionQueue: AuctionRequest[];
+  /** Earliest time (seconds since the start, opening round included) each company may auction again. */
+  auctionCooldownUntil: number[];
 }
 
 // ------------------------------------------------------------------ game
@@ -107,8 +126,16 @@ export class Game {
   readonly cfg: GameConfig;
   /** The map. Static for now (issue #12 may change that), so it isn't copied into observations. */
   readonly town: Town;
+  /** Game-clock ticks (the 15 minutes). Doesn't advance during the opening round. */
   tick = 0;
-  phase: Phase = 'running';
+  /** Every step taken, opening round included. */
+  steps = 0;
+  phase: Phase;
+  auction: Auction | null = null;
+  readonly auctionQueue: AuctionRequest[] = [];
+  readonly auctionCooldownUntil: number[];
+  /** Next company to auction in the opening round. */
+  private openingNext = 0;
   readonly players: Player[];
   readonly companies: Company[];
   /** Dynamic state of every producer and consumer (depot sites aren't included). */
@@ -119,7 +146,7 @@ export class Game {
   /** Location state by town location id. */
   private locById = new Map<number, LocationState>();
   /** Every action ever applied, with the tick it took effect: enough to replay the game. */
-  readonly actionLog: { tick: number; player: number; action: Action }[] = [];
+  readonly actionLog: LoggedAction[] = [];
   private queue: QueuedAction[] = [];
   private events: GameEvent[][];
   /** Game-time randomness (separate from the town generator, so map and play don't interfere). */
@@ -131,7 +158,7 @@ export class Game {
     if (cfg.companies < cfg.players) throw new Error('need at least one company per player');
     this.town = generateTown(cfg.town);
     this.rng = new Rng(cfg.seed * 2654435761 + 17);
-    this.players = Array.from({ length: cfg.players }, (_, id) => ({ id, cash: cfg.startingCash }));
+    this.players = Array.from({ length: cfg.players }, (_, id) => ({ id, cash: cfg.startingCash, held: 0 }));
     // Every company starts fully owned by the bank, with an empty treasury: shares are sold at
     // auction (pre-game, then during play), and that money is what gets companies going.
     this.companies = Array.from({ length: cfg.companies }, (_, id) => ({
@@ -162,7 +189,10 @@ export class Game {
       },
     );
     this.events = Array.from({ length: cfg.players }, () => []);
+    this.auctionCooldownUntil = this.companies.map(() => 0);
+    this.phase = cfg.auctions.openingRound ? 'opening' : 'running';
     this.emit('all', { type: 'start', t: 0 });
+    if (this.phase === 'running') this.emit('all', { type: 'open', t: 0 });
   }
 
   get t() {
@@ -183,12 +213,20 @@ export class Game {
     this.queue.push({ player, action });
   }
 
+  /** Seconds since the very start, opening round included. */
+  get elapsed() {
+    return this.steps * this.cfg.tickSec;
+  }
+
   /** Advance one tick. */
   step() {
     if (this.done) return;
     const queued = this.queue;
     this.queue = [];
     for (const q of queued) this.apply(q);
+    this.steps++;
+    this.updateAuctions();
+    if (this.phase === 'opening') return; // the town waits until the opening round is over
 
     for (const e of updateCycles(this.locations, this.t, this.cfg.cycles, this.rng)) this.emit('all', e);
     this.trucks.update(this.t, this.cfg.tickSec, (id) => this.town.locations[id].bays);
@@ -258,16 +296,51 @@ export class Game {
         if (!l) return reject(`no producer or consumer ${action.location}`);
         const price = investCost(this.cfg.money, l.level);
         const p = this.players[player];
-        if (p.cash < price) return reject(`you have $${p.cash.toFixed(2)}; this costs $${price}`);
+        if (p.cash - p.held < price) return reject(`you have $${(p.cash - p.held).toFixed(2)} to spend; this costs $${price}`);
         p.cash -= price;
         l.level++;
         this.emit('all', { type: 'invested', t: this.t, player, location: l.id, level: l.level, price });
         break;
       }
+      case 'bid': {
+        const a = this.auction;
+        if (!a || a.company !== action.company) return reject(`no auction for company ${action.company} right now`);
+        if (a.seller === player) return reject("you can't bid on your own share");
+        const min = minimumBid(a, this.cfg.auctions);
+        if (!(action.amount >= min)) return reject(`the lowest bid now is $${min}`);
+        const p = this.players[player];
+        const available = p.cash - p.held + (a.highBidder === player ? a.highBid : 0);
+        if (available < action.amount) return reject(`you only have $${available.toFixed(2)} to bid with`);
+        if (a.highBidder !== null) this.players[a.highBidder].held -= a.highBid; // release the old lead
+        p.held += action.amount;
+        a.highBid = action.amount;
+        a.highBidder = player;
+        if (a.timeLeft < this.cfg.auctions.softCloseSec) a.timeLeft = this.cfg.auctions.softCloseSec;
+        this.emit('all', { type: 'bid', t: this.t, company: a.company, player, amount: action.amount, timeLeft: a.timeLeft });
+        break;
+      }
+      case 'startAuction': {
+        if (this.phase !== 'running') return reject('auctions open once the game starts');
+        const c = this.companies[action.company];
+        if (!c) return reject(`no company ${action.company}`);
+        let seller: number | null;
+        if (c.shares.some((s) => s === null)) {
+          if (!this.presidents(c.id).includes(player)) return reject('only a president can auction the bank-held shares');
+          seller = null;
+        } else if (c.shares.includes(player)) seller = player;
+        else return reject("all shares are out and you don't own any to sell");
+        if (this.elapsed < this.auctionCooldownUntil[c.id] - 1e-9)
+          return reject(`no bids last time; try again in ${Math.ceil(this.auctionCooldownUntil[c.id] - this.elapsed)}s`);
+        if ((this.auction && this.auction.company === c.id) || this.auctionQueue.some((r) => r.company === c.id))
+          return reject('this company already has an auction running or waiting');
+        this.auctionQueue.push({ company: c.id, seller, startedBy: player });
+        if (this.auction) this.emit('all', { type: 'auctionQueued', t: this.t, company: c.id, position: this.auctionQueue.length });
+        break;
+      }
       default:
         return reject(`unknown action ${(action as { type: string }).type}`);
     }
-    this.actionLog.push({ tick: this.tick, player, action });
+    this.actionLog.push({ step: this.steps, tick: this.tick, player, action });
   }
 
   private emit(to: Audience, e: GameEvent) {
@@ -290,6 +363,67 @@ export class Game {
     const depot = this.town.locations.find((l) => l.startCompany === company);
     if (!depot) throw new Error(`company ${company} has no starting depot`);
     return this.trucks.add(company, depot.id, depot.node);
+  }
+
+  /** Start, count down and settle auctions. Runs every step, in both phases. */
+  private updateAuctions() {
+    const cfg = this.cfg.auctions;
+    if (this.auction) {
+      this.auction.timeLeft -= this.cfg.tickSec;
+      if (this.auction.timeLeft <= 1e-9) this.settleAuction();
+    }
+    if (this.auction) return;
+    let next: AuctionRequest | undefined;
+    if (this.phase === 'opening') {
+      if (this.openingNext >= this.companies.length) {
+        this.phase = 'running';
+        this.emit('all', { type: 'open', t: 0 });
+        return;
+      }
+      next = { company: this.openingNext++, seller: null, startedBy: 'bank' };
+    } else {
+      // A company nobody owns would never get a president: the bank re-offers it after the cooldown.
+      for (const c of this.companies) {
+        const unowned = c.shares.every((s) => s === null);
+        const waiting = this.auctionQueue.some((r) => r.company === c.id);
+        if (unowned && !waiting && this.elapsed >= this.auctionCooldownUntil[c.id] - 1e-9)
+          this.auctionQueue.push({ company: c.id, seller: null, startedBy: 'bank' });
+      }
+      next = this.auctionQueue.shift();
+    }
+    if (!next) return;
+    const opening = this.phase === 'opening';
+    this.auction = {
+      ...next,
+      highBid: 0,
+      highBidder: null,
+      timeLeft: opening ? cfg.openingClockSec : cfg.clockSec,
+      opening,
+    };
+    this.emit('all', { type: 'auctionStart', t: this.t, company: next.company, seller: next.seller, opening, timeLeft: this.auction.timeLeft });
+  }
+
+  private settleAuction() {
+    const a = this.auction!;
+    this.auction = null;
+    const c = this.companies[a.company];
+    if (a.highBidder === null) {
+      this.auctionCooldownUntil[c.id] = this.elapsed + this.cfg.auctions.noBidCooldownSec;
+      this.emit('all', { type: 'auctionNoBids', t: this.t, company: c.id });
+      return;
+    }
+    const winner = this.players[a.highBidder];
+    const idx = c.shares.indexOf(a.seller);
+    if (idx < 0) {
+      // The seller no longer has the share (can't happen today, but don't take the money).
+      winner.held -= a.highBid;
+      return;
+    }
+    c.shares[idx] = winner.id;
+    winner.held -= a.highBid;
+    winner.cash -= a.highBid;
+    c.treasury += a.highBid; // the money always goes to the company, even when a player sells
+    this.emit('all', { type: 'auctionWon', t: this.t, company: c.id, player: winner.id, amount: a.highBid, seller: a.seller });
   }
 
   private get payoutTicks() {
@@ -383,6 +517,9 @@ export class Game {
       })),
       queues: Object.fromEntries([...this.trucks.queues].map(([k, v]) => [k, [...v]])),
       depots: Object.fromEntries(this.depotOwner),
+      auction: this.auction ? { ...this.auction } : null,
+      auctionQueue: this.auctionQueue.map((r) => ({ ...r })),
+      auctionCooldownUntil: [...this.auctionCooldownUntil],
     };
   }
 
@@ -397,6 +534,10 @@ export class Game {
       trucks: this.trucks.trucks,
       queues: [...this.trucks.queues].sort((a, b) => a[0] - b[0]),
       depots: [...this.depotOwner].sort((a, b) => a[0] - b[0]),
+      steps: this.steps,
+      auction: this.auction,
+      auctionQueue: this.auctionQueue,
+      auctionCooldownUntil: this.auctionCooldownUntil,
     });
     let h = 0x811c9dc5;
     for (let i = 0; i < s.length; i++) {
@@ -412,13 +553,21 @@ export function newGame(o: GameConfigOverrides = {}): Game {
   return new Game(makeGameConfig(o));
 }
 
+/** An applied action, with when it took effect: `step` counts every step (opening round included). */
+export interface LoggedAction {
+  step: number;
+  tick: number;
+  player: number;
+  action: Action;
+}
+
 /** Replay a game from its config and action log; should land on the same state. */
-export function replay(cfg: GameConfig, log: { tick: number; player: number; action: Action }[]): Game {
+export function replay(cfg: GameConfig, log: LoggedAction[]): Game {
   const g = new Game(cfg);
   let i = 0;
   while (!g.done) {
-    // Actions logged at tick k were queued during tick k-1, i.e. before step() k ran.
-    while (i < log.length && log[i].tick === g.tick) {
+    // An action logged with step k was applied at the start of the step when the count was k.
+    while (i < log.length && log[i].step === g.steps) {
       g.act(log[i].player, log[i].action);
       i++;
     }

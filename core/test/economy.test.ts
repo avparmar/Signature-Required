@@ -147,20 +147,20 @@ describe('growth', () => {
 
 describe('cycles in the game', () => {
   it('every producer and consumer gets state, cycles at different times, and the game stays deterministic', () => {
-    const g = newGame({ seed: 4 });
+    const g = newGame({ seed: 4, auctions: { openingRound: false } });
     const count = g.town.locations.filter((l) => l.kind !== 'depot').length;
     expect(g.locations).toHaveLength(count);
     expect(new Set(g.locations.map((l) => l.nextCycleAt.toFixed(2))).size).toBeGreaterThan(count / 2);
     for (let i = 0; i < 600; i++) g.step(); // one minute
     expect(g.locations.filter((l) => l.kind === 'producer').every((l) => l.stock > 0)).toBe(true);
     expect(g.locations.filter((l) => l.kind === 'consumer').every((l) => l.demand > 0)).toBe(true);
-    const h = newGame({ seed: 4 });
+    const h = newGame({ seed: 4, auctions: { openingRound: false } });
     for (let i = 0; i < 600; i++) h.step();
     expect(h.stateHash()).toEqual(g.stateHash());
   });
 
   it('with nobody delivering, the town shrinks over a full game', () => {
-    const g = newGame({ seed: 2 });
+    const g = newGame({ seed: 2, auctions: { openingRound: false } });
     g.runToEnd();
     expect(g.locations.every((l) => l.growth === g.cfg.cycles.growthRange[0])).toBe(true);
     expect(g.drainEvents(0).some((e) => e.type === 'shrank')).toBe(true);
