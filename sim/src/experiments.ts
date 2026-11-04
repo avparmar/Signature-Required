@@ -24,6 +24,7 @@ interface Row {
   soldOutMinute: number | null;
   avgPrice: number;
   trucks: number;
+  depots: number;
   cash: number;
 }
 
@@ -61,6 +62,7 @@ function summarise(label: string, results: GameResult[]): Row {
     soldOutMinute: soldOut.length ? avg(soldOut) : null,
     avgPrice: avg(results.flatMap((r) => r.auctions.map((a) => a.amount))),
     trucks: avg(results.flatMap((r) => r.companies.map((c) => c.trucks))),
+    depots: avg(results.flatMap((r) => r.companies.map((c) => c.depots))),
     cash: avg(results.flatMap((r) => r.cash)),
   };
 }
@@ -74,12 +76,12 @@ function run(label: string, money: Partial<MoneyConfig>, games: number, extra: G
 function print(rows: Row[], games: number) {
   console.log(`\n${which} experiment (${games} games per variant, 4 balanced bots)\n`);
   console.log(
-    '| Variant | Final payout, % of all dividends | of which the bonus | Best company, paid per share | Worst company, paid per share | Worst: paid ÷ price paid | Shares sold (of 25) | Sold out | Avg share price | Trucks per company | Final cash per player |',
+    '| Variant | Final payout, % of all dividends | of which the bonus | Best company, paid per share | Worst company, paid per share | Worst: paid ÷ price paid | Shares sold (of 25) | Sold out | Avg share price | Trucks per company | Depots per company | Final cash per player |',
   );
-  console.log('|---|---|---|---|---|---|---|---|---|---|---|');
+  console.log('|---|---|---|---|---|---|---|---|---|---|---|---|');
   for (const r of rows) {
     console.log(
-      `| ${r.label} | ${(100 * r.finalShare).toFixed(0)}% | ${(100 * r.bonusShare).toFixed(0)}% | $${r.bestPerShare.toFixed(0)} | $${r.worstPerShare.toFixed(0)} | ${r.worstVsPrice.toFixed(2)}× | ${r.sharesSold.toFixed(1)} | ${r.soldOutGames}/${games}${r.soldOutMinute !== null ? ` (min ${r.soldOutMinute.toFixed(1)})` : ''} | $${r.avgPrice.toFixed(0)} | ${r.trucks.toFixed(1)} | $${r.cash.toFixed(0)} |`,
+      `| ${r.label} | ${(100 * r.finalShare).toFixed(0)}% | ${(100 * r.bonusShare).toFixed(0)}% | $${r.bestPerShare.toFixed(0)} | $${r.worstPerShare.toFixed(0)} | ${r.worstVsPrice.toFixed(2)}× | ${r.sharesSold.toFixed(1)} | ${r.soldOutGames}/${games}${r.soldOutMinute !== null ? ` (min ${r.soldOutMinute.toFixed(1)})` : ''} | $${r.avgPrice.toFixed(0)} | ${r.trucks.toFixed(1)} | ${r.depots.toFixed(1)} | $${r.cash.toFixed(0)} |`,
     );
   }
 }
@@ -144,6 +146,27 @@ if (which === 'final') {
     ],
     games,
   );
+} else if (which === 'map') {
+  // Bigger towns with the same density of producers, consumers and depot sites, on the scaled-up
+  // settings with a 10% bonus.
+  const scale: GameConfigOverrides = {
+    trucks: { speed: 0.35 },
+    depots: { truckPrice: 15, capacity: 6 },
+    cycles: { produceBase: 6, demandBase: [4, 8] },
+  };
+  const money = { finalBonus: 'assets' as const, finalAssetShare: 0.1 };
+  const size = (n: number, p: [number, number], c: [number, number], d: [number, number]): GameConfigOverrides => ({
+    ...scale,
+    town: { blocksX: n, blocksY: n, producersPerGood: p, consumersPerGood: c, extraDepotSites: d },
+  });
+  print(
+    [
+      run('12×12 (today)', money, games, size(12, [2, 3], [4, 6], [10, 15])),
+      run('16×16', money, games, size(16, [4, 5], [7, 11], [18, 27])),
+      run('20×20', money, games, size(20, [6, 8], [11, 17], [28, 42])),
+    ],
+    games,
+  );
 } else {
-  console.log('usage: npm run experiments -- final|income|shortlist|scale [games]');
+  console.log('usage: npm run experiments -- final|income|shortlist|scale|map [games]');
 }
