@@ -50,3 +50,56 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 .muted { color: var(--muted); }
 #log { list-style: none; padding: 0; margin: 0; max-height: 50vh; overflow-y: auto; font-size: 13px; }
 #log li { padding: 2px 0; border-bottom: 1px solid var(--line); }
+
+/* ---- play client ---- */
+#map-wrap { position: relative; padding: 0; overflow: hidden; display: block; }
+#map { display: block; background: transparent; box-shadow: none; border-radius: 0; cursor: crosshair; }
+#hint {
+  position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); pointer-events: none;
+  font-size: 13px; color: var(--ink); background: rgba(255, 255, 255, 0.9); border: 1px solid var(--line);
+  border-radius: 999px; padding: 5px 14px; white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+}
+#hint:empty { display: none; }
+#tooltip {
+  position: absolute; pointer-events: none; background: rgba(35, 32, 27, 0.94); color: #fff;
+  padding: 7px 10px; border-radius: 8px; font-size: 13px; line-height: 1.4; max-width: 280px; z-index: 5;
+}
+#tooltip .muted { color: #c9c1b2; }
+#tooltip .bad { color: #ff9b8f; }
+#toasts { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 6px; z-index: 6; pointer-events: none; }
+.toast { background: var(--ink); color: #fff; padding: 7px 14px; border-radius: 8px; font-size: 14px; transition: opacity 0.5s; box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
+.toast.error { background: #b23b2c; }
+.toast.fade { opacity: 0; }
+#overlay { position: absolute; inset: 0; background: rgba(244, 241, 234, 0.82); display: flex; align-items: center; justify-content: center; z-index: 10; }
+#overlay[hidden] { display: none; }
+.card { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 22px 26px; max-width: 520px; box-shadow: 0 6px 24px rgba(0,0,0,0.12); }
+.card h1 { margin: 0 0 12px; font-size: 22px; }
+.card p, .card li { font-size: 14px; line-height: 1.5; }
+.card ul { padding-left: 18px; }
+.card table { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
+.card td { padding: 5px 6px; border-bottom: 1px solid var(--line); }
+.card tr.me td { font-weight: 700; }
+.card button { background: var(--ink); color: #fff; border: 0; border-radius: 8px; padding: 8px 16px; font-size: 14px; cursor: pointer; }
+
+.side button {
+  background: #f0ebe0; color: var(--ink); border: 1px solid var(--line); border-radius: 6px;
+  padding: 2px 8px; font-size: 12px; cursor: pointer; white-space: nowrap;
+}
+.side button:hover:not(:disabled) { background: #e6dfd0; }
+.side button:disabled { opacity: 0.45; cursor: default; }
+.side button.on { background: #fff1c2; border-color: #d4b048; }
+.bidrow { display: flex; gap: 6px; margin-top: 6px; }
+.bidrow button { flex: 1; padding: 5px 0; font-size: 13px; font-weight: 600; }
+.co { border-top: 1px solid var(--line); padding: 6px 0; }
+.co:first-child { border-top: 0; padding-top: 0; }
+#mycos .co { cursor: pointer; }
+#mycos .co.active { box-shadow: inset 3px 0 0 var(--ink); padding-left: 8px; }
+.row.big { font-size: 15px; }
+.small { font-size: 12px; }
+.sub { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 6px 0 2px; }
+.tag { font-size: 10px; background: var(--ink); color: #fff; border-radius: 4px; padding: 0 4px; margin-left: 4px; vertical-align: 1px; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; border: 1px solid var(--ink); margin-right: 5px; vertical-align: middle; }
+.good { color: #2f7d4a; }
+.bad { color: #b23b2c; }
+#log li.good { color: #2f7d4a; }
+#log li.bad { color: #b23b2c; }
