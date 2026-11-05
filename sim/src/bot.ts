@@ -260,7 +260,15 @@ export class Bot {
         const dp = distancesFrom(this.town.graph, p.node);
         for (const q of this.town.locations) {
           if (q.kind !== 'consumer' || q.good !== p.good || !near(q)) continue;
-          routes.push({ depot: depot.id, producer: p.id, consumer: q.id, length: d[p.node] + 2 * dp[q.node] });
+          // Length of one round trip, as the truck will drive it.
+          const via = this.cfg.trucks.viaDepot;
+          const length =
+            via === 'hub'
+              ? 2 * (d[p.node] + d[q.node])
+              : via === 'loaded'
+                ? d[p.node] + d[q.node] + dp[q.node]
+                : d[p.node] + 2 * dp[q.node];
+          routes.push({ depot: depot.id, producer: p.id, consumer: q.id, length });
         }
       }
     }

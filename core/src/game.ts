@@ -317,7 +317,11 @@ export class Game {
         if (action.type === 'assignRoute') {
           const free = this.trucks.trucks.find((t) => t.depot === action.depot && t.orders.length === 0 && t.cargo === null);
           if (!free) return reject('no free truck at that depot (buy one, or take one off another route)');
-          this.trucks.setOrders(free, [{ location: action.producer, action: 'load' }, { location: action.consumer, action: 'unload' }], this.t);
+          const load = { location: action.producer, action: 'load' as const };
+          const unload = { location: action.consumer, action: 'unload' as const };
+          const sign = { location: action.depot, action: 'signOff' as const };
+          const via = this.cfg.trucks.viaDepot;
+          this.trucks.setOrders(free, via === 'hub' ? [load, sign, unload, sign] : via === 'loaded' ? [load, sign, unload] : [load, unload], this.t);
           free.route = key;
         } else {
           const onRoute = this.trucks.trucks.filter((t) => t.route === key);

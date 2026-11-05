@@ -9,7 +9,7 @@
  * - Trucks move smoothly between ticks, show the pallet they carry (empty = hollow), queue
  *   neatly beside a building, and show breakdowns and repairs.
  */
-import { distancesFrom, shortestPath, type Location, type Observation, type Route, type Town } from '@sr/core';
+import { distancesFrom, routeVia, type Location, type Observation, type Route, type Town } from '@sr/core';
 
 // Company colours stay clear of the goods' colours (white milk, tan bread, slate fuel).
 export const COMPANY_COLORS = ['#d1452f', '#2a7ab0', '#3f9a54', '#8a5cc2', '#d24f93', '#1f9e9a'];
@@ -140,15 +140,21 @@ export class Renderer {
     return best;
   }
 
+  /** Whether routes run through their depot (TruckConfig.viaDepot); set by the client. */
+  via: 'none' | 'loaded' | 'hub' = 'none';
   private paths = new Map<string, number[]>();
-  /** Road nodes a truck drives from producer to consumer (cached; the roads never change). */
+  /**
+   * Road nodes a loaded truck drives: producer to consumer, or producer to depot to consumer when
+   * routes run through the depot (cached; the roads never change).
+   */
   private routePath(r: Route): number[] {
-    const key = `${r.producer}>${r.consumer}`;
+    const key = this.via === 'none' ? `${r.producer}>${r.consumer}` : r.key;
     let path = this.paths.get(key);
     if (!path) {
       const a = this.town.locations[r.producer].node;
       const b = this.town.locations[r.consumer].node;
-      path = shortestPath(this.town.graph, a, b) ?? [a, b];
+      const legs = this.via === 'none' ? [a, b] : [a, this.town.locations[r.depot].node, b];
+      path = routeVia(this.town.graph, legs) ?? legs;
       this.paths.set(key, path);
     }
     return path;
@@ -164,7 +170,7 @@ export class Renderer {
     const term = this.town.graph.terminal;
     const trimmed = path.filter((n, i) => !(term[n] && (i === 0 || i === path.length - 1)) || path.length <= 2);
     const nodes = trimmed.map((n) => this.town.graph.nodes[n]);
-    const same = routes.filter((x) => x.producer === r.producer && x.consumer === r.consumer);
+    const same = routes.filter((x) => x.producer === r.producer && x.consumer === r.consumer && (this.via === 'none' || x.depot === r.depot));
     const k = (same.indexOf(r) - (same.length - 1) / 2) * 4;
     return nodes.map((n, i) => {
       const a = nodes[Math.max(0, i - 1)];

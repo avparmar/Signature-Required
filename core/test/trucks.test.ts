@@ -337,3 +337,34 @@ describe('wear, servicing and breakdowns', () => {
     expect(a.g.stateHash()).toBe(b.g.stateHash());
   });
 });
+
+describe('routes through the depot', () => {
+  for (const via of ['loaded', 'hub'] as const) {
+    it(`${via}: every load is signed off at the depot before it's delivered`, () => {
+      const { g, depot, producer, consumer } = setup({ trucks: { viaDepot: via, breakdowns: false } });
+      g.addTruck(0);
+      g.act(0, { type: 'assignRoute', depot: depot.id, producer: producer.id, consumer: consumer.id });
+      runFor(g, 600);
+      const ev = g.drainEvents(0).filter((e) => e.type === 'loaded' || e.type === 'signedOff' || e.type === 'delivered');
+      expect(ev.filter((e) => e.type === 'delivered').length).toBeGreaterThan(1);
+      // Between each load and its delivery there is a loaded sign-off at the route's depot.
+      let state: 'empty' | 'loaded' | 'signed' = 'empty';
+      for (const e of ev) {
+        if (e.type === 'loaded') state = 'loaded';
+        if (e.type === 'signedOff' && e.loaded) {
+          expect(state).toBe('loaded');
+          expect(e.depot).toBe(depot.id);
+          state = 'signed';
+        }
+        if (e.type === 'delivered') {
+          expect(state).toBe('signed');
+          state = 'empty';
+        }
+      }
+      // The hub also signs off empty trucks on their way back.
+      const empty = ev.filter((e) => e.type === 'signedOff' && !e.loaded).length;
+      if (via === 'hub') expect(empty).toBeGreaterThan(0);
+      else expect(empty).toBe(0);
+    });
+  }
+});

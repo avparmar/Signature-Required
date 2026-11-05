@@ -378,6 +378,26 @@ if (which === 'final') {
       `| ${label} | ${avg(rs.map((r) => r.wear.breakdowns)).toFixed(0)} | ${avg(rs.map((r) => r.wear.services)).toFixed(0)} | ${avg(rs.map((r) => r.wear.repairs)).toFixed(0)} | ${avg(rs.map((r) => r.delivered)).toFixed(0)} | ${avg(rs.map((r) => avg(r.companies.map((c) => c.trucks)))).toFixed(1)} | ${avg(rs.map((r) => r.depotBuys.count)).toFixed(1)} | ${avg(rs.map((r) => r.territory.avgReach)).toFixed(1)} | ${pct(avg(rs.map((r) => r.territory.contestedShare)))} | ${(100 * avg(rs.map((r) => r.territory.handoverRate))).toFixed(1)}% | $${avg(rs.map((r) => avg(r.companies.map((c) => c.paidPerShare)))).toFixed(0)} | ${avg(rs.map((r) => r.closed)).toFixed(0)} |`,
     );
   }
+} else if (which === 'viadepot') {
+  // Routes through the depot: every load signed off at the depot (loaded leg), or the depot on
+  // both legs (hub). Sign-offs service the trucks, so wear and breakdowns are off in those rows.
+  console.log(`\nviadepot experiment (${games} games per variant)\n`);
+  console.log('| Rules | Pallets delivered | Trucks per company | Depots bought | Depot→producer distance (blocks) | Contested locations | Handovers | Producers shared | Avg paid per share | Avg auction price | Closures |');
+  console.log('|---|---|---|---|---|---|---|---|---|---|---|');
+  const calm = { wearNear: 0, wearFar: 0, breakdowns: false };
+  const variants: [string, GameConfigOverrides][] = [
+    ['Today: direct, wear and breakdowns', {}],
+    ['Direct, no wear', { trucks: calm }],
+    ['Through the depot, loaded leg', { trucks: { ...calm, viaDepot: 'loaded' } }],
+    ['Through the depot, hub (both legs)', { trucks: { ...calm, viaDepot: 'hub' } }],
+  ];
+  for (const [label, o] of variants) {
+    const rs = Array.from({ length: games }, (_, i) => runGame({ ...o, seed: 1 + i }));
+    const pct = (x: number) => `${(100 * x).toFixed(0)}%`;
+    console.log(
+      `| ${label} | ${avg(rs.map((r) => r.delivered)).toFixed(0)} | ${avg(rs.map((r) => avg(r.companies.map((c) => c.trucks)))).toFixed(1)} | ${avg(rs.map((r) => r.depotBuys.count)).toFixed(1)} | ${avg(rs.map((r) => r.territory.avgReach)).toFixed(1)} | ${pct(avg(rs.map((r) => r.territory.contestedShare)))} | ${(100 * avg(rs.map((r) => r.territory.handoverRate))).toFixed(1)}% | ${avg(rs.map((r) => r.sharing.producers)).toFixed(1)} | $${avg(rs.map((r) => avg(r.companies.map((c) => c.paidPerShare)))).toFixed(0)} | $${avg(rs.map((r) => avg(r.companies.filter((c) => c.avgPrice > 0).map((c) => c.avgPrice)))).toFixed(0)} | ${avg(rs.map((r) => r.closed)).toFixed(0)} |`,
+    );
+  }
 } else if (which === 'invest') {
   worldHeader(games);
   runWorld('$60 level-up (default)', games);
@@ -448,5 +468,5 @@ if (which === 'final') {
       );
     }
 } else {
-  console.log('usage: npm run experiments -- final|income|shortlist|scale|map|split|sar|depots|speculator|world|bays|invest|grace|fairness|rivers|loading|depots2|dividends|servicing [games]');
+  console.log('usage: npm run experiments -- final|income|shortlist|scale|map|split|sar|depots|speculator|world|bays|invest|grace|fairness|rivers|loading|depots2|dividends|servicing|viadepot [games]');
 }

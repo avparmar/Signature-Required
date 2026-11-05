@@ -24,6 +24,7 @@ const fmtClock = (sec: number) => {
 
 let session = new Session();
 const renderer = new Renderer($<HTMLCanvasElement>('map'), session.game.town);
+renderer.via = session.cfg.trucks.viaDepot;
 let last = performance.now();
 let lastUi = 0;
 
@@ -601,6 +602,7 @@ function newGame() {
   session = new Session();
   session.speed = Number($<HTMLSelectElement>('speed').value);
   renderer.setTown(session.game.town);
+  renderer.via = session.cfg.trucks.viaDepot;
   renderer.resize(true);
   $('log').innerHTML = '';
   $('overlay').hidden = true;

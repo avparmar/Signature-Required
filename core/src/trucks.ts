@@ -40,6 +40,14 @@ export interface TruckConfig {
   breakdowns: boolean;
   /** Breakdown chance per block driven is this × (1 − reliability). */
   breakdownRate: number;
+  /**
+   * Routes through the depot: 'none' (producer ↔ consumer), 'loaded' (every load is signed off at
+   * the depot on its way to the consumer), or 'hub' (the depot on both legs: a star). A sign-off
+   * also services the truck.
+   */
+  viaDepot: 'none' | 'loaded' | 'hub';
+  /** Seconds a sign-off at the depot takes. */
+  signOffSec: number;
   /** Seconds a broken-down truck stands still before limping to a depot. */
   breakdownSec: number;
   /** Speed of a limping truck, as a share of normal speed. */
@@ -59,12 +67,14 @@ export const DEFAULT_TRUCKS: TruckConfig = {
   breakdownRate: 0.015,
   breakdownSec: 8,
   limpSpeed: 0.5,
+  viaDepot: 'none',
+  signOffSec: 2,
 };
 
 export interface Stop {
-  /** Town location id: a producer for 'load', a consumer for 'unload'. */
+  /** Town location id: a producer for 'load', a consumer for 'unload', a depot for 'signOff'. */
   location: number;
-  action: 'load' | 'unload';
+  action: 'load' | 'unload' | 'signOff';
   /** Optional road nodes to drive through, in order, on the way to this stop. */
   via?: number[];
 }
@@ -119,6 +129,8 @@ export interface Truck {
   toService: boolean;
   /** Broke down and is limping to a depot (slower). */
   limping: boolean;
+  /** At a depot for a sign-off (state 'repairing' while it lasts). */
+  signing: boolean;
 }
 
 export type TruckEvent =
@@ -126,7 +138,8 @@ export type TruckEvent =
   | { type: 'delivered'; t: number; truck: number; company: number; location: number; good: number; origin: number; price: number }
   | { type: 'truckIdle'; t: number; truck: number; company: number; reason: string }
   | { type: 'brokeDown'; t: number; truck: number; company: number; node: number }
-  | { type: 'serviced'; t: number; truck: number; company: number; depotNode: number; repair: boolean };
+  | { type: 'serviced'; t: number; truck: number; company: number; depotNode: number; repair: boolean }
+  | { type: 'signedOff'; t: number; truck: number; company: number; depot: number; loaded: boolean };
 
 /** Why a set of orders is invalid, or null if it's fine. */
 export function validateOrders(stops: Stop[], kindOf: (loc: number) => string | undefined, nodeCount: number): string | null {
@@ -135,6 +148,7 @@ export function validateOrders(stops: Stop[], kindOf: (loc: number) => string | 
     if (kind === undefined) return `no location ${s.location}`;
     if (s.action === 'load' && kind !== 'producer') return `can only load at a producer (location ${s.location} is a ${kind})`;
     if (s.action === 'unload' && kind !== 'consumer') return `can only unload at a consumer (location ${s.location} is a ${kind})`;
+    if (s.action === 'signOff' && kind !== 'depot') return `can only sign off at a depot (location ${s.location} is a ${kind})`;
     for (const n of s.via ?? []) if (!Number.isInteger(n) || n < 0 || n >= nodeCount) return `no road node ${n}`;
   }
   return null;
@@ -181,6 +195,7 @@ export class TruckSystem {
       reliability: 1,
       toService: false,
       limping: false,
+      signing: false,
     };
     this.trucks.push(t);
     return t;
@@ -198,9 +213,9 @@ export class TruckSystem {
   private applyOrders(truck: Truck, stops: Stop[], now: number) {
     truck.pendingOrders = null;
     if (this.inWorkshop(truck)) {
-      // Broken down or off for a service: the new orders start once it's fixed.
+      // Broken down, off for a service or signing off: the new orders start once it's done.
       truck.orders = stops;
-      truck.orderIndex = 0;
+      truck.orderIndex = truck.signing ? -1 : 0;
       return;
     }
     if (truck.state === 'servicing') {
@@ -255,6 +270,7 @@ export class TruckSystem {
   /** Can this truck do anything at this stop, given what it's carrying? */
   private actionable(truck: Truck, stop: Stop): boolean {
     if (stop.action === 'load') return truck.cargo === null;
+    if (stop.action === 'signOff') return this.cfg.viaDepot === 'hub' || truck.cargo !== null;
     const c = this.loc(stop.location);
     return truck.cargo !== null && c !== undefined && c.good === truck.cargo.good;
   }
@@ -284,7 +300,33 @@ export class TruckSystem {
     truck.path = route.slice(1);
     truck.progress = 0;
     truck.state = 'driving';
-    if (truck.path.length === 0) this.arrive(truck, stop.location);
+    if (truck.path.length === 0) this.arriveAtStop(truck, now);
+  }
+
+  /** Reached the current stop: queue at a building, or sign off at a depot. */
+  private arriveAtStop(truck: Truck, now: number) {
+    const stop = truck.orders[truck.orderIndex];
+    if (stop.action !== 'signOff') return this.arrive(truck, stop.location);
+    truck.signing = true;
+    truck.state = 'repairing';
+    truck.busyUntil = now + this.cfg.signOffSec;
+  }
+
+  private finishSignOff(truck: Truck, now: number) {
+    const stop = truck.orders[truck.orderIndex];
+    truck.signing = false;
+    truck.reliability = 1; // serviced while it's there
+    this.emit({ type: 'signedOff', t: now, truck: truck.id, company: truck.company, depot: stop?.location ?? -1, loaded: truck.cargo !== null });
+    truck.state = 'driving'; // departForStop sets the real state
+    if (truck.homing && !(truck.cargo && truck.orders.length)) {
+      truck.orders = [];
+      return this.driveTo(truck, truck.home, now);
+    }
+    if (truck.orderIndex < 0) {
+      truck.orderIndex = 0;
+      return this.departForStop(truck, now, false);
+    }
+    this.departForStop(truck, now, true);
   }
 
   private goIdle(truck: Truck, now: number, reason: string) {
@@ -319,7 +361,10 @@ export class TruckSystem {
       if (truck.state === 'driving') this.drive(truck, this.cfg.speed * (truck.limping ? this.cfg.limpSpeed : 1) * dt, now);
       else if (truck.state === 'servicing' && now >= truck.busyUntil - 1e-9) this.finishService(truck, now);
       else if (truck.state === 'broken' && now >= truck.busyUntil - 1e-9) this.goService(truck, now, true);
-      else if (truck.state === 'repairing' && now >= truck.busyUntil - 1e-9) this.finishRepair(truck, now);
+      else if (truck.state === 'repairing' && now >= truck.busyUntil - 1e-9) {
+        if (truck.signing) this.finishSignOff(truck, now);
+        else this.finishRepair(truck, now);
+      }
     }
     // Serve queues in a fixed order (by location id) for determinism.
     for (const location of [...this.queues.keys()].sort((a, b) => a - b)) this.serve(location, now, baysOf(location));
@@ -352,7 +397,7 @@ export class TruckSystem {
         truck.toHome = false;
         truck.homing = false;
         this.goIdle(truck, now, 'home');
-      } else this.arrive(truck, truck.orders[truck.orderIndex].location);
+      } else this.arriveAtStop(truck, now);
     }
   }
 
