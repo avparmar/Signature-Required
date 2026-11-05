@@ -340,6 +340,24 @@ if (which === 'final') {
       `| ${label} | ${avg(rs.map((r) => r.delivered)).toFixed(0)} | ${avg(rs.map((r) => r.sharing.producers)).toFixed(1)} | ${avg(rs.map((r) => r.sharing.split)).toFixed(2)} | ${(100 * avg(rs.map((r) => r.bays.waitingShare))).toFixed(0)}% | ${Math.max(...rs.map((r) => r.bays.maxQueue))} | $${avg(paid).toFixed(0)} | ${avg(rs.map((r) => avg(r.companies.map((c) => c.trucks)))).toFixed(1)} | ${avg(rs.map((r) => r.closed)).toFixed(0)} |`,
     );
   }
+} else if (which === 'dividends') {
+  // Smaller dividends: less of each delivery into the dividend pot, with and without the final bonus.
+  console.log(`\ndividends experiment (${games} games per variant)\n`);
+  console.log('| Pot share of each delivery | Final bonus | Paid out by payout (all players, $) | Paid per share over the game | Avg auction price per share | Return (paid ÷ price) | Trucks per company | Bought in last 3 min (count / $) | Pallets delivered | Closures |');
+  console.log('|---|---|---|---|---|---|---|---|---|---|');
+  for (const pot of [1, 0.5, 0.3])
+    for (const bonus of [0.1, 0]) {
+      const rs = Array.from({ length: games }, (_, i) =>
+        runGame({ seed: 1 + i, money: { deliveryToPot: pot, finalAssetShare: bonus } }),
+      );
+      const rounds = Math.max(...rs.map((r) => r.payouts.length));
+      const per = Array.from({ length: rounds }, (_, k) => avg(rs.map((r) => r.payouts[k] ?? 0)));
+      const paid = avg(rs.map((r) => avg(r.companies.map((c) => c.paidPerShare))));
+      const price = avg(rs.map((r) => avg(r.companies.filter((c) => c.avgPrice > 0).map((c) => c.avgPrice))));
+      console.log(
+        `| ${pot === 1 ? '100% (today)' : `${pot * 100}%`} | ${bonus ? '10% of assets' : 'None'} | ${per.map((x) => x.toFixed(0)).join(' / ')} | $${paid.toFixed(0)} | $${price.toFixed(0)} | ${(paid / price).toFixed(1)}× | ${avg(rs.map((r) => avg(r.companies.map((c) => c.trucks)))).toFixed(1)} | ${avg(rs.map((r) => r.lateBuys.count)).toFixed(1)} / $${avg(rs.map((r) => r.lateBuys.spent)).toFixed(0)} | ${avg(rs.map((r) => r.delivered)).toFixed(0)} | ${avg(rs.map((r) => r.closed)).toFixed(0)} |`,
+      );
+    }
 } else if (which === 'invest') {
   worldHeader(games);
   runWorld('$60 level-up (default)', games);
@@ -410,5 +428,5 @@ if (which === 'final') {
       );
     }
 } else {
-  console.log('usage: npm run experiments -- final|income|shortlist|scale|map|split|sar|depots|speculator|world|bays|invest|grace|fairness|rivers|loading|depots2 [games]');
+  console.log('usage: npm run experiments -- final|income|shortlist|scale|map|split|sar|depots|speculator|world|bays|invest|grace|fairness|rivers|loading|depots2|dividends [games]');
 }
