@@ -87,6 +87,31 @@ function print(rows: Row[], games: number) {
   }
 }
 
+/** The #23 measures: territory, bays, investment, churn. */
+function printWorld(label: string, results: GameResult[]) {
+  const t = results.map((r) => r.territory);
+  const b = results.map((r) => r.bays);
+  const inv = results.map((r) => r.invested);
+  const sold = avg(results.map((r) => r.companies.reduce((s, c) => s + c.sharesSold, 0)));
+  const worst = avg(results.map((r) => Math.min(...r.companies.filter((c) => c.sharesSold > 0).map((c) => c.paidPerShare))));
+  const best = avg(results.map((r) => Math.max(...r.companies.map((c) => c.paidPerShare))));
+  console.log(
+    `| ${label} | ${(100 * avg(t.map((x) => x.contestedShare))).toFixed(0)}% | ${(100 * avg(t.map((x) => x.handoverRate))).toFixed(1)}% | ${avg(t.map((x) => x.avgReach)).toFixed(1)} | ${avg(b.map((x) => x.avgWaiting)).toFixed(2)} | ${Math.round(avg(b.map((x) => x.maxQueue)))} | ${(100 * avg(b.map((x) => x.waitingShare))).toFixed(0)}% | ${avg(inv.map((x) => x.count)).toFixed(1)} ($${avg(inv.map((x) => x.spent)).toFixed(0)}) | ${avg(results.map((r) => r.opened)).toFixed(1)} / ${avg(results.map((r) => r.closed)).toFixed(1)} | ${avg(results.map((r) => r.locationsGrown)).toFixed(1)} / ${avg(results.map((r) => r.locationsShrunk)).toFixed(1)} | ${sold.toFixed(1)} | ${avg(results.flatMap((r) => r.companies.map((c) => c.trucks))).toFixed(1)} | $${best.toFixed(0)} / $${worst.toFixed(0)} |`,
+  );
+}
+function worldHeader(games: number) {
+  console.log(`\n${which} experiment (${games} games per variant)\n`);
+  console.log(
+    '| Variant | Contested locations | Handovers per location-minute | Avg reach (blocks) | Trucks waiting per busy building | Max queue | Trucks waiting (share of all) | Level-ups bought ($) | Opened / closed | Above / below start level | Shares sold | Trucks per co. | Best / worst paid per share |',
+  );
+  console.log('|---|---|---|---|---|---|---|---|---|---|---|---|---|');
+}
+function runWorld(label: string, games: number, extra: GameConfigOverrides = {}) {
+  const results: GameResult[] = [];
+  for (let i = 0; i < games; i++) results.push(runGame({ ...extra, seed: 1 + i }));
+  printWorld(label, results);
+}
+
 const which = process.argv[2] ?? 'final';
 const games = Number(process.argv[3] ?? 20);
 if (which === 'final') {
@@ -262,6 +287,23 @@ if (which === 'final') {
     };
     console.log(`| ${label} | ${r.sharesSold.toFixed(1)} | $${r.avgPrice.toFixed(0)} | ${r.trucks.toFixed(1)} | ${r.depots.toFixed(1)} | ${side(S)} | ${side(I)} |`);
   }
+} else if (which === 'world') {
+  // #23: territories, bays, investment and churn on the defaults, and the level-speed question.
+  worldHeader(games);
+  runWorld('Defaults (4-cycle window, open at level 3)', games);
+  runWorld('2-cycle window', games, { cycles: { window: 2 } });
+  runWorld('2-cycle window, open at level 2', games, { cycles: { window: 2 }, openings: { openLevel: 2 } });
+  runWorld('2-cycle window, open at level 1', games, { cycles: { window: 2 }, openings: { openLevel: 1 } });
+} else if (which === 'bays') {
+  worldHeader(games);
+  runWorld('1 bay per building', games, { town: { bays: 1 } });
+  runWorld('2 bays (default)', games);
+  runWorld('3 bays', games, { town: { bays: 3 } });
+} else if (which === 'invest') {
+  worldHeader(games);
+  runWorld('$60 level-up (default)', games);
+  runWorld('$30 level-up', games, { money: { investBase: 30 } });
+  runWorld('$15 level-up', games, { money: { investBase: 15 } });
 } else {
-  console.log('usage: npm run experiments -- final|income|shortlist|scale|map|split|sar|depots|speculator [games]');
+  console.log('usage: npm run experiments -- final|income|shortlist|scale|map|split|sar|depots|speculator|world|bays|invest [games]');
 }

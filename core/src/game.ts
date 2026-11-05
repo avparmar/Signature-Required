@@ -564,6 +564,7 @@ export class Game {
     if (!choice) return;
     const loc = openOnLot(this.town, choice.lot, choice.kind, choice.good);
     const state = newLocationState(loc, this.cfg.cycles, this.rng, this.t);
+    state.level = Math.max(1, Math.min(this.cfg.cycles.maxLevel, o.openLevel));
     if (state.kind === 'consumer') state.price = this.rng.next() < this.cfg.money.premiumShare ? this.cfg.money.premiumPrice : this.cfg.money.palletPrice;
     this.locations.push(state);
     this.locById.set(state.id, state);

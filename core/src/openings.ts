@@ -20,6 +20,8 @@ export interface OpeningConfig {
   crowdRadius: number;
   /** Lots further than this from every producer/consumer are also avoided (too remote). */
   remoteRadius: number;
+  /** Level a newly opened location starts at. */
+  openLevel: number;
 }
 
 export const DEFAULT_OPENINGS: OpeningConfig = {
@@ -28,6 +30,7 @@ export const DEFAULT_OPENINGS: OpeningConfig = {
   quietEndSec: 120,
   crowdRadius: 2,
   remoteRadius: 8,
+  openLevel: 3,
 };
 
 export interface OpeningChoice {
