@@ -7,7 +7,7 @@
  * - a well-run company's shares should clearly beat a poorly run company's;
  * - shares should keep selling (ideally sold out by mid-game).
  */
-import type { GameConfigOverrides, MoneyConfig } from '@sr/core';
+import { generateTown, makeGameConfig, type GameConfigOverrides, type MoneyConfig } from '@sr/core';
 import { PERSONALITIES, type BotPersonality } from './bot.js';
 import { runGame, type GameResult } from './runner.js';
 
@@ -317,6 +317,41 @@ if (which === 'final') {
   runWorld('Start 2, open 2, 2-min grace', games, base(2, 2, 120));
   runWorld('Start 2, open 1, 2-min grace', games, base(2, 1, 120));
   runWorld('Start 1, open 1, 2-min grace', games, base(1, 1, 120));
+} else if (which === 'fairness') {
+  // Looser fairness: how unequal do starts get, and what does that do to auctions and returns?
+  console.log(`\nfairness experiment (${games} games per variant)\n`);
+  console.log('| Fairness (weakest start ≥ x × strongest) | Start score: weakest ÷ strongest | Opening price: dearest / cheapest company | Companies opening at $0 | Best / worst paid per share | Trucks per co. (best start / worst start) | Shares sold |');
+  console.log('|---|---|---|---|---|---|---|');
+  for (const [label, ratio] of [['60% (today)', 0.6], ['30%', 0.3], ['Off', 0]] as const) {
+    const ratios: number[] = [];
+    const dear: number[] = [];
+    const cheap: number[] = [];
+    const zero: number[] = [];
+    const best: number[] = [];
+    const worst: number[] = [];
+    const bestTrucks: number[] = [];
+    const worstTrucks: number[] = [];
+    const sold: number[] = [];
+    for (let i = 0; i < games; i++) {
+      const cfg = makeGameConfig({ seed: 1 + i, town: { fairMinRatio: ratio } });
+      const town = generateTown(cfg.town);
+      const scores = town.fairness.map((f) => f.score);
+      ratios.push(Math.min(...scores) / Math.max(...scores));
+      const r = runGame({ seed: 1 + i, town: { fairMinRatio: ratio } });
+      const opening = r.auctions.filter((a) => a.opening);
+      const prices = r.companies.map((_, c) => opening.find((a) => a.company === c)?.amount ?? 0);
+      dear.push(Math.max(...prices));
+      cheap.push(Math.min(...prices));
+      zero.push(prices.filter((p) => p === 0).length);
+      best.push(Math.max(...r.companies.map((c) => c.paidPerShare)));
+      worst.push(Math.min(...r.companies.filter((c) => c.sharesSold > 0).map((c) => c.paidPerShare)));
+      const order = town.fairness.slice().sort((a, b) => b.score - a.score);
+      bestTrucks.push(r.companies[order[0].company].trucks);
+      worstTrucks.push(r.companies[order[order.length - 1].company].trucks);
+      sold.push(r.companies.reduce((s, c) => s + c.sharesSold, 0));
+    }
+    console.log(`| ${label} | ${avg(ratios).toFixed(2)} | $${avg(dear).toFixed(0)} / $${avg(cheap).toFixed(0)} | ${avg(zero).toFixed(1)} | $${avg(best).toFixed(0)} / $${avg(worst).toFixed(0)} | ${avg(bestTrucks).toFixed(1)} / ${avg(worstTrucks).toFixed(1)} | ${avg(sold).toFixed(1)} |`);
+  }
 } else {
-  console.log('usage: npm run experiments -- final|income|shortlist|scale|map|split|sar|depots|speculator|world|bays|invest|grace [games]');
+  console.log('usage: npm run experiments -- final|income|shortlist|scale|map|split|sar|depots|speculator|world|bays|invest|grace|fairness [games]');
 }
