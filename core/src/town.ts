@@ -1,6 +1,6 @@
 /**
  * The town: a street grid with gaps and a few diagonals, plus producers, consumers and depot
- * sites on lots along the streets. Generated from a seed; the same seed always gives the same town.
+ * sites, one per block, reached from any street around their block. Generated from a seed; the same seed always gives the same town.
  */
 import { buildGraph, dist, distancesFrom, isConnected, type RoadGraph, type Vec } from './graph.js';
 import { Rng } from './rng.js';
@@ -13,7 +13,7 @@ export interface Location {
   kind: LocationKind;
   /** Index into TownConfig.goods (producers and consumers only). */
   good: number | null;
-  /** Road node the location sits on (its driveway). */
+  /** The building's road node, in the middle of its block (driveways lead to each street around it). */
   node: number;
   x: number;
   y: number;
@@ -90,7 +90,7 @@ export const DEFAULT_TOWN: TownConfig = {
   emptyLots: [20, 30],
   rivers: 0,
   bridgesPerRiver: [2, 3],
-  minSpacing: 1.2,
+  minSpacing: 1,
   fairRadius: 6,
   fairMinRatio: 0.6,
   maxRerolls: 60,
@@ -259,39 +259,57 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
     }
 
 
-  // Lots sit at the middle of a straight street segment; placing one splits the segment.
-  // Bridges never carry a lot, so they stay a single street end to end.
-  const streets = edges.map(([a, b]) => ({ a, b, used: false, bridge: protectedEdges.has(ekey(a, b)) }));
+  // Buildings sit in blocks, one per block, and are reached from every street around the block:
+  // each of those streets gets a pull-in point halfway along, joined to the building by a short
+  // driveway. Buildings are dead ends for routing, so nobody cuts across a block. Blocks with a
+  // diagonal street or water stay empty.
+  const streetSet = new Set(edges.map(([a, b]) => ekey(a, b)));
+  const diagonalBlocks = new Set(
+    diagonals.map(([a, b]) => `${Math.min(a % (W + 1), b % (W + 1))},${Math.min(Math.floor(a / (W + 1)), Math.floor(b / (W + 1)))}`),
+  );
+  const sidesOf = (i: number, j: number): [number, number][] =>
+    (
+      [
+        [id(i, j), id(i + 1, j)],
+        [id(i, j + 1), id(i + 1, j + 1)],
+        [id(i, j), id(i, j + 1)],
+        [id(i + 1, j), id(i + 1, j + 1)],
+      ] as [number, number][]
+    ).filter(([a, b]) => streetSet.has(ekey(a, b)));
+  const blocks: { i: number; j: number; sides: [number, number][]; used: boolean }[] = [];
+  for (let j = 0; j < H; j++)
+    for (let i = 0; i < W; i++) {
+      if (riverBlocks.has(`${i},${j}`) || diagonalBlocks.has(`${i},${j}`)) continue;
+      const sides = sidesOf(i, j);
+      if (sides.length) blocks.push({ i, j, sides, used: false });
+    }
   const locations: Omit<Location, 'node'>[] = [];
-  const lotOf: number[] = []; // location index -> street index
+  const blockOf: number[] = []; // location index -> block index
 
   const free = (p: Vec) => locations.every((l) => dist(l, p) >= cfg.minSpacing);
-  const mid = (s: { a: number; b: number }): Vec => ({
-    x: (nodes[s.a].x + nodes[s.b].x) / 2,
-    y: (nodes[s.a].y + nodes[s.b].y) / 2,
-  });
+  const centre = (b: { i: number; j: number }): Vec => ({ x: b.i + 0.5, y: b.j + 0.5 });
   // Snowflake towns put businesses at the ends of their cul-de-sacs, and depots on through streets.
   const degree = new Map<number, number>();
   for (const [a, b] of [...edges, ...diagonals]) for (const n of [a, b]) degree.set(n, (degree.get(n) ?? 0) + 1);
-  const deadEnd = (st: { a: number; b: number }) => degree.get(st.a) === 1 || degree.get(st.b) === 1;
+  const deadEnd = (b: { sides: [number, number][] }) => b.sides.some(([p, q]) => degree.get(p) === 1 || degree.get(q) === 1);
   const place = (loc: Omit<Location, 'node' | 'x' | 'y' | 'id'>, near?: Vec): boolean => {
-    let candidates = streets.map((s, i) => ({ s, i })).filter(({ s }) => !s.used && !s.bridge && free(mid(s)));
+    let candidates = blocks.map((b, i) => ({ b, i })).filter(({ b }) => !b.used && free(centre(b)));
     if (candidates.length === 0) return false;
     if (cfg.layout === 'snowflake') {
-      const ends = candidates.filter(({ s }) => deadEnd(s));
-      const through = candidates.filter(({ s }) => !deadEnd(s));
+      const ends = candidates.filter(({ b }) => deadEnd(b));
+      const through = candidates.filter(({ b }) => !deadEnd(b));
       if (loc.kind === 'depot' && through.length > 0) candidates = through;
       else if (loc.kind !== 'depot' && ends.length > 0 && rng.next() < 0.7) candidates = ends;
     }
     let pick;
     if (near) {
-      candidates.sort((p, q) => dist(mid(p.s), near) - dist(mid(q.s), near));
+      candidates.sort((p, q) => dist(centre(p.b), near) - dist(centre(q.b), near));
       pick = candidates[Math.min(candidates.length - 1, rng.int(0, 2))];
     } else pick = rng.pick(candidates);
-    pick.s.used = true;
-    const p = mid(pick.s);
+    pick.b.used = true;
+    const p = centre(pick.b);
     locations.push({ ...loc, id: locations.length, x: p.x, y: p.y });
-    lotOf.push(pick.i);
+    blockOf.push(pick.i);
     return true;
   };
 
@@ -332,21 +350,35 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
   const nl = rng.int(...cfg.emptyLots);
   for (let k = 0; k < nl; k++) place({ kind: 'lot', good: null, level: 0, bays: cfg.bays, startCompany: null });
 
-  // Split each used street at its midpoint with a lot node.
-  const allNodes = [...nodes];
-  const finalEdges: [number, number][] = [];
-  const lotNode = new Map<number, number>(); // street index -> node
-  streets.forEach((s, i) => {
-    if (!s.used) {
-      finalEdges.push([s.a, s.b]);
-      return;
+  // Split each street that a building faces at its midpoint, and add the driveways.
+  const allNodes: Vec[] = [...nodes];
+  const midOf = new Map<string, number>(); // street key -> midpoint node
+  for (const bi of blockOf)
+    for (const [a, b] of blocks[bi].sides) {
+      const k = ekey(a, b);
+      if (midOf.has(k)) continue;
+      midOf.set(k, allNodes.length);
+      allNodes.push({ x: (nodes[a].x + nodes[b].x) / 2, y: (nodes[a].y + nodes[b].y) / 2 });
     }
-    const n = allNodes.length;
-    allNodes.push(mid(s));
-    lotNode.set(i, n);
-    finalEdges.push([s.a, n], [n, s.b]);
-  });
+  const finalEdges: [number, number][] = [];
+  for (const [a, b] of edges) {
+    const m = midOf.get(ekey(a, b));
+    if (m === undefined) finalEdges.push([a, b]);
+    else finalEdges.push([a, m], [m, b]);
+  }
   finalEdges.push(...diagonals);
+  const buildingNode: number[] = [];
+  locations.forEach((l, li) => {
+    const n = allNodes.length;
+    allNodes.push({ x: l.x, y: l.y });
+    buildingNode.push(n);
+    for (const [a, b] of blocks[blockOf[li]].sides) finalEdges.push([n, midOf.get(ekey(a, b))!]);
+  });
+  // Bridges keep their ends; a bridge split by a building on its bank keeps its first half.
+  for (const br of bridges) {
+    const m = midOf.get(ekey(br[0], br[1]));
+    if (m !== undefined) br[1] = m;
+  }
   // Drop intersections no street uses (snowflake towns leave many), renumbering the rest.
   const live = new Map<number, number>();
   for (const [a, b] of finalEdges) for (const n of [a, b]) if (!live.has(n)) live.set(n, live.size);
@@ -355,12 +387,13 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
   const graph = buildGraph(
     keptNodes.map((n) => allNodes[n]),
     finalEdges.map(([a, b]) => [live.get(a)!, live.get(b)!] as [number, number]),
+    buildingNode.map((n) => live.get(n)!),
   );
   for (const br of bridges) {
     br[0] = live.get(br[0])!;
     br[1] = live.get(br[1])!;
   }
-  const locs: Location[] = locations.map((l, i) => ({ ...l, node: live.get(lotNode.get(lotOf[i])!)! }));
+  const locs: Location[] = locations.map((l, i) => ({ ...l, node: live.get(buildingNode[i])! }));
 
   const fairness = scoreStarts(graph, locs, cfg);
   const scores = fairness.map((f) => f.score);

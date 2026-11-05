@@ -1,4 +1,8 @@
-/** Road network: intersections and lots are nodes, street segments are edges. */
+/**
+ * Road network: intersections, street midpoints and buildings are nodes; street segments and
+ * driveways are edges. A building node is a dead end: routes can start or finish there but never
+ * pass through it (no cutting across a block).
+ */
 
 export interface Vec {
   x: number;
@@ -24,6 +28,8 @@ export interface RoadGraph {
   edges: RoadEdge[];
   /** For each node, the edges leaving it and where they go. */
   adj: { to: number; edge: number }[][];
+  /** Building nodes: routes may start or end here but not pass through. */
+  terminal: boolean[];
 }
 
 export function dist(p: Vec, q: Vec): number {
@@ -31,7 +37,7 @@ export function dist(p: Vec, q: Vec): number {
 }
 
 /** Build a graph (with adjacency) from plain node and edge lists; ids are re-assigned densely. */
-export function buildGraph(nodes: Vec[], edges: [number, number][]): RoadGraph {
+export function buildGraph(nodes: Vec[], edges: [number, number][], terminal: number[] = []): RoadGraph {
   const ns = nodes.map((n, id) => ({ id, x: n.x, y: n.y }));
   const es = edges.map(([a, b], id) => ({ id, a, b, length: dist(ns[a], ns[b]) }));
   const adj: { to: number; edge: number }[][] = ns.map(() => []);
@@ -39,7 +45,9 @@ export function buildGraph(nodes: Vec[], edges: [number, number][]): RoadGraph {
     adj[e.a].push({ to: e.b, edge: e.id });
     adj[e.b].push({ to: e.a, edge: e.id });
   }
-  return { nodes: ns, edges: es, adj };
+  const term = ns.map(() => false);
+  for (const n of terminal) term[n] = true;
+  return { nodes: ns, edges: es, adj, terminal: term };
 }
 
 /** True if every node can reach every other. */
@@ -115,6 +123,7 @@ export function distancesFrom(g: RoadGraph, from: number): Float64Array {
   while (heap.size) {
     const { key, value: n } = heap.pop();
     if (key > d[n]) continue;
+    if (n !== from && g.terminal[n]) continue; // no driving through a building
     for (const { to, edge } of g.adj[n]) {
       const nd = key + g.edges[edge].length;
       if (nd < d[to]) {
@@ -141,6 +150,7 @@ export function shortestPath(g: RoadGraph, from: number, to: number): number[] |
     const { key, value: n } = heap.pop();
     if (key > d[n]) continue;
     if (n === to) break;
+    if (n !== from && g.terminal[n]) continue; // no driving through a building
     for (const { to: m, edge } of g.adj[n]) {
       const nd = key + g.edges[edge].length;
       if (nd < d[m] - 1e-12) {

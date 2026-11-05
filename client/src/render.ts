@@ -15,9 +15,9 @@ import { distancesFrom, shortestPath, type Location, type Observation, type Rout
 export const COMPANY_COLORS = ['#d1452f', '#2a7ab0', '#3f9a54', '#8a5cc2', '#d24f93', '#1f9e9a'];
 export const GOOD_COLORS = ['#ffffff', '#d9a35f', '#3d4660', '#8fbf5a', '#b05bb0'];
 
-/** Chess-style name for a spot: column letter (A at the left) and row number (1 at the top). */
+/** Chess-style name for a block: column letter (A at the left) and row number (1 at the top). */
 export function coordOf(x: number, y: number): string {
-  return `${String.fromCharCode(65 + Math.round(x))}${Math.round(y) + 1}`;
+  return `${String.fromCharCode(65 + Math.floor(x))}${Math.floor(y) + 1}`;
 }
 const INK = '#23201b';
 const ROAD = '#d9d2c3';
@@ -105,7 +105,7 @@ export class Renderer {
 
   /** Building radius on screen. */
   get r() {
-    return Math.max(4, Math.min(18, this.scale * 0.24));
+    return Math.max(4, Math.min(22, this.scale * 0.27));
   }
 
   /** The location under a screen point, if any. */
@@ -197,8 +197,21 @@ export class Renderer {
     ctx.lineCap = 'round';
     ctx.strokeStyle = ROAD;
     ctx.lineWidth = roadW;
+    const term = town.graph.terminal;
     ctx.beginPath();
     for (const e of town.graph.edges) {
+      if (term[e.a] || term[e.b]) continue;
+      const a = town.graph.nodes[e.a];
+      const b = town.graph.nodes[e.b];
+      ctx.moveTo(this.X(a.x), this.Y(a.y));
+      ctx.lineTo(this.X(b.x), this.Y(b.y));
+    }
+    ctx.stroke();
+    // Driveways: short stubs from each building to the streets around its block.
+    ctx.lineWidth = Math.max(1.5, roadW * 0.45);
+    ctx.beginPath();
+    for (const e of town.graph.edges) {
+      if (!term[e.a] && !term[e.b]) continue;
       const a = town.graph.nodes[e.a];
       const b = town.graph.nodes[e.b];
       ctx.moveTo(this.X(a.x), this.Y(a.y));
@@ -229,7 +242,7 @@ export class Renderer {
       ctx.lineWidth = roadW * 2.2;
       ctx.beginPath();
       for (const e of town.graph.edges) {
-        if (d[e.a] > hl.leash || d[e.b] > hl.leash) continue;
+        if (d[e.a] > hl.leash || d[e.b] > hl.leash || term[e.a] || term[e.b]) continue;
         const a = town.graph.nodes[e.a];
         const b = town.graph.nodes[e.b];
         ctx.moveTo(this.X(a.x), this.Y(a.y));
@@ -376,9 +389,9 @@ export class Renderer {
       ctx.font = '600 10px system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      for (let i = 0; i <= blocksX; i++) ctx.fillText(String.fromCharCode(65 + i), this.X(i), Math.max(8, this.Y(-0.3) - 8));
+      for (let i = 0; i < blocksX; i++) ctx.fillText(String.fromCharCode(65 + i), this.X(i + 0.5), Math.max(8, this.Y(-0.3) - 8));
       ctx.textAlign = 'right';
-      for (let j = 0; j <= blocksY; j++) ctx.fillText(`${j + 1}`, Math.max(14, this.X(-0.3) - 4), this.Y(j));
+      for (let j = 0; j < blocksY; j++) ctx.fillText(`${j + 1}`, Math.max(14, this.X(-0.3) - 4), this.Y(j + 0.5));
     }
 
     // Trucks.
