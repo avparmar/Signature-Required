@@ -299,6 +299,28 @@ if (which === 'final') {
   runWorld('1 bay per building', games, { town: { bays: 1 } });
   runWorld('2 bays (default)', games);
   runWorld('3 bays', games, { town: { bays: 3 } });
+} else if (which === 'depots2') {
+  // Fewer, bigger depots (#51) and subsidised depot prices (#52), against the rules before.
+  console.log(`\ndepots2 experiment (${games} games per variant)\n`);
+  console.log('| Rules | Depots bought (per game) | Avg depot price | Bought at a subsidy | Trucks per company | Depot→producer distance (blocks) | Contested locations | Handovers | Pallets delivered | Avg paid per share | Closures |');
+  console.log('|---|---|---|---|---|---|---|---|---|---|---|');
+  const before: GameConfigOverrides = { town: { extraDepotSites: [18, 27] }, depots: { capacity: 3, pricing: 'distance', depotBase: 80 } };
+  const variants: [string, GameConfigOverrides][] = [
+    ['Before: 18–27 sites, 3 trucks, distance pricing', before],
+    ['6–9 sites, 8 trucks, distance pricing ($80)', { depots: { pricing: 'distance', depotBase: 80 } }],
+    ['6–9 sites, 8 trucks, subsidy ($150, up to 60% off) (new default)', {}],
+    ['New default + 1 river', { town: { rivers: 1 } }],
+  ];
+  for (const [label, o] of variants) {
+    const rs = Array.from({ length: games }, (_, i) => runGame({ ...o, seed: 1 + i }));
+    const pct = (x: number) => `${(100 * x).toFixed(0)}%`;
+    const buys = rs.reduce((s, r) => s + r.depotBuys.count, 0);
+    const disc = rs.reduce((s, r) => s + r.depotBuys.discounted, 0);
+    const avgPrice = buys ? rs.reduce((s, r) => s + r.depotBuys.avgPrice * r.depotBuys.count, 0) / buys : 0;
+    console.log(
+      `| ${label} | ${(buys / games).toFixed(1)} | $${avgPrice.toFixed(0)} | ${buys ? pct(disc / buys) : '–'} | ${avg(rs.map((r) => avg(r.companies.map((c) => c.trucks)))).toFixed(1)} | ${avg(rs.map((r) => r.territory.avgReach)).toFixed(1)} | ${pct(avg(rs.map((r) => r.territory.contestedShare)))} | ${(100 * avg(rs.map((r) => r.territory.handoverRate))).toFixed(1)}% | ${avg(rs.map((r) => r.delivered)).toFixed(0)} | $${avg(rs.map((r) => avg(r.companies.map((c) => c.paidPerShare)))).toFixed(0)} | ${avg(rs.map((r) => r.closed)).toFixed(0)} |`,
+    );
+  }
 } else if (which === 'loading') {
   // Round-robin loading at different load/unload times: do companies really share busy producers?
   console.log(`\nloading experiment (${games} games per variant)\n`);
@@ -388,5 +410,5 @@ if (which === 'final') {
       );
     }
 } else {
-  console.log('usage: npm run experiments -- final|income|shortlist|scale|map|split|sar|depots|speculator|world|bays|invest|grace|fairness|rivers|loading [games]');
+  console.log('usage: npm run experiments -- final|income|shortlist|scale|map|split|sar|depots|speculator|world|bays|invest|grace|fairness|rivers|loading|depots2 [games]');
 }

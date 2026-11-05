@@ -5,10 +5,11 @@
  */
 import { makeGameConfig, type GameConfig, type GameConfigOverrides } from './config.js';
 import { minimumBid, type Auction, type AuctionEvent, type AuctionRequest } from './auctions.js';
-import { depotPrice, distanceToNetwork } from './depots.js';
+import { depotPrice, subsidisedPrice } from './depots.js';
 import { assignPrices, investCost, payPerShare } from './money.js';
 import { chooseOpening } from './openings.js';
 import { initLocations, newLocationState, raiseLevel, updateCycles, type CycleEvent, type LocationState } from './economy.js';
+import { distancesFrom } from './graph.js';
 import { Rng } from './rng.js';
 import { TruckSystem, type Truck, type TruckEvent } from './trucks.js';
 import { clearToLot, generateTown, openOnLot, type Town } from './town.js';
@@ -142,6 +143,8 @@ export interface Observation {
   queues: Record<number, number[]>;
   /** Owner company of each depot site (site location id -> company); free sites are absent. */
   depots: Record<number, number>;
+  /** What each free depot site costs each company right now (site location id -> price per company). */
+  depotPrices: Record<number, number[]>;
   /** The auction running now, if any. */
   auction: Auction | null;
   /** Auctions waiting to start, in order. */
@@ -174,6 +177,10 @@ export class Game {
   readonly trucks: TruckSystem;
   /** Which company owns each depot site (site location id -> company). */
   readonly depotOwner = new Map<number, number>();
+  /** Recent pallets loaded or delivered: when, by whom, at which road node (for depot subsidies). */
+  private service: { t: number; company: number; node: number }[] = [];
+  /** Drive distances from each depot site, for district membership. */
+  private siteDistances = new Map<number, Float64Array>();
   /** Location state by town location id. */
   private locById = new Map<number, LocationState>();
   /** Every action ever applied, with the tick it took effect: enough to replay the game. */
@@ -210,6 +217,9 @@ export class Game {
       (id) => this.locById.get(id),
       (id) => this.town.locations[id].node,
       (e) => {
+        if (e.type === 'delivered' || e.type === 'loaded') {
+          this.service.push({ t: e.t, company: e.company, node: this.town.locations[e.location].node });
+        }
         if (e.type === 'delivered') {
           // Every delivery pays the company now and adds the same amount to its next dividend.
           const c = this.companies[e.company];
@@ -581,11 +591,41 @@ export class Game {
     return [...this.depotOwner].filter(([, c]) => c === company).map(([s]) => s).sort((a, b) => a - b);
   }
 
-  /** What a depot site would cost this company now (rises with distance from its depots). */
+  /**
+   * A company's share (0 to 1) of the pallets loaded and delivered in a site's district over the
+   * subsidy window. 0 if nobody served it.
+   */
+  districtShare(company: number, site: number): number {
+    const counts = this.districtCounts(site);
+    const all = counts.reduce((a, b) => a + b, 0);
+    return all ? counts[company] / all : 0;
+  }
+
+  /** Pallets loaded and delivered per company in a site's district over the subsidy window (cached per tick). */
+  private districtCounts(site: number): number[] {
+    if (this.districtCache.t !== this.t) this.districtCache = { t: this.t, counts: new Map() };
+    const hit = this.districtCache.counts.get(site);
+    if (hit) return hit;
+    const cfg = this.cfg.depots;
+    const cutoff = this.t - cfg.subsidyWindowSec;
+    if (this.service.length && this.service[0].t < cutoff) this.service = this.service.filter((s) => s.t >= cutoff);
+    const d = this.siteDistances.get(site) ?? distancesFrom(this.town.graph, this.town.locations[site].node);
+    this.siteDistances.set(site, d);
+    const counts = this.companies.map(() => 0);
+    for (const s of this.service) if (d[s.node] <= cfg.districtBlocks) counts[s.company]++;
+    this.districtCache.counts.set(site, counts);
+    return counts;
+  }
+  private districtCache: { t: number; counts: Map<number, number[]> } = { t: -1, counts: new Map() };
+
+  /** What a depot site would cost this company now. */
   depotPriceFor(company: number, site: number): number {
+    if (this.cfg.depots.pricing === 'subsidy') return subsidisedPrice(this.cfg.depots, this.districtShare(company, site));
+    // Distance pricing, using the site's cached distances (roads are undirected).
+    const d = this.siteDistances.get(site) ?? distancesFrom(this.town.graph, this.town.locations[site].node);
+    this.siteDistances.set(site, d);
     const own = this.depotsOf(company).map((s) => this.town.locations[s].node);
-    const d = distanceToNetwork(this.town.graph, this.town.locations[site].node, own);
-    return depotPrice(this.cfg.depots, d);
+    return depotPrice(this.cfg.depots, own.length ? Math.min(...own.map((n) => d[n])) : Infinity);
   }
 
   /** Dynamic state of a producer or consumer, by its town location id. */
@@ -629,6 +669,11 @@ export class Game {
       })),
       queues: Object.fromEntries([...this.trucks.queues].map(([k, v]) => [k, [...v]])),
       depots: Object.fromEntries(this.depotOwner),
+      depotPrices: Object.fromEntries(
+        this.town.locations
+          .filter((l) => l.kind === 'depot' && !this.depotOwner.has(l.id))
+          .map((l) => [l.id, this.companies.map((c) => this.depotPriceFor(c.id, l.id))]),
+      ),
       auction: this.auction ? { ...this.auction } : null,
       auctionQueue: this.auctionQueue.map((r) => ({ ...r })),
       auctionCooldownUntil: [...this.auctionCooldownUntil],

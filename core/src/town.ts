@@ -86,7 +86,7 @@ export const DEFAULT_TOWN: TownConfig = {
   consumersPerGood: [7, 11],
   bays: 2,
   companies: 5,
-  extraDepotSites: [18, 27],
+  extraDepotSites: [6, 9],
   emptyLots: [20, 30],
   rivers: 0,
   bridgesPerRiver: [2, 3],

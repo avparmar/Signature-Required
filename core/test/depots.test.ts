@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { depotPrice, distancesFrom, DEFAULT_DEPOTS, newGame, type Game } from '../src/index.js';
+import { depotPrice, distancesFrom, DEFAULT_DEPOTS, newGame, subsidisedPrice, type DepotConfig, type Game } from '../src/index.js';
 
-function setup() {
-  // Pins $30 trucks, which these price checks were written against.
-  const g = newGame({ seed: 7, auctions: { openingRound: false }, depots: { truckPrice: 30 } });
+function setup(depots: Partial<DepotConfig> = {}) {
+  // Pins $30 trucks and 3-truck depots, which these checks were written against.
+  const g = newGame({ seed: 7, auctions: { openingRound: false }, depots: { truckPrice: 30, capacity: 3, ...depots } });
   g.companies[0].shares = [0, null, null, null, null]; // player 0 is president of company 0
   const home = g.town.locations.find((l) => l.startCompany === 0)!;
   return { g, home };
@@ -11,22 +11,69 @@ function setup() {
 
 const rejections = (g: Game, p: number) => g.drainEvents(p).filter((e) => e.type === 'rejected');
 
-describe('depot pricing', () => {
+describe('depot pricing by distance (older rule)', () => {
+  const cfg = { ...DEFAULT_DEPOTS, pricing: 'distance' as const, depotBase: 80 };
   it('costs the base price nearby and more per block further out', () => {
-    expect(depotPrice(DEFAULT_DEPOTS, 2)).toBe(80);
-    expect(depotPrice(DEFAULT_DEPOTS, 4)).toBe(80);
-    expect(depotPrice(DEFAULT_DEPOTS, 9)).toBe(130);
-    expect(depotPrice(DEFAULT_DEPOTS, 4.5)).toBe(85);
+    expect(depotPrice(cfg, 2)).toBe(80);
+    expect(depotPrice(cfg, 4)).toBe(80);
+    expect(depotPrice(cfg, 9)).toBe(130);
+    expect(depotPrice(cfg, 4.5)).toBe(85);
   });
 
   it('measures distance from the nearest depot the company owns', () => {
-    const { g, home } = setup();
+    const { g, home } = setup({ pricing: 'distance', depotBase: 80 });
     const d = distancesFrom(g.town.graph, home.node);
     const free = g.town.locations.filter((l) => l.kind === 'depot' && l.startCompany === null);
     const far = free.sort((a, b) => d[b.node] - d[a.node])[0];
     const near = free.sort((a, b) => d[a.node] - d[b.node])[0];
     expect(g.depotPriceFor(0, near.id)).toBeLessThan(g.depotPriceFor(0, far.id));
     expect(g.depotPriceFor(0, far.id)).toBe(depotPrice(g.cfg.depots, d[far.node]));
+  });
+});
+
+describe('depot pricing by local subsidy', () => {
+  it('discounts the full price by your share of recent service, up to the maximum subsidy', () => {
+    expect(subsidisedPrice(DEFAULT_DEPOTS, 0)).toBe(150);
+    expect(subsidisedPrice(DEFAULT_DEPOTS, 0.5)).toBe(105);
+    expect(subsidisedPrice(DEFAULT_DEPOTS, 1)).toBe(60);
+  });
+
+  it('charges full price to everyone until somebody serves the district', () => {
+    const { g } = setup();
+    const site = g.town.locations.find((l) => l.kind === 'depot' && l.startCompany === null)!;
+    for (let c = 0; c < g.cfg.companies; c++) expect(g.depotPriceFor(c, site.id)).toBe(g.cfg.depots.depotBase);
+  });
+
+  it('gets cheaper for the company serving the district, and the discount fades when service stops', () => {
+    const { g, home } = setup({ capacity: 8 });
+    const d = distancesFrom(g.town.graph, home.node);
+    // Serve the producer and consumer nearest home.
+    const near = (kind: string, good?: number) =>
+      g.town.locations.filter((l) => l.kind === kind && (good === undefined || l.good === good)).sort((a, b) => d[a.node] - d[b.node])[0];
+    const producer = near('producer');
+    const consumer = near('consumer', producer.good!);
+    // The free site whose district covers the producer.
+    const site = g.town.locations
+      .filter((l) => l.kind === 'depot' && l.startCompany === null)
+      .sort((a, b) => distancesFrom(g.town.graph, a.node)[producer.node] - distancesFrom(g.town.graph, b.node)[producer.node])[0];
+    expect(distancesFrom(g.town.graph, site.node)[producer.node]).toBeLessThanOrEqual(g.cfg.depots.districtBlocks);
+    g.companies[0].treasury = 1000;
+    for (let i = 0; i < 3; i++) {
+      g.act(0, { type: 'buyTruck', company: 0, depot: home.id });
+      g.step();
+      g.act(0, { type: 'assignRoute', depot: home.id, producer: producer.id, consumer: consumer.id });
+    }
+    for (let i = 0; i < 1200; i++) g.step(); // two minutes
+    const served = g.depotPriceFor(0, site.id);
+    expect(served).toBeLessThan(g.cfg.depots.depotBase);
+    expect(served).toBeGreaterThanOrEqual(subsidisedPrice(g.cfg.depots, 1));
+    expect(g.depotPriceFor(1, site.id)).toBe(g.cfg.depots.depotBase); // nobody else served it
+    // Stop serving: once the window passes, the discount is gone.
+    for (let i = 0; i < 3; i++) g.act(0, { type: 'unassignRoute', depot: home.id, producer: producer.id, consumer: consumer.id });
+    g.step();
+    expect(g.routes()).toHaveLength(0);
+    for (let i = 0; i < (g.cfg.depots.subsidyWindowSec + 60) * 10; i++) g.step();
+    expect(g.depotPriceFor(0, site.id)).toBe(g.cfg.depots.depotBase);
   });
 });
 
