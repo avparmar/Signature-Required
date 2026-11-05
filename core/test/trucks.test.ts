@@ -54,82 +54,113 @@ describe('routing', () => {
   });
 });
 
-describe('trucks', () => {
+describe('trucks on routes', () => {
+  /** Put n free trucks at company 0's depot on the producer -> consumer route. */
+  function assign(g: Game, depot: number, producer: number, consumer: number, n = 1) {
+    for (let i = 0; i < n; i++) {
+      g.addTruck(0);
+      g.act(0, { type: 'assignRoute', depot, producer, consumer });
+    }
+    g.step();
+  }
+
   it('runs a load -> unload loop, delivering pallets that credit both ends', () => {
-    const { g, producer, consumer } = setup();
-    const truck = g.addTruck(0);
-    g.act(0, {
-      type: 'setOrders',
-      truck: truck.id,
-      stops: [
-        { location: producer.id, action: 'load' },
-        { location: consumer.id, action: 'unload' },
-      ],
-    });
+    const { g, depot, producer, consumer } = setup();
+    assign(g, depot.id, producer.id, consumer.id);
     runFor(g, 300);
     const delivered = events(g, 'delivered');
     expect(delivered.length).toBeGreaterThanOrEqual(2);
     for (const e of delivered) if (e.type === 'delivered') expect(e.origin).toBe(producer.id);
+    expect(g.routes()).toEqual([{ key: `${depot.id}>${producer.id}>${consumer.id}`, company: 0, depot: depot.id, producer: producer.id, consumer: consumer.id, trucks: 1 }]);
   });
 
   it('drives at the configured speed', () => {
-    const { g, depot, producer } = setup();
-    const truck = g.addTruck(0);
+    const { g, depot, producer, consumer } = setup();
     const dist = distancesFrom(g.town.graph, depot.node)[producer.node];
-    g.act(0, { type: 'setOrders', truck: truck.id, stops: [{ location: producer.id, action: 'load' }] });
+    assign(g, depot.id, producer.id, consumer.id);
     const expectSec = dist / g.cfg.trucks.speed;
-    runFor(g, expectSec - 1);
+    runFor(g, expectSec - 1.2);
     expect(g.trucks.trucks[0].state).toBe('driving');
     runFor(g, 1.5);
     expect(['queued', 'servicing']).toContain(g.trucks.trucks[0].state);
   });
 
-  it('only presidents can give orders, and stops must make sense', () => {
-    const { g, producer, consumer } = setup();
-    const truck = g.addTruck(0);
-    g.act(1, { type: 'setOrders', truck: truck.id, stops: [{ location: producer.id, action: 'load' }] });
-    g.act(0, { type: 'setOrders', truck: truck.id, stops: [{ location: consumer.id, action: 'load' }] });
-    g.act(0, { type: 'setOrders', truck: truck.id, stops: [{ location: producer.id, action: 'unload' }] });
-    g.act(0, { type: 'setOrders', truck: 99, stops: [] });
+  it('only presidents of the depot\'s company can assign, and the route must make sense', () => {
+    const { g, depot, producer, consumer } = setup();
+    g.addTruck(0);
+    const otherGood = g.town.locations.find((l) => l.kind === 'consumer' && l.good !== producer.good)!;
+    const otherDepot = g.town.locations.find((l) => l.startCompany === 1)!;
+    g.act(1, { type: 'assignRoute', depot: depot.id, producer: producer.id, consumer: consumer.id }); // not president
+    g.act(0, { type: 'assignRoute', depot: depot.id, producer: consumer.id, consumer: producer.id }); // backwards
+    g.act(0, { type: 'assignRoute', depot: depot.id, producer: producer.id, consumer: otherGood.id }); // wrong good
+    g.act(0, { type: 'assignRoute', depot: otherDepot.id, producer: producer.id, consumer: consumer.id }); // someone else's depot
     g.step();
     expect(g.drainEvents(1).filter((e) => e.type === 'rejected')).toHaveLength(1);
     expect(g.drainEvents(0).filter((e) => e.type === 'rejected')).toHaveLength(3);
-    expect(g.trucks.trucks[0].orders).toHaveLength(0);
+    expect(g.routes()).toHaveLength(0);
+  });
+
+  it('needs a free truck at that depot', () => {
+    const { g, depot, producer, consumer } = setup();
+    g.act(0, { type: 'assignRoute', depot: depot.id, producer: producer.id, consumer: consumer.id });
+    g.step();
+    expect(g.drainEvents(0).filter((e) => e.type === 'rejected')).toHaveLength(1);
+    assign(g, depot.id, producer.id, consumer.id, 2);
+    expect(g.routes()[0].trucks).toBe(2);
+  });
+
+  it('unassigning sends a truck home, where it becomes free again', () => {
+    const { g, depot, producer, consumer } = setup();
+    assign(g, depot.id, producer.id, consumer.id, 2);
+    runFor(g, 20);
+    g.act(0, { type: 'unassignRoute', depot: depot.id, producer: producer.id, consumer: consumer.id });
+    g.step();
+    expect(g.routes()[0].trucks).toBe(1);
+    const freed = g.trucks.trucks.find((t) => t.route === null)!;
+    // It may still have a pallet to deliver first (no dumping); then it heads home.
+    expect(freed.orders.every((o) => o.action === 'unload')).toBe(true);
+    runFor(g, 120);
+    expect(freed.state).toBe('idle');
+    expect(freed.node).toBe(depot.node);
+    expect(freed.cargo).toBeNull();
+    // ...and can be put straight back to work.
+    g.act(0, { type: 'assignRoute', depot: depot.id, producer: producer.id, consumer: consumer.id });
+    g.step();
+    expect(g.routes()[0].trucks).toBe(2);
+    g.act(0, { type: 'unassignRoute', depot: depot.id, producer: producer.id, consumer: consumer.id });
+    g.act(0, { type: 'unassignRoute', depot: depot.id, producer: producer.id, consumer: consumer.id });
+    g.act(0, { type: 'unassignRoute', depot: depot.id, producer: producer.id, consumer: consumer.id });
+    g.step();
+    expect(g.routes()).toHaveLength(0);
+    expect(g.drainEvents(0).filter((e) => e.type === 'rejected')).toHaveLength(1); // nothing left to remove
   });
 
   it('co-presidents: the last order wins', () => {
-    const { g, producer, consumer } = setup();
+    const { g, depot, producer, consumer } = setup();
     g.companies[0].shares = [0, 1, null, null, null];
-    const truck = g.addTruck(0);
-    g.act(0, { type: 'setOrders', truck: truck.id, stops: [{ location: producer.id, action: 'load' }] });
-    g.act(1, { type: 'setOrders', truck: truck.id, stops: [{ location: producer.id, action: 'load' }, { location: consumer.id, action: 'unload' }] });
+    g.addTruck(0);
+    g.act(0, { type: 'assignRoute', depot: depot.id, producer: producer.id, consumer: consumer.id });
+    g.act(1, { type: 'unassignRoute', depot: depot.id, producer: producer.id, consumer: consumer.id });
     g.step();
-    expect(g.trucks.trucks[0].orders).toHaveLength(2);
+    expect(g.routes()).toHaveLength(0);
   });
 
   it('queues at a building: two bays, first come first served, waiting trucks keep their place', () => {
-    const { g, producer } = setup({ cycles: { producePerLevel: 1, startLevel: 1, cycleSec: [60, 60] } });
-    const trucks = [g.addTruck(0), g.addTruck(0), g.addTruck(0), g.addTruck(0)];
+    const { g, depot, producer, consumer } = setup({ cycles: { producePerLevel: 1, startLevel: 1, cycleSec: [60, 60] } });
     // Stagger departures so arrival order is known.
-    for (const t of trucks) {
-      g.act(0, { type: 'setOrders', truck: t.id, stops: [{ location: producer.id, action: 'load' }] });
+    for (let i = 0; i < 4; i++) {
+      assign(g, depot.id, producer.id, consumer.id);
       runFor(g, 0.5);
     }
     runFor(g, 200);
     const loaded = events(g, 'loaded').map((e) => (e.type === 'loaded' ? e.truck : -1));
     // One pallet per cycle at this producer, so trucks load one at a time, in arrival order.
     expect(loaded.slice(0, 3)).toEqual([0, 1, 2]);
-    const st = g.observe(0);
-    const q = st.queues[producer.id] ?? [];
-    expect(q.length).toBeLessThanOrEqual(4);
   });
 
   it('never has more trucks loading than the building has bays', () => {
-    const { g, producer } = setup({ trucks: { serviceSec: 20 } });
-    for (let i = 0; i < 5; i++) {
-      const t = g.addTruck(0);
-      g.act(0, { type: 'setOrders', truck: t.id, stops: [{ location: producer.id, action: 'load' }] });
-    }
+    const { g, depot, producer, consumer } = setup({ trucks: { serviceSec: 20 } });
+    assign(g, depot.id, producer.id, consumer.id, 5);
     let maxBusy = 0;
     for (let i = 0; i < 3000; i++) {
       g.step();
@@ -140,11 +171,9 @@ describe('trucks', () => {
   });
 
   it('waits at a satisfied consumer instead of dumping', () => {
-    const { g, producer, consumer } = setup();
-    const truck = g.addTruck(0);
-    g.act(0, { type: 'setOrders', truck: truck.id, stops: [{ location: producer.id, action: 'load' }, { location: consumer.id, action: 'unload' }] });
+    const { g, depot, producer, consumer } = setup();
+    assign(g, depot.id, producer.id, consumer.id);
     runFor(g, 2);
-    // Make the consumer want nothing for a long time.
     const c = g.location(consumer.id)!;
     runFor(g, 0.1);
     c.demand = 0;
@@ -156,66 +185,55 @@ describe('trucks', () => {
     expect(t.at).toBe(consumer.id);
   });
 
-  it('a loaded truck skips load stops and heads for a consumer that takes its good', () => {
-    const { g, producer, consumer } = setup();
-    const truck = g.addTruck(0);
-    g.act(0, { type: 'setOrders', truck: truck.id, stops: [{ location: producer.id, action: 'load' }] });
-    runFor(g, 200);
-    expect(g.trucks.trucks[0].cargo).not.toBeNull();
-    // Only a load stop and it's carrying: nothing useful to do.
-    expect(g.trucks.trucks[0].state).toBe('idle');
-    g.act(0, { type: 'setOrders', truck: truck.id, stops: [{ location: producer.id, action: 'load' }, { location: consumer.id, action: 'unload' }] });
-    runFor(g, 0.2);
-    expect(g.trucks.trucks[0].orderIndex).toBe(1);
-    runFor(g, 200);
-    expect(events(g, 'delivered').length).toBeGreaterThanOrEqual(1);
-  });
-
-  it('new orders given mid-street take effect at the next intersection', () => {
-    const { g, producer, consumer } = setup();
-    const truck = g.addTruck(0);
-    g.act(0, { type: 'setOrders', truck: truck.id, stops: [{ location: producer.id, action: 'load' }] });
-    runFor(g, 1);
-    const t = g.trucks.trucks[0];
-    expect(t.progress).toBeGreaterThan(0);
-    g.act(0, { type: 'setOrders', truck: truck.id, stops: [{ location: consumer.id, action: 'unload' }, { location: producer.id, action: 'load' }] });
+  it('when a route\'s consumer closes, its trucks go home and the route is gone', () => {
+    const { g, depot, producer, consumer } = setup();
+    assign(g, depot.id, producer.id, consumer.id, 2);
+    runFor(g, 30);
+    // Force the consumer to close now.
+    const c = g.location(consumer.id)!;
+    c.level = 1;
+    c.closingIn = 1;
+    c.nextCycleAt = g.t;
     g.step();
-    expect(t.pendingOrders).not.toBeNull();
-    runFor(g, 10);
-    expect(t.pendingOrders).toBeNull();
-    expect(t.orders[0].location).toBe(consumer.id);
+    const lost = events(g, 'routeLost');
+    expect(lost).toHaveLength(1);
+    expect(lost[0]).toMatchObject({ company: 0, depot: depot.id, consumer: consumer.id, trucks: 2 });
+    expect(g.routes()).toHaveLength(0);
+    expect(g.town.locations[consumer.id].kind).toBe('lot');
+    runFor(g, 200);
+    for (const t of g.trucks.trucks) {
+      expect(t.state).toBe('idle');
+      expect(t.node).toBe(depot.node);
+    }
   });
 
-  it('delivered pallets make producers and consumers grow', () => {
-    const { g, producer, consumer } = setup();
-    for (let i = 0; i < 4; i++) {
-      const t = g.addTruck(0);
-      g.act(0, { type: 'setOrders', truck: t.id, stops: [{ location: producer.id, action: 'load' }, { location: consumer.id, action: 'unload' }] });
-    }
+  it('delivered pallets keep producers and consumers at or above their level', () => {
+    const { g, depot, producer, consumer } = setup();
+    assign(g, depot.id, producer.id, consumer.id, 4);
     runFor(g, 600);
     expect(g.location(producer.id)!.level).toBeGreaterThanOrEqual(g.cfg.cycles.startLevel);
   });
 
   it('stays deterministic with trucks running', () => {
     const run = () => {
-      const { g, producer, consumer } = setup();
-      for (let i = 0; i < 3; i++) {
-        const t = g.addTruck(0);
-        g.act(0, { type: 'setOrders', truck: t.id, stops: [{ location: producer.id, action: 'load' }, { location: consumer.id, action: 'unload' }] });
-      }
+      const { g, depot, producer, consumer } = setup();
+      assign(g, depot.id, producer.id, consumer.id, 3);
       runFor(g, 300);
       return g.stateHash();
     };
     expect(run()).toEqual(run());
   });
 
-  it('reports truck positions in observations', () => {
-    const { g, depot, producer } = setup();
-    const truck = g.addTruck(0);
-    expect(g.observe(0).trucks[0]).toMatchObject({ x: depot.x, y: depot.y });
-    g.act(0, { type: 'setOrders', truck: truck.id, stops: [{ location: producer.id, action: 'load' }] });
+  it('reports truck positions and routes in observations', () => {
+    const { g, depot, producer, consumer } = setup();
+    g.addTruck(0);
+    expect(g.observe(0).trucks[0]).toMatchObject({ x: depot.x, y: depot.y, route: null });
+    g.act(0, { type: 'assignRoute', depot: depot.id, producer: producer.id, consumer: consumer.id });
+    g.step();
     runFor(g, 3);
-    const o = g.observe(0).trucks[0];
-    expect(Math.hypot(o.x - depot.x, o.y - depot.y)).toBeGreaterThan(0.3);
+    const o = g.observe(0);
+    expect(Math.hypot(o.trucks[0].x - depot.x, o.trucks[0].y - depot.y)).toBeGreaterThan(0.3);
+    expect(o.routes).toHaveLength(1);
+    expect(o.trucks[0].route).toBe(o.routes[0].key);
   });
 });

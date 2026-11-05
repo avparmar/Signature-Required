@@ -64,8 +64,8 @@ if (cmd === 'town') {
     const p = near('producer');
     const q = near('consumer', p.good!);
     for (let i = 0; i < perCompany; i++) {
-      const t = g.addTruck(c);
-      g.act(c, { type: 'setOrders', truck: t.id, stops: [{ location: p.id, action: 'load' }, { location: q.id, action: 'unload' }] });
+      g.addTruck(c);
+      g.act(c, { type: 'assignRoute', depot: depot.id, producer: p.id, consumer: q.id });
     }
   }
   const delivered = new Array(g.cfg.companies).fill(0);
