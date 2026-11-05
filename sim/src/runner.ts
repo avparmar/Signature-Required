@@ -43,6 +43,10 @@ export interface GameResult {
   };
   /** Loading bays: average trucks waiting (queued, not loading) per busy building, and max queue seen. */
   bays: { avgWaiting: number; maxQueue: number; waitingShare: number };
+  /** Pallets delivered, all companies. */
+  delivered: number;
+  /** Depot sites bought during the game: how many, average price, and how many below full price. */
+  depotBuys: { count: number; avgPrice: number; discounted: number };
   /** Location investment: level-ups bought, and $ spent, across all players. */
   invested: { count: number; spent: number };
 }
@@ -86,8 +90,10 @@ export function runGame(overrides: GameConfigOverrides, personalities: BotPerson
   let payoutRound = -1;
   let lastPayoutT = -1;
 
+  const buys: number[] = [];
   const record = (events: ReturnType<Game['drainEvents']>, phase: string) => {
     for (const e of events) {
+      if (e.type === 'boughtDepot') buys.push(e.price);
       if (e.type === 'delivered') deliveries[e.company]++;
       if (e.type === 'opened') opened++;
       if (e.type === 'invested') {
@@ -209,6 +215,12 @@ export function runGame(overrides: GameConfigOverrides, personalities: BotPerson
         avgReach: reachN ? reachSum / reachN : 0,
       };
     })(),
+    delivered: deliveries.reduce((a, b) => a + b, 0),
+    depotBuys: {
+      count: buys.length,
+      avgPrice: buys.length ? buys.reduce((a, b) => a + b, 0) / buys.length : 0,
+      discounted: cfg.depots.pricing === 'subsidy' ? buys.filter((p) => p < cfg.depots.depotBase).length : 0,
+    },
     bays: {
       avgWaiting: waitingSamples ? waitingSum / waitingSamples : 0,
       maxQueue,

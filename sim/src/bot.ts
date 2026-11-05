@@ -11,7 +11,6 @@
  * - Spare cash: occasionally levels up the bottleneck location on a route its companies run.
  */
 import {
-  depotPrice,
   distanceToNetwork,
   distancesFrom,
   investCost,
@@ -319,14 +318,16 @@ export class Bot {
       return out;
     }
 
-    // Depots full: buy the cheapest free site if affordable (with a truck to put in it).
+    // Depots full: buy the cheapest free site if affordable (with a truck to put in it). With
+    // subsidy pricing that's the site in the area the company serves most; ties go to the nearest.
     if (spare === undefined && worthIt) {
       const ownNodes = myDepots.map((s) => this.town.locations[s].node);
-      const free = this.town.locations.filter((l) => l.kind === 'depot' && obs.depots[l.id] === undefined);
-      let cheapest: { site: number; price: number } | null = null;
-      for (const l of free) {
-        const price = depotPrice(cfg, distanceToNetwork(this.town.graph, l.node, ownNodes));
-        if (!cheapest || price < cheapest.price) cheapest = { site: l.id, price };
+      let cheapest: { site: number; price: number; dist: number } | null = null;
+      for (const [siteId, prices] of Object.entries(obs.depotPrices)) {
+        const l = this.town.locations[Number(siteId)];
+        const price = prices[company];
+        const dist = distanceToNetwork(this.town.graph, l.node, ownNodes);
+        if (!cheapest || price < cheapest.price || (price === cheapest.price && dist < cheapest.dist)) cheapest = { site: l.id, price, dist };
       }
       if (cheapest && c.treasury >= cheapest.price + cfg.truckPrice) {
         out.push({ type: 'buyDepot', company, site: cheapest.site });
@@ -335,7 +336,8 @@ export class Bot {
     }
 
     // Short of money for the next step: raise some by auctioning a bank-held share.
-    const needs = spare !== undefined ? cfg.truckPrice : cfg.depotBase + cfg.truckPrice;
+    const cheapestSite = Math.min(...Object.values(obs.depotPrices).map((p) => p[company]));
+    const needs = spare !== undefined ? cfg.truckPrice : (Number.isFinite(cheapestSite) ? cheapestSite : cfg.depotBase) + cfg.truckPrice;
     const bankShares = c.shares.some((s) => s === null);
     const busy = (obs.auction && obs.auction.company === company) || obs.auctionQueue.some((r) => r.company === company);
     if (worthIt && bankShares && !busy && c.treasury < needs && obs.elapsed >= obs.auctionCooldownUntil[company]) {
