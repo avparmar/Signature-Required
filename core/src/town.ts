@@ -32,10 +32,10 @@ export interface TownConfig {
   /**
    * Street layout. 'grid': a full grid with a share of streets removed. 'suburb': main roads every
    * few blocks, with tree-like neighbourhood streets (dead ends, one or two ways out) between them.
-   * 'radial': no grid; curved arms spiral out from a central hub, joined by partial ring roads, with
-   * cul-de-sac neighbourhoods branching off the arms. (Rivers aren't supported here yet.)
+   * 'snowflake': a city grid (with gaps) in the middle, six avenues fanning out, and neighbourhood
+   * streets branching off them at snowflake angles. (Rivers aren't supported here yet.)
    */
-  layout: 'grid' | 'suburb' | 'radial';
+  layout: 'grid' | 'suburb' | 'snowflake';
   /** Share of grid streets removed (never disconnecting the town). Grid layout only. */
   removeFrac: number;
   /** Suburb layout: blocks between main roads. */
@@ -248,8 +248,8 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
       diagonals.push(rng.next() < 0.5 ? [id(i, j), id(i + 1, j + 1)] : [id(i + 1, j), id(i, j + 1)]);
     }
 
-  if (cfg.layout === 'radial') {
-    const r = radialStreets(W, H, rng);
+  if (cfg.layout === 'snowflake') {
+    const r = snowflakeStreets(W, H, rng);
     nodes.length = 0;
     nodes.push(...r.nodes);
     edges = r.edges;
@@ -291,7 +291,9 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
   const offset = rng.next() * ((2 * Math.PI) / cfg.companies);
   for (let c = 0; c < cfg.companies; c++) {
     const a = offset + (c * 2 * Math.PI) / cfg.companies + Math.PI / 4;
-    const p = { x: cx + Math.cos(a) * (cx - 1.5), y: cy + Math.sin(a) * (cy - 1.5) };
+    // Snowflake towns thin out towards the rim, so their starts sit halfway out.
+    const rad = cfg.layout === 'snowflake' ? 0.55 : 1;
+    const p = { x: cx + Math.cos(a) * (cx - 1.5) * rad, y: cy + Math.sin(a) * (cy - 1.5) * rad };
     place({ kind: 'depot', good: null, level: 1, bays: 0, startCompany: c }, p);
   }
   cfg.goods.forEach((_, g) => {
@@ -473,61 +475,115 @@ function suburbStreets(
 }
 
 /**
- * Radial streets: a hub in the middle, curved arms spiralling out from it, a few partial ring roads
- * joining neighbouring arms, and small tree-shaped neighbourhoods (dead ends) branching off.
+ * Snowflake streets: a city grid (with gaps) in the middle, six avenues fanning out from it, and
+ * neighbourhood streets branching off the avenues at snowflake angles (and branching again), with a
+ * couple of partial ring roads as rungs between avenues.
  */
-function radialStreets(W: number, H: number, rng: Rng): { nodes: Vec[]; edges: [number, number][] } {
+function snowflakeStreets(W: number, H: number, rng: Rng): { nodes: Vec[]; edges: [number, number][] } {
   const cx = W / 2;
   const cy = H / 2;
   const R = Math.min(W, H) / 2 - 0.3;
   const nodes: Vec[] = [];
-  const edges: [number, number][] = [];
+  let edges: [number, number][] = [];
   const add = (p: Vec) => nodes.push(p) - 1;
-  const segs: [Vec, Vec][] = [];
+  const inside = (p: Vec) => p.x >= 0.2 && p.y >= 0.2 && p.x <= W - 0.2 && p.y <= H - 0.2;
+
+  // City core: a roughly round patch of grid, radius C blocks, with some streets knocked out.
+  const C = 3.6;
+  const coreId = new Map<string, number>();
+  const K = Math.floor(C);
+  for (let j = -K; j <= K; j++)
+    for (let i = -K; i <= K; i++) if (Math.hypot(i, j) <= C) coreId.set(`${i},${j}`, add({ x: cx + i, y: cy + j }));
+  const core: [number, number][] = [];
+  for (const [k, n] of coreId) {
+    const [i, j] = k.split(',').map(Number);
+    const right = coreId.get(`${i + 1},${j}`);
+    const down = coreId.get(`${i},${j + 1}`);
+    if (right !== undefined) core.push([n, right]);
+    if (down !== undefined) core.push([n, down]);
+  }
+  const coreNodes = nodes.length;
+  let removed = 0;
+  for (const e of rng.shuffle([...core])) {
+    if (removed >= Math.round(core.length * 0.15)) break;
+    const without = core.filter((x) => x !== e);
+    if (isConnected(coreNodes, without)) {
+      core.splice(core.indexOf(e), 1);
+      removed++;
+    }
+  }
+  edges = core;
+  const segs: [Vec, Vec][] = edges.map(([a, b]) => [nodes[a], nodes[b]]);
   const link = (a: number, b: number) => {
     edges.push([a, b]);
     segs.push([nodes[a], nodes[b]]);
   };
-  const polar = (r: number, a: number): Vec => ({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
-  const inside = (p: Vec) => p.x >= 0 && p.y >= 0 && p.x <= W && p.y <= H;
+  const crosses = (p: Vec, q: Vec) => segs.some(([a, b]) => segmentsCross(p, q, a, b));
+  const clear = (p: Vec, except: number[], min = 0.75) =>
+    nodes.every((n, i) => except.includes(i) || Math.hypot(n.x - p.x, n.y - p.y) >= min);
 
-  const arms = rng.int(6, 7);
-  const twist = (rng.next() < 0.5 ? -1 : 1) * (0.9 + rng.next() * 0.5); // radians of turn from hub to edge
-  const base = rng.next() * 2 * Math.PI;
-  const step = 1;
-  const r0 = 1.2;
-  const armAngle = (k: number, r: number) => base + (2 * Math.PI * k) / arms + twist * (r / R) + 0.08 * Math.sin(r * 1.7 + k);
-  // Arms: one node per block of radius; armNodes[k][s] is the node at radius r0 + s * step.
-  const armNodes: number[][] = [];
-  for (let k = 0; k < arms; k++) {
-    const list: number[] = [];
-    for (let r = r0; r <= R + 1e-9; r += step) {
-      const p = polar(r, armAngle(k, r));
-      if (!inside(p)) break;
+  // Avenues: six straight-ish spokes from the edge of the core to the rim.
+  const spokes = 6;
+  const base = rng.next() * ((2 * Math.PI) / spokes);
+  const avenues: { nodes: number[]; angle: number }[] = [];
+  for (let k = 0; k < spokes; k++) {
+    const angle = base + (2 * Math.PI * k) / spokes;
+    // Start from the core's boundary node closest to this direction.
+    let start = 0;
+    let best = -Infinity;
+    for (let n = 0; n < coreNodes; n++) {
+      const p = nodes[n];
+      const onEdge = Math.hypot(p.x - cx, p.y - cy) >= C - 1.2;
+      if (!onEdge) continue;
+      const score = Math.cos(Math.atan2(p.y - cy, p.x - cx) - angle) * Math.hypot(p.x - cx, p.y - cy);
+      if (score > best) {
+        best = score;
+        start = n;
+      }
+    }
+    const list = [start];
+    let r = Math.hypot(nodes[start].x - cx, nodes[start].y - cy);
+    let a = Math.atan2(nodes[start].y - cy, nodes[start].x - cx);
+    for (;;) {
+      r += 1;
+      let turn = angle - a;
+      while (turn > Math.PI) turn -= 2 * Math.PI;
+      while (turn < -Math.PI) turn += 2 * Math.PI;
+      a += turn * 0.5 + (rng.next() - 0.5) * 0.06; // ease onto the spoke's heading
+      const p = { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) };
+      if (r > R + 2 || !inside(p)) break;
       const n = add(p);
-      if (list.length) link(list[list.length - 1], n);
+      link(list[list.length - 1], n);
       list.push(n);
     }
-    armNodes.push(list);
+    avenues.push({ nodes: list, angle });
   }
-  // Hub: a small ring through the arm starts.
-  for (let k = 0; k < arms; k++) link(armNodes[k][0], armNodes[(k + 1) % arms][0]);
 
-  // Ring roads at a few radii, as arcs between neighbouring arms; some outer arcs are left out.
-  const ringSteps = [2, 4, 6].filter((s) => armNodes.every((l) => l.length > s));
-  for (const sIdx of ringSteps) {
-    for (let k = 0; k < arms; k++) {
-      if (sIdx > 2 && rng.next() < 0.3) continue;
-      const a = armNodes[k][sIdx];
-      const b = armNodes[(k + 1) % arms][sIdx];
-      const r = r0 + sIdx * step;
-      const a0 = armAngle(k, r);
-      let a1 = armAngle((k + 1) % arms, r);
+  // Rungs: partial ring roads joining neighbouring avenues at a couple of distances.
+  for (const step of [2, 4]) {
+    for (let k = 0; k < spokes; k++) {
+      if (step === 4 && rng.next() < 0.35) continue;
+      const A = avenues[k].nodes;
+      const B = avenues[(k + 1) % spokes].nodes;
+      if (A.length <= step || B.length <= step) continue;
+      const a = A[step];
+      const b = B[step];
+      const pa = nodes[a];
+      const pb = nodes[b];
+      const ra = Math.hypot(pa.x - cx, pa.y - cy);
+      const a0 = Math.atan2(pa.y - cy, pa.x - cx);
+      let a1 = Math.atan2(pb.y - cy, pb.x - cx);
       while (a1 < a0) a1 += 2 * Math.PI;
-      const pieces = Math.max(1, Math.round(((a1 - a0) * r) / 1.1));
+      const pieces = Math.max(1, Math.round(((a1 - a0) * ra) / 1.1));
+      const pts: Vec[] = [];
+      for (let q = 1; q < pieces; q++) pts.push({ x: cx + ra * Math.cos(a0 + ((a1 - a0) * q) / pieces), y: cy + ra * Math.sin(a0 + ((a1 - a0) * q) / pieces) });
+      const path = [pa, ...pts, pb];
+      let ok = pts.every(inside);
+      for (let q = 0; ok && q + 1 < path.length; q++) if (crosses(path[q], path[q + 1])) ok = false;
+      if (!ok) continue;
       let prev = a;
-      for (let q = 1; q < pieces; q++) {
-        const n = add(polar(r, a0 + ((a1 - a0) * q) / pieces));
+      for (const p of pts) {
+        const n = add(p);
         link(prev, n);
         prev = n;
       }
@@ -535,26 +591,60 @@ function radialStreets(W: number, H: number, rng: Rng): { nodes: Vec[]; edges: [
     }
   }
 
-  // Neighbourhoods: short branching streets grown from road nodes into empty space.
-  const crosses = (p: Vec, q: Vec) => segs.some(([a, b]) => segmentsCross(p, q, a, b));
-  const clear = (p: Vec, except: number) => nodes.every((n, i) => i === except || Math.hypot(n.x - p.x, n.y - p.y) >= 0.75);
+  // Snowflake branches: off each avenue at ±60°, each branch sprouting smaller ±60° branches.
   const grow = (from: number, dir: number, depth: number) => {
     if (depth <= 0) return;
-    const turn = (rng.next() - 0.5) * 1.2;
-    const len = 0.9 + rng.next() * 0.3;
-    const p = { x: nodes[from].x + len * Math.cos(dir + turn), y: nodes[from].y + len * Math.sin(dir + turn) };
-    if (!inside(p) || Math.hypot(p.x - cx, p.y - cy) > R + 0.5 || !clear(p, from) || crosses(nodes[from], p)) return;
+    const len = 0.95 + rng.next() * 0.2;
+    const d = dir + (rng.next() - 0.5) * 0.25;
+    const p = { x: nodes[from].x + len * Math.cos(d), y: nodes[from].y + len * Math.sin(d) };
+    if (!inside(p) || !clear(p, [from]) || crosses(nodes[from], p)) {
+      // Blocked: sometimes join the street we ran into, making a loop.
+      return;
+    }
     const n = add(p);
     link(from, n);
-    grow(n, dir + turn, depth - 1);
-    if (rng.next() < 0.35) grow(n, dir + turn + (rng.next() < 0.5 ? 1.4 : -1.4), depth - 2);
+    grow(n, d, depth - 1);
+    if (depth >= 2 && rng.next() < 0.45) grow(n, d + (rng.next() < 0.5 ? 1 : -1) * (Math.PI / 3), depth - 2);
   };
-  for (const n of rng.shuffle(nodes.map((_, i) => i))) {
+  for (const { nodes: list, angle } of avenues) {
+    for (let s = 1; s < list.length; s++) {
+      for (const side of [1, -1]) {
+        if (rng.next() < 0.25) continue;
+        grow(list[s], angle + side * (Math.PI / 3), rng.int(2, 4));
+      }
+    }
+  }
+  // Branches off the rungs too, outward and inward, so the space between avenues fills in.
+  const ringNodes = nodes.map((_, i) => i).filter((i) => i >= coreNodes && !avenues.some((a) => a.nodes.includes(i)));
+  for (const n of rng.shuffle(ringNodes)) {
     if (rng.next() < 0.5) continue;
     const p = nodes[n];
     const out = Math.atan2(p.y - cy, p.x - cx);
-    // Branch roughly sideways off the road, into the gap between arms.
-    grow(n, out + (rng.next() < 0.5 ? 1 : -1) * (Math.PI / 2) + (rng.next() - 0.5) * 0.6, rng.int(2, 4));
+    grow(n, out + (rng.next() < 0.7 ? 0 : Math.PI) + (rng.next() - 0.5) * 0.5, rng.int(1, 3));
+  }
+  // A few loops: join dead ends to a nearby node when the link is short and crosses nothing.
+  const degree = new Array(nodes.length).fill(0);
+  for (const [a, b] of edges) {
+    degree[a]++;
+    degree[b]++;
+  }
+  for (let n = coreNodes; n < nodes.length; n++) {
+    if (degree[n] !== 1 || rng.next() > 0.3) continue;
+    let best = -1;
+    let bestD = 1.4;
+    for (let m = 0; m < nodes.length; m++) {
+      if (m === n || edges.some(([a, b]) => (a === n && b === m) || (a === m && b === n))) continue;
+      const dd = Math.hypot(nodes[m].x - nodes[n].x, nodes[m].y - nodes[n].y);
+      if (dd < bestD && !crosses(nodes[n], nodes[m])) {
+        bestD = dd;
+        best = m;
+      }
+    }
+    if (best >= 0) {
+      link(n, best);
+      degree[n]++;
+      degree[best]++;
+    }
   }
   return { nodes, edges };
 }

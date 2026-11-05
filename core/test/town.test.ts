@@ -154,12 +154,12 @@ describe('suburb layout', () => {
   );
 });
 
-describe('radial layout', () => {
+describe('snowflake layout', () => {
   it(
     'is connected and leaves the grid behind',
     () => {
       for (const seed of [1, 2, 3]) {
-        const t = town(seed, { layout: 'radial' });
+        const t = town(seed, { layout: 'snowflake' });
         const { nodes, edges } = t.graph;
         expect(isConnected(nodes.length, edges.map((e) => [e.a, e.b]))).toBe(true);
         expect(nodes.filter((n) => !Number.isInteger(n.x) || !Number.isInteger(n.y)).length).toBeGreaterThan(nodes.length / 2);
