@@ -158,6 +158,32 @@ describe('trucks on routes', () => {
     expect(loaded.slice(0, 3)).toEqual([0, 1, 2]);
   });
 
+  it('takes turns between companies at a busy building, however many trucks each has there', () => {
+    const { g, depot, producer, consumer } = setup({ cycles: { producePerLevel: 1, startLevel: 1, cycleSec: [30, 30] } });
+    g.companies[1].shares = [1, null, null, null, null];
+    const rival = g.town.locations.find((l) => l.startCompany === 1)!;
+    assign(g, depot.id, producer.id, consumer.id, 4);
+    for (let i = 0; i < 2; i++) {
+      g.addTruck(1);
+      g.act(1, { type: 'assignRoute', depot: rival.id, producer: producer.id, consumer: consumer.id });
+    }
+    g.drainEvents(0);
+    let last = -1;
+    let checked = 0;
+    for (let i = 0; i < 9000; i++) {
+      const waiting = new Set(g.trucks.trucks.filter((t) => t.state === 'queued' && t.at === producer.id).map((t) => t.company));
+      g.step();
+      for (const e of g.drainEvents(0)) {
+        if (e.type !== 'loaded') continue;
+        // A company never loads twice running while the other company had a truck waiting.
+        if (e.company === last) expect(waiting.has(1 - e.company)).toBe(false);
+        if (waiting.size === 2) checked++;
+        last = e.company;
+      }
+    }
+    expect(checked).toBeGreaterThan(5);
+  });
+
   it('never has more trucks loading than the building has bays', () => {
     const { g, depot, producer, consumer } = setup({ trucks: { serviceSec: 20 } });
     assign(g, depot.id, producer.id, consumer.id, 5);

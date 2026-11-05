@@ -43,6 +43,11 @@ export interface GameResult {
   };
   /** Loading bays: average trucks waiting (queued, not loading) per busy building, and max queue seen. */
   bays: { avgWaiting: number; maxQueue: number; waitingShare: number };
+  /**
+   * Shared producers: of producers loaded by two or more companies, how evenly the top two split
+   * the pallets (smaller ÷ (both)), averaged; 0.5 is an even split. Plus how many such producers.
+   */
+  sharing: { split: number; producers: number };
   /** Pallets delivered, all companies. */
   delivered: number;
   /** Depot sites bought during the game: how many, average price, and how many below full price. */
@@ -91,8 +96,14 @@ export function runGame(overrides: GameConfigOverrides, personalities: BotPerson
   let lastPayoutT = -1;
 
   const buys: number[] = [];
+  const loadsAt = new Map<number, Map<number, number>>();
   const record = (events: ReturnType<Game['drainEvents']>, phase: string) => {
     for (const e of events) {
+      if (e.type === 'loaded') {
+        const m = loadsAt.get(e.location) ?? new Map<number, number>();
+        m.set(e.company, (m.get(e.company) ?? 0) + 1);
+        loadsAt.set(e.location, m);
+      }
       if (e.type === 'boughtDepot') buys.push(e.price);
       if (e.type === 'delivered') deliveries[e.company]++;
       if (e.type === 'opened') opened++;
@@ -214,6 +225,17 @@ export function runGame(overrides: GameConfigOverrides, personalities: BotPerson
         handoverRate: pairs ? handovers / pairs : 0,
         avgReach: reachN ? reachSum / reachN : 0,
       };
+    })(),
+    sharing: (() => {
+      let sum = 0;
+      let n = 0;
+      for (const m of loadsAt.values()) {
+        if (m.size < 2) continue;
+        const [a, b] = [...m.values()].sort((x, y) => y - x);
+        sum += b / (a + b);
+        n++;
+      }
+      return { split: n ? sum / n : 0, producers: n };
     })(),
     delivered: deliveries.reduce((a, b) => a + b, 0),
     depotBuys: {
