@@ -76,7 +76,7 @@ describe('deliveries and dividends', () => {
   });
 
   it('pays five times in a 15-minute game, the last at the end with assets included', () => {
-    const { g } = setup();
+    const { g } = setup({ money: { finalAssetShare: 0.5 } });
     g.companies[0].shares = [0, 0, 0, 0, 0];
     g.companies[0].assets = 200;
     g.companies[0].treasury = 40;
@@ -96,7 +96,7 @@ describe('deliveries and dividends', () => {
   });
 
   it('purchases count as assets for the final payout', () => {
-    const { g, home } = setup();
+    const { g, home } = setup({ depots: { truckPrice: 30 } });
     g.companies[0].shares = [0, null, null, null, null];
     g.companies[0].treasury = 60;
     g.act(0, { type: 'buyTruck', company: 0, depot: home.id });

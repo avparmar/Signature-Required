@@ -32,10 +32,20 @@ export interface GameResult {
   locationsShrunk: number;
 }
 
+/**
+ * Default table: one speculator and the rest balanced investors. With no minimum bid, a table
+ * of only cautious investors never funds a company (see the #22 experiments); one bold player
+ * is enough to get the economy going, which is what we expect of humans too.
+ */
+export function defaultTable(players: number): BotPersonality[] {
+  return Array.from({ length: players }, (_, p) => (p === 0 ? PERSONALITIES.speculator : PERSONALITIES.balanced));
+}
+
 export function runGame(overrides: GameConfigOverrides, personalities: BotPersonality[] = []): GameResult {
   const cfg = makeGameConfig(overrides);
   const g = new Game(cfg);
-  const bots = Array.from({ length: cfg.players }, (_, p) => new Bot(p, g.town, cfg, personalities[p] ?? PERSONALITIES.balanced));
+  const table = personalities.length ? personalities : defaultTable(cfg.players);
+  const bots = Array.from({ length: cfg.players }, (_, p) => new Bot(p, g.town, cfg, table[p] ?? PERSONALITIES.balanced));
   const deliveries = new Array(cfg.companies).fill(0);
   const paidPerShare = new Array(cfg.companies).fill(0);
   const bonusPerShare = new Array(cfg.companies).fill(0);

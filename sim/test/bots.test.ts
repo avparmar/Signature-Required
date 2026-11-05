@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { newGame } from '@sr/core';
 import { Bot, PERSONALITIES, runGame } from '../src/index.js';
 
+// A full bot game on the default 16x16 town takes several seconds.
+const SLOW = 60_000;
+
 describe('bots', () => {
   it('play a whole game: buy shares, buy trucks, deliver, and earn dividends', () => {
     const r = runGame({ seed: 2 });
@@ -10,13 +13,13 @@ describe('bots', () => {
     expect(r.companies.reduce((s, c) => s + c.deliveries, 0)).toBeGreaterThan(50);
     expect(r.payouts).toHaveLength(5);
     expect(Math.max(...r.cash)).toBeGreaterThan(100);
-  });
+  }, SLOW);
 
   it('are deterministic: same seed, same game', () => {
     const a = runGame({ seed: 4, durationSec: 240 });
     const b = runGame({ seed: 4, durationSec: 240 });
     expect(a).toEqual(b);
-  });
+  }, SLOW);
 
   it('value a share above the opening bid at the start, so the opening round sells', () => {
     const g = newGame({ seed: 1 });
@@ -27,7 +30,7 @@ describe('bots', () => {
   });
 
   it('only bid what they can afford and never on shares they are selling', () => {
-    const g = newGame({ seed: 1 });
+    const g = newGame({ seed: 1, auctions: { openingBid: 20 } });
     g.step();
     g.players[0].cash = 10;
     const bot = new Bot(0, g.town, g.cfg);
@@ -74,5 +77,5 @@ describe('speculator', () => {
     const r = runGame({ seed: 3, auctions: { openingBid: 0 } }, [PERSONALITIES.speculator, PERSONALITIES.balanced, PERSONALITIES.balanced, PERSONALITIES.balanced]);
     expect(r.companies.reduce((s, c) => s + c.trucks, 0)).toBeGreaterThan(2);
     expect(r.auctions.some((a) => a.amount > 0)).toBe(true);
-  });
+  }, SLOW);
 });

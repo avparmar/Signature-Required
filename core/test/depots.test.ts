@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { depotPrice, distancesFrom, DEFAULT_DEPOTS, newGame, type Game } from '../src/index.js';
 
 function setup() {
-  const g = newGame({ seed: 7, auctions: { openingRound: false } });
+  // Pins $30 trucks, which these price checks were written against.
+  const g = newGame({ seed: 7, auctions: { openingRound: false }, depots: { truckPrice: 30 } });
   g.companies[0].shares = [0, null, null, null, null]; // player 0 is president of company 0
   const home = g.town.locations.find((l) => l.startCompany === 0)!;
   return { g, home };

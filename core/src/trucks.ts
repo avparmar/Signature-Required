@@ -19,7 +19,7 @@ export interface TruckConfig {
 }
 
 export const DEFAULT_TRUCKS: TruckConfig = {
-  speed: 0.25,
+  speed: 0.35,
   serviceSec: 3,
 };
 

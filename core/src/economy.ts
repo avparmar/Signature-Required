@@ -33,8 +33,8 @@ export interface CycleConfig {
 
 export const DEFAULT_CYCLES: CycleConfig = {
   cycleSec: [45, 45],
-  produceBase: 3,
-  demandBase: [2, 4],
+  produceBase: 6,
+  demandBase: [4, 8],
   levelStep: 1,
   carryCycles: 2,
   growthWindow: 4,
