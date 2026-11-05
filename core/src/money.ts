@@ -48,7 +48,7 @@ export const DEFAULT_MONEY: MoneyConfig = {
   premiumPrice: 3,
   premiumShare: 0.25,
   deliveryToTreasury: 1,
-  deliveryToPot: 1,
+  deliveryToPot: 0.5,
   payoutEverySec: 180,
   finalBonus: 'assets',
   finalAssetShare: 0.1,
