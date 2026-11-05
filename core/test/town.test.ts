@@ -82,8 +82,11 @@ describe('distancesFrom', () => {
     const g = t.graph;
     const d = distancesFrom(g, 0);
     expect(d[0]).toBe(0);
-    // Driving is never shorter than a straight line.
-    for (const n of g.nodes) expect(d[n.id]).toBeGreaterThanOrEqual(Math.hypot(n.x - g.nodes[0].x, n.y - g.nodes[0].y) - 1e-9);
+    // Driving is never shorter than a straight line (to a building: to its kerb, half a block short).
+    for (const n of g.nodes) {
+      const straight = Math.hypot(n.x - g.nodes[0].x, n.y - g.nodes[0].y) - (g.terminal[n.id] ? 0.5 : 0);
+      expect(d[n.id]).toBeGreaterThanOrEqual(straight - 1e-9);
+    }
   });
 });
 
@@ -194,7 +197,7 @@ describe('buildings in blocks', () => {
       expect(seen.has(key)).toBe(false);
       seen.add(key);
       expect(t.graph.terminal[l.node]).toBe(true);
-      // Driveways lead to street midpoints half a block away.
+      // Driveways lead to street midpoints half a block away (and cost nothing to drive).
       expect(adj[l.node].length).toBeGreaterThanOrEqual(1);
       for (const { to } of adj[l.node]) {
         expect(Math.hypot(nodes[to].x - l.x, nodes[to].y - l.y)).toBeCloseTo(0.5);
@@ -216,6 +219,18 @@ describe('buildings in blocks', () => {
     for (const l of t.locations.slice(1)) {
       const path = shortestPath(t.graph, a, l.node)!;
       for (const n of path.slice(1, -1)) expect(t.graph.terminal[n]).toBe(false);
+    }
+  });
+});
+
+describe('trading partners apart', () => {
+  it('never puts a producer within pairGap blocks of a consumer of the same good', () => {
+    for (const seed of [1, 2, 3]) {
+      const t = town(seed);
+      const ps = t.locations.filter((l) => l.kind === 'producer');
+      const cs = t.locations.filter((l) => l.kind === 'consumer');
+      for (const p of ps)
+        for (const c of cs) if (p.good === c.good) expect(Math.abs(p.x - c.x) + Math.abs(p.y - c.y)).toBeGreaterThanOrEqual(t.cfg.pairGap);
     }
   });
 });

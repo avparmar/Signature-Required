@@ -63,6 +63,8 @@ export interface TownConfig {
   bridgesPerRiver: [number, number];
   /** Minimum straight-line distance between any two locations, in blocks. */
   minSpacing: number;
+  /** A producer and a consumer of the same good are at least this many blocks apart (across + down). */
+  pairGap: number;
   /** Drive distance (blocks) that counts as "near" a starting depot for the fairness check. */
   fairRadius: number;
   /** Weakest start's score must be at least this fraction of the strongest's. */
@@ -91,6 +93,7 @@ export const DEFAULT_TOWN: TownConfig = {
   rivers: 0,
   bridgesPerRiver: [2, 3],
   minSpacing: 1,
+  pairGap: 3,
   fairRadius: 6,
   fairMinRatio: 0.6,
   maxRerolls: 60,
@@ -293,7 +296,9 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
   for (const [a, b] of [...edges, ...diagonals]) for (const n of [a, b]) degree.set(n, (degree.get(n) ?? 0) + 1);
   const deadEnd = (b: { sides: [number, number][] }) => b.sides.some(([p, q]) => degree.get(p) === 1 || degree.get(q) === 1);
   const place = (loc: Omit<Location, 'node' | 'x' | 'y' | 'id'>, near?: Vec): boolean => {
-    let candidates = blocks.map((b, i) => ({ b, i })).filter(({ b }) => !b.used && free(centre(b)));
+    let candidates = blocks
+      .map((b, i) => ({ b, i }))
+      .filter(({ b }) => !b.used && free(centre(b)) && pairOk(locations, loc.kind, loc.good, centre(b), cfg.pairGap));
     if (candidates.length === 0) return false;
     if (cfg.layout === 'snowflake') {
       const ends = candidates.filter(({ b }) => deadEnd(b));
@@ -663,4 +668,20 @@ function connectedIgnoringUnused(nodeCount: number, edges: [number, number][]): 
   for (const [a, b] of edges) for (const n of [a, b]) if (!ids.has(n)) ids.set(n, ids.size);
   void nodeCount;
   return isConnected(ids.size, edges.map(([a, b]) => [ids.get(a)!, ids.get(b)!] as [number, number]));
+}
+
+/**
+ * Whether a producer or consumer of `good` may go at `p`: no consumer (for a producer) or producer
+ * (for a consumer) of the same good within `gap` blocks across + down, so no trivially short routes.
+ */
+export function pairOk(
+  locs: { kind: LocationKind; good: number | null; x: number; y: number }[],
+  kind: LocationKind,
+  good: number | null,
+  p: Vec,
+  gap: number,
+): boolean {
+  if (kind !== 'producer' && kind !== 'consumer') return true;
+  const other = kind === 'producer' ? 'consumer' : 'producer';
+  return locs.every((l) => l.kind !== other || l.good !== good || Math.abs(l.x - p.x) + Math.abs(l.y - p.y) >= gap);
 }

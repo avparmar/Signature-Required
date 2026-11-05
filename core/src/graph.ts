@@ -39,14 +39,15 @@ export function dist(p: Vec, q: Vec): number {
 /** Build a graph (with adjacency) from plain node and edge lists; ids are re-assigned densely. */
 export function buildGraph(nodes: Vec[], edges: [number, number][], terminal: number[] = []): RoadGraph {
   const ns = nodes.map((n, id) => ({ id, x: n.x, y: n.y }));
-  const es = edges.map(([a, b], id) => ({ id, a, b, length: dist(ns[a], ns[b]) }));
+  const isTerminal = new Set(terminal);
+  // A driveway (to or from a building) has no length: trucks do their business at the kerb.
+  const es = edges.map(([a, b], id) => ({ id, a, b, length: isTerminal.has(a) || isTerminal.has(b) ? 0 : dist(ns[a], ns[b]) }));
   const adj: { to: number; edge: number }[][] = ns.map(() => []);
   for (const e of es) {
     adj[e.a].push({ to: e.b, edge: e.id });
     adj[e.b].push({ to: e.a, edge: e.id });
   }
-  const term = ns.map(() => false);
-  for (const n of terminal) term[n] = true;
+  const term = ns.map((n) => isTerminal.has(n.id));
   return { nodes: ns, edges: es, adj, terminal: term };
 }
 
