@@ -50,8 +50,6 @@ export interface GameResult {
   sharing: { split: number; producers: number };
   /** Pallets delivered, all companies. */
   delivered: number;
-  /** Truck wear: breakdowns, routine services, and repairs after a breakdown (per game). */
-  wear: { breakdowns: number; services: number; repairs: number };
   /** Trucks and depots bought in the last 3 minutes of the game, and $ spent on them. */
   lateBuys: { count: number; spent: number };
   /** Depot sites bought during the game: how many, average price, and how many below full price. */
@@ -101,7 +99,6 @@ export function runGame(overrides: GameConfigOverrides, personalities: BotPerson
 
   const buys: number[] = [];
   const late = { count: 0, spent: 0 };
-  const wear = { breakdowns: 0, services: 0, repairs: 0 };
   const loadsAt = new Map<number, Map<number, number>>();
   const record = (events: ReturnType<Game['drainEvents']>, phase: string) => {
     for (const e of events) {
@@ -111,11 +108,6 @@ export function runGame(overrides: GameConfigOverrides, personalities: BotPerson
         loadsAt.set(e.location, m);
       }
       if (e.type === 'boughtDepot') buys.push(e.price);
-      if (e.type === 'brokeDown') wear.breakdowns++;
-      if (e.type === 'serviced') {
-        if (e.repair) wear.repairs++;
-        else wear.services++;
-      }
       if ((e.type === 'boughtDepot' || e.type === 'boughtTruck') && e.t > g.cfg.durationSec - 180) {
         late.count++;
         late.spent += e.price;
@@ -254,7 +246,6 @@ export function runGame(overrides: GameConfigOverrides, personalities: BotPerson
     })(),
     delivered: deliveries.reduce((a, b) => a + b, 0),
     lateBuys: late,
-    wear,
     depotBuys: {
       count: buys.length,
       avgPrice: buys.length ? buys.reduce((a, b) => a + b, 0) / buys.length : 0,

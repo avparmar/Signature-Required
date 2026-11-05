@@ -358,38 +358,18 @@ if (which === 'final') {
         `| ${pot === 1 ? '100% (today)' : `${pot * 100}%`} | ${bonus ? '10% of assets' : 'None'} | ${per.map((x) => x.toFixed(0)).join(' / ')} | $${paid.toFixed(0)} | $${price.toFixed(0)} | ${(paid / price).toFixed(1)}× | ${avg(rs.map((r) => avg(r.companies.map((c) => c.trucks)))).toFixed(1)} | ${avg(rs.map((r) => r.lateBuys.count)).toFixed(1)} / $${avg(rs.map((r) => r.lateBuys.spent)).toFixed(0)} | ${avg(rs.map((r) => r.delivered)).toFixed(0)} | ${avg(rs.map((r) => r.closed)).toFixed(0)} |`,
       );
     }
-} else if (which === 'servicing') {
-  // Truck wear, servicing and breakdowns (#53): does distance from your depots start to matter?
-  console.log(`\nservicing experiment (${games} games per variant)\n`);
-  console.log('| Rules | Breakdowns | Services | Repairs | Pallets delivered | Trucks per company | Depots bought | Depot→producer distance (blocks) | Contested locations | Handovers | Avg paid per share | Closures |');
-  console.log('|---|---|---|---|---|---|---|---|---|---|---|---|');
-  const variants: [string, GameConfigOverrides][] = [
-    ['No wear (before)', { trucks: { wearNear: 0, wearFar: 0 } }],
-    ['Wear and servicing, no breakdowns', { trucks: { breakdowns: false } }],
-    ['Wear, servicing and breakdowns (new default)', {}],
-    ['Default, tighter leash (4 blocks)', { trucks: { leashBlocks: 4 } }],
-    ['Default, harsh: far wear ×2, breakdowns ×2', { trucks: { wearFar: 0.03, breakdownRate: 0.03 } }],
-    ['Default + 1 river', { town: { rivers: 1 } }],
-  ];
-  for (const [label, o] of variants) {
-    const rs = Array.from({ length: games }, (_, i) => runGame({ ...o, seed: 1 + i }));
-    const pct = (x: number) => `${(100 * x).toFixed(0)}%`;
-    console.log(
-      `| ${label} | ${avg(rs.map((r) => r.wear.breakdowns)).toFixed(0)} | ${avg(rs.map((r) => r.wear.services)).toFixed(0)} | ${avg(rs.map((r) => r.wear.repairs)).toFixed(0)} | ${avg(rs.map((r) => r.delivered)).toFixed(0)} | ${avg(rs.map((r) => avg(r.companies.map((c) => c.trucks)))).toFixed(1)} | ${avg(rs.map((r) => r.depotBuys.count)).toFixed(1)} | ${avg(rs.map((r) => r.territory.avgReach)).toFixed(1)} | ${pct(avg(rs.map((r) => r.territory.contestedShare)))} | ${(100 * avg(rs.map((r) => r.territory.handoverRate))).toFixed(1)}% | $${avg(rs.map((r) => avg(r.companies.map((c) => c.paidPerShare)))).toFixed(0)} | ${avg(rs.map((r) => r.closed)).toFixed(0)} |`,
-    );
-  }
 } else if (which === 'viadepot') {
-  // Routes through the depot: every load signed off at the depot (loaded leg), or the depot on
-  // both legs (hub). Sign-offs service the trucks, so wear and breakdowns are off in those rows.
+  // Routes through the factory: direct, every load processed at the factory (loaded leg), or the
+  // factory on both legs (hub).
   console.log(`\nviadepot experiment (${games} games per variant)\n`);
   console.log('| Rules | Pallets delivered | Trucks per company | Depots bought | Depot→producer distance (blocks) | Contested locations | Handovers | Producers shared | Avg paid per share | Avg auction price | Closures |');
   console.log('|---|---|---|---|---|---|---|---|---|---|---|');
-  const calm = { wearNear: 0, wearFar: 0, breakdowns: false };
+  const oldPrices: GameConfigOverrides = { money: { palletPrice: 2, premiumPrice: 3 }, depots: { truckPrice: 15 } };
   const variants: [string, GameConfigOverrides][] = [
-    ['Today: direct, wear and breakdowns', {}],
-    ['Direct, no wear', { trucks: calm }],
-    ['Through the depot, loaded leg', { trucks: { ...calm, viaDepot: 'loaded' } }],
-    ['Through the depot, hub (both legs)', { trucks: { ...calm, viaDepot: 'hub' } }],
+    ['Direct, old prices ($2 / $3 pallets, $15 trucks)', { ...oldPrices, trucks: { viaDepot: 'none' } }],
+    ['Through the factory, old prices', oldPrices],
+    ['Through the factory, new prices ($2.40 / $3.60, $12 trucks) (default)', {}],
+    ['Hub, new prices', { trucks: { viaDepot: 'hub' } }],
   ];
   for (const [label, o] of variants) {
     const rs = Array.from({ length: games }, (_, i) => runGame({ ...o, seed: 1 + i }));
@@ -468,5 +448,5 @@ if (which === 'final') {
       );
     }
 } else {
-  console.log('usage: npm run experiments -- final|income|shortlist|scale|map|split|sar|depots|speculator|world|bays|invest|grace|fairness|rivers|loading|depots2|dividends|servicing|viadepot [games]');
+  console.log('usage: npm run experiments -- final|income|shortlist|scale|map|split|sar|depots|speculator|world|bays|invest|grace|fairness|rivers|loading|depots2|dividends|viadepot [games]');
 }

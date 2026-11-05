@@ -15,6 +15,13 @@ import { Session } from './session.js';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const money = (x: number) => `$${Math.floor(x + 1e-9)}`;
+/** A pallet price, to the cent. */
+const cents = (x: number) => `$${x.toFixed(2)}`;
+/** Names for a good: its raw material, product, producer and consumer. */
+const names = (good: number) => {
+  const t = session.cfg.town;
+  return { raw: t.raws[good], product: t.goods[good], source: t.sources[good], shop: t.shops[good] };
+};
 const coName = (c: number) => `Company ${c + 1}`;
 const playerName = (p: number, me: number) => (p === me ? 'you' : `player ${p + 1}`);
 const fmtClock = (sec: number) => {
@@ -23,12 +30,12 @@ const fmtClock = (sec: number) => {
 };
 
 /**
- * Rule options from the page address, for trying settings out: ?via=loaded or ?via=hub runs routes
- * through the depot (with wear and breakdowns off, since every sign-off services the truck).
+ * Rule options from the page address, for trying settings out: ?via=none (direct routes, no
+ * factory stop) or ?via=hub (the factory on both legs). The default is the loaded leg.
  */
 function overridesFromUrl() {
   const via = new URLSearchParams(location.search).get('via');
-  if (via === 'loaded' || via === 'hub') return { trucks: { viaDepot: via, wearNear: 0, wearFar: 0, breakdowns: false } } as const;
+  if (via === 'none' || via === 'loaded' || via === 'hub') return { trucks: { viaDepot: via } } as const;
   return {};
 }
 
@@ -40,7 +47,7 @@ let lastUi = 0;
 
 // ------------------------------------------------------------------ selection and input state
 
-const hl: Highlights = { hover: null, picked: [], hoverRoute: null, buyFor: null, leash: session.cfg.trucks.leashBlocks };
+const hl: Highlights = { hover: null, picked: [], hoverRoute: null, buyFor: null };
 /** Company the player last acted for (route clicks default to it). */
 let activeCompany: number | null = null;
 /** Smoothed on-screen truck positions (town coordinates). */
@@ -60,6 +67,10 @@ function currentCompany(obs: Observation): number | null {
 // ------------------------------------------------------------------ feedback
 
 function toast(text: string, kind: 'info' | 'error' = 'info') {
+  const box = $('toasts');
+  // The same message twice in a row just stays up; never more than three at once.
+  if ([...box.children].some((c) => c.textContent === text && !c.classList.contains('fade'))) return;
+  while (box.children.length >= 3) box.firstChild!.remove();
   const el = document.createElement('div');
   el.className = `toast ${kind}`;
   el.textContent = text;
@@ -72,7 +83,7 @@ function updateHint(obs: Observation) {
   const g = session.game;
   const hint = $('hint');
   if (hl.buyFor !== null) {
-    hint.textContent = `Buying a depot for ${coName(hl.buyFor)}: click a highlighted site (Esc to cancel).`;
+    hint.textContent = `Buying a factory for ${coName(hl.buyFor)}: click a highlighted site (Esc to cancel).`;
     return;
   }
   if (obs.phase === 'opening') {
@@ -82,12 +93,11 @@ function updateHint(obs: Observation) {
   const picks = hl.picked.map((id) => g.town.locations[id]);
   const p = picks.find((l) => l.kind === 'producer');
   const c = picks.find((l) => l.kind === 'consumer');
-  const goods = g.cfg.town.goods;
-  if (p && !c) hint.textContent = `Now click a ${goods[p.good!]} consumer (house) to send a truck.`;
-  else if (c && !p) hint.textContent = `Now click a ${goods[c.good!]} producer (factory) to send a truck.`;
-  else if (picks.length) hint.textContent = 'Depot picked: now a producer and a consumer.';
+  if (p && !c) hint.textContent = `${cap(names(p.good!).source)} picked: now a ${names(p.good!).shop} to sell the ${names(p.good!).product} to.`;
+  else if (c && !p) hint.textContent = `${cap(names(c.good!).shop)} picked: now a ${names(c.good!).source} to supply it.`;
+  else if (picks.length) hint.textContent = 'Factory picked: now a producer and a shop.';
   else if (myCompanies(obs).length === 0) hint.textContent = 'You run no company yet: win a share auction to become a president.';
-  else hint.textContent = 'Click a producer and a consumer of the same good to send a truck. Right-click a route to take one off.';
+  else hint.textContent = 'Click a producer and a shop of the same good to send a truck. Right-click a route to take one off.';
 }
 
 // ------------------------------------------------------------------ routes from clicks
@@ -99,7 +109,7 @@ function tryAssign(obs: Observation) {
   const c = picks.find((l) => l.kind === 'consumer');
   if (!p || !c) return;
   if (p.good !== c.good) {
-    toast(`That ${g.cfg.town.goods[c.good!]} consumer doesn't take ${g.cfg.town.goods[p.good!]}.`, 'error');
+    toast(`A ${names(c.good!).shop} doesn't sell ${names(p.good!).product}.`, 'error');
     hl.picked = hl.picked.filter((id) => id !== c.id);
     return;
   }
@@ -110,26 +120,29 @@ function tryAssign(obs: Observation) {
     hl.picked = [];
     return;
   }
-  const depot = pickedDepot ? pickedDepot.id : bestDepot(obs, company, p);
-  if (depot === null) {
+  if (freeTrucks(obs, company) === 0) {
     toast(`${coName(company)} has no free truck. Buy one in the company panel.`, 'error');
     return;
   }
+  const depot = pickedDepot ? pickedDepot.id : bestDepot(obs, company, p, c);
+  if (depot === null) return;
   session.act({ type: 'assignRoute', depot, producer: p.id, consumer: c.id });
   activeCompany = company;
   hl.picked = [];
 }
 
-/** The company's depot with a free truck nearest the producer (by road), or null. */
-function bestDepot(obs: Observation, company: number, producer: Location): number | null {
-  const g = session.game;
-  const d = distancesFrom(g.town.graph, producer.node);
+/** The company's factory that makes the shortest trip from producer, via it, to the shop. */
+function bestDepot(obs: Observation, company: number, producer: Location, shop: Location): number | null {
   let best: number | null = null;
+  let bestLen = Infinity;
   for (const [site, owner] of Object.entries(obs.depots)) {
     if (owner !== company) continue;
-    const id = Number(site);
-    if (freeTrucks(obs, id) === 0) continue;
-    if (best === null || d[g.town.locations[id].node] < d[g.town.locations[best].node]) best = id;
+    const d = siteReach(Number(site));
+    const len = d[producer.node] + d[shop.node];
+    if (len < bestLen) {
+      bestLen = len;
+      best = Number(site);
+    }
   }
   return best;
 }
@@ -142,8 +155,9 @@ function siteReach(site: number): Float64Array {
   return d;
 }
 
-const freeTrucks = (obs: Observation, depot: number) =>
-  obs.trucks.filter((t) => t.depot === depot && t.route === null && t.state === 'idle').length;
+/** A company's free trucks (trucks are a company-wide pool). */
+const freeTrucks = (obs: Observation, company: number) =>
+  obs.trucks.filter((t) => t.company === company && t.route === null && t.orders.length === 0 && t.cargo === null).length;
 
 function click(sx: number, sy: number, right: boolean) {
   const obs = session.obs();
@@ -166,14 +180,14 @@ function click(sx: number, sy: number, right: boolean) {
       session.act({ type: 'buyDepot', company: hl.buyFor, site: l.id });
       activeCompany = hl.buyFor;
       hl.buyFor = null;
-    } else toast('Click a free (dashed) depot site, or Esc to cancel.', 'error');
+    } else toast('Click a free (dashed) factory site, or Esc to cancel.', 'error');
     return;
   }
   if (obs.phase === 'opening' && l && l.kind !== 'lot') return toast('Routes open when the clock starts, after the opening auctions.', 'info');
   if (obs.phase !== 'running') return;
   if (route && !l) {
     if (!obs.companies[route.company].presidents.includes(obs.me)) return toast(`That route belongs to ${coName(route.company)}.`, 'error');
-    if (freeTrucks(obs, route.depot) === 0) return toast('No free truck at that route’s depot.', 'error');
+    if (freeTrucks(obs, route.company) === 0) return toast('No free truck: buy one in the company panel.', 'error');
     session.act({ type: 'assignRoute', depot: route.depot, producer: route.producer, consumer: route.consumer });
     activeCompany = route.company;
     return;
@@ -184,8 +198,8 @@ function click(sx: number, sy: number, right: boolean) {
   }
   if (l.kind === 'depot') {
     const owner = obs.depots[l.id];
-    if (owner === undefined) return toast('A free depot site. Buy it from the company panel.', 'info');
-    if (!obs.companies[owner].presidents.includes(obs.me)) return toast(`That depot belongs to ${coName(owner)}.`, 'error');
+    if (owner === undefined) return toast('A free factory site. Buy it from the company panel.', 'info');
+    if (!obs.companies[owner].presidents.includes(obs.me)) return toast(`That factory belongs to ${coName(owner)}.`, 'error');
     hl.picked = hl.picked.filter((id) => g.town.locations[id].kind !== 'depot');
   } else hl.picked = hl.picked.filter((id) => g.town.locations[id].kind !== l.kind);
   hl.picked.push(l.id);
@@ -254,17 +268,16 @@ function tooltip(obs: Observation) {
   hl.hover = l && l.kind !== 'lot' ? l.id : null;
   hl.hoverRoute = route?.key ?? null;
   let html = '';
-  const goods = g.cfg.town.goods;
   if (l && (l.kind === 'producer' || l.kind === 'consumer')) {
     const s = obs.locations.find((x) => x.id === l.id);
     if (s) {
-      const good = goods[s.good];
+      const n = names(s.good);
       const recent = s.history.length ? Math.round((100 * s.history.reduce((a, b) => a + b, 0)) / s.history.length) : null;
-      html = `<b>${cap(good)} ${s.kind === 'producer' ? 'producer' : 'consumer'} ${at(l.id)}</b> · level ${s.level}/${g.cfg.cycles.maxLevel}`;
+      html = `<b>${cap(s.kind === 'producer' ? n.source : n.shop)} ${at(l.id)}</b> · level ${s.level}/${g.cfg.cycles.maxLevel}`;
       html +=
         s.kind === 'producer'
-          ? `<div>${s.stock} pallet${s.stock === 1 ? '' : 's'} waiting · makes ${s.cycleAmount} per cycle</div>`
-          : `<div>Wants ${s.demand} more · pays ${money(s.price)} a pallet${s.price > g.cfg.money.palletPrice ? ' (premium)' : ''}</div>`;
+          ? `<div>${s.stock} load${s.stock === 1 ? '' : 's'} of ${n.raw} waiting · ${s.cycleAmount} per cycle</div><div class="muted">A factory turns it into ${n.product}</div>`
+          : `<div>Wants ${s.demand} more ${n.product} · pays ${cents(s.price)} a pallet${s.price > g.cfg.money.palletPrice ? ' (premium)' : ''}</div>`;
       html += `<div class="muted">Next cycle in ${fmtClock(s.nextCycleAt - obs.t)}${recent !== null ? ` · ${recent}% served lately` : ''}</div>`;
       if (s.closingIn !== null) html += `<div class="bad">Closing in ${s.closingIn} cycle${s.closingIn === 1 ? '' : 's'} unless served</div>`;
       const servers = [...new Set(obs.routes.filter((r) => r.producer === l.id || r.consumer === l.id).map((r) => r.company))];
@@ -273,19 +286,21 @@ function tooltip(obs: Observation) {
   } else if (l && l.kind === 'depot') {
     const owner = obs.depots[l.id];
     if (owner === undefined) {
-      html = `<b>Free depot site ${at(l.id)}</b>`;
+      html = `<b>Free factory site ${at(l.id)}</b>`;
       const prices = obs.depotPrices[l.id];
       for (const c of myCompanies(obs)) html += `<div>${coName(c)} would pay ${money(prices[c])}${prices[c] < g.cfg.depots.depotBase ? ' (local subsidy)' : ''}</div>`;
       if (!myCompanies(obs).length) html += `<div class="muted">Full price ${money(g.cfg.depots.depotBase)}, less a subsidy for companies serving the area.</div>`;
     } else {
-      const n = obs.trucks.filter((t) => t.depot === l.id).length;
-      html = `<b>${coName(owner)} depot ${at(l.id)}</b><div>${n}/${g.cfg.depots.capacity} trucks · ${freeTrucks(obs, l.id)} free</div><div class="muted">Shaded streets: within ${g.cfg.trucks.leashBlocks} blocks, where its trucks wear slowly</div>`;
+      const routes = obs.routes.filter((r) => r.depot === l.id);
+      const n = routes.reduce((a, r) => a + r.trucks, 0);
+      html = `<b>${coName(owner)} factory ${at(l.id)}</b><div>${routes.length} route${routes.length === 1 ? '' : 's'}, ${n} truck${n === 1 ? '' : 's'} through here</div><div class="muted">Adds ${g.cfg.depots.capacity} to the company's truck limit</div>`;
     }
   } else if (l && l.kind === 'lot') {
     html = '<span class="muted">Empty lot: a business may open here.</span>';
   } else if (route) {
     const p = g.town.locations[route.producer];
-    html = `<b>${coName(route.company)}</b> · ${goods[p.good!]} ${at(route.producer)} → ${at(route.consumer)} · ${route.trucks} truck${route.trucks === 1 ? '' : 's'} from depot ${at(route.depot)}`;
+    const n = names(p.good!);
+    html = `<b>${coName(route.company)}</b> · ${n.raw} ${at(route.producer)} → factory ${at(route.depot)} → ${n.product} ${at(route.consumer)} · ${route.trucks} truck${route.trucks === 1 ? '' : 's'}`;
     if (obs.companies[route.company].presidents.includes(obs.me)) html += '<div class="muted">Click to add a truck · right-click to take one off</div>';
   }
   if (!html) {
@@ -356,7 +371,7 @@ function refreshPanels(obs: Observation) {
       const trucks = obs.trucks.filter((t) => t.company === c.id).length;
       const depots = Object.values(obs.depots).filter((o) => o === c.id).length;
       const owners = c.shares.map((s) => (s === null ? '·' : s === obs.me ? '<b>Y</b>' : `${s + 1}`)).join(' ');
-      return `<div class="co"><div class="row"><span>${sw(c.id)}<b>${coName(c.id)}</b></span><span>${money(c.treasury)}</span></div><div class="row muted small"><span>${trucks} trucks · ${depots} depot${depots === 1 ? '' : 's'} · ${obs.routes.filter((r) => r.company === c.id).length} routes</span><span title="Share owners (Y = you, · = bank)">${owners}</span></div><div class="row muted small"><span>Next dividend</span><span>${money(c.dividendPerShare)}/share</span></div></div>`;
+      return `<div class="co"><div class="row"><span>${sw(c.id)}<b>${coName(c.id)}</b></span><span>${money(c.treasury)}</span></div><div class="row muted small"><span>${trucks} trucks · ${depots} factor${depots === 1 ? 'y' : 'ies'} · ${obs.routes.filter((r) => r.company === c.id).length} routes</span><span title="Share owners (Y = you, · = bank)">${owners}</span></div><div class="row muted small"><span>Next dividend</span><span>${money(c.dividendPerShare)}/share</span></div></div>`;
     })
     .join('');
 
@@ -413,38 +428,35 @@ function refreshMyCompanies(obs: Observation) {
   for (const id of mine) {
     const c = obs.companies[id];
     const trucks = obs.trucks.filter((t) => t.company === id);
-    const free = trucks.filter((t) => t.route === null && t.state === 'idle').length;
-    const broken = trucks.filter((t) => t.state === 'broken' || t.limping).length;
-    const servicing = trucks.filter((t) => t.state === 'repairing' || (t.toService && !t.limping)).length;
+    const free = freeTrucks(obs, id);
+    const factories = Object.values(obs.depots).filter((o) => o === id).length;
+    const limit = factories * g.cfg.depots.capacity;
     html += `<div class="co${currentCompany(obs) === id ? ' active' : ''}" data-company="${id}"><div class="row big"><span>${sw(id)}<b>${coName(id)}</b></span><b>${money(c.treasury)}</b></div>`;
-    html += `<div class="row small muted"><span>${trucks.length} trucks: ${free} free, ${trucks.length - free} on routes</span><span>${broken ? `<span class="bad">${broken} broken</span> ` : ''}${servicing ? `${servicing} servicing` : ''}</span></div>`;
-    for (const [site, owner] of Object.entries(obs.depots)) {
-      if (owner !== id) continue;
-      const s = Number(site);
-      const n = trucks.filter((t) => t.depot === s).length;
-      const full = n >= g.cfg.depots.capacity;
-      const canPay = c.treasury >= g.cfg.depots.truckPrice;
-      html += `<div class="row small"><span>Depot ${at(s)}: ${n}/${g.cfg.depots.capacity} trucks, ${freeTrucks(obs, s)} free</span><button data-truck="${id}:${s}" ${full || !canPay ? 'disabled' : ''} title="${full ? 'Depot full' : canPay ? '' : 'Not enough in the treasury'}">Buy truck ${money(g.cfg.depots.truckPrice)}</button></div>`;
-    }
-    // The free depot sites nearest this company's depots, with its price for each.
+    const full = trucks.length >= limit;
+    const canPay = c.treasury >= g.cfg.depots.truckPrice;
+    const home = Object.entries(obs.depots).find(([, o]) => o === id)?.[0];
+    html += `<div class="row small"><span>${trucks.length}/${limit} trucks: ${free} free</span>${home === undefined ? '' : `<button data-truck="${id}:${home}" ${full || !canPay ? 'disabled' : ''} title="${full ? `Fleet full: each factory adds ${g.cfg.depots.capacity}` : canPay ? '' : 'Not enough in the treasury'}">Buy truck ${money(g.cfg.depots.truckPrice)}</button>`}</div>`;
+    const myFactories = Object.entries(obs.depots).filter(([, o]) => o === id).map(([site]) => at(Number(site)));
+    html += `<div class="row small muted"><span>Factor${myFactories.length === 1 ? 'y' : 'ies'}: ${myFactories.join(', ')}</span></div>`;
+    // The free factory sites nearest this company's factories, with its price for each.
     const sites = Object.keys(obs.depotPrices).map(Number);
     if (sites.length) {
       const own = Object.entries(obs.depots).filter(([, o]) => o === id).map(([site]) => g.town.locations[Number(site)].node);
       const dist = (site: number) => Math.min(...own.map((n) => siteReach(site)[n]));
       const near = sites.sort((a, b) => dist(a) - dist(b)).slice(0, 3);
-      html += `<div class="row small"><span class="muted">Nearby depot sites</span><button data-depot="${id}" class="${hl.buyFor === id ? 'on' : ''}">${hl.buyFor === id ? 'Cancel' : 'Pick on map…'}</button></div><div class="sites">`;
+      html += `<div class="row small"><span class="muted">Nearby factory sites</span><button data-depot="${id}" class="${hl.buyFor === id ? 'on' : ''}">${hl.buyFor === id ? 'Cancel' : 'Pick on map…'}</button></div><div class="sites">`;
       for (const site of near) {
         const price = obs.depotPrices[site][id];
         html += `<button data-buysite="${id}:${site}" ${c.treasury < price ? 'disabled' : ''} title="${Math.round(dist(site))} blocks away${price < g.cfg.depots.depotBase ? ', local subsidy' : ''}">${at(site)} ${money(price)}</button>`;
       }
       html += '</div>';
-    } else html += '<div class="row small muted"><span>No free depot sites left</span></div>';
+    } else html += '<div class="row small muted"><span>No free factory sites left</span></div>';
     const routes = obs.routes.filter((r) => r.company === id);
     if (routes.length) {
       html += '<div class="sub">Routes</div>';
       for (const r of routes) {
         const p = g.town.locations[r.producer];
-        html += `<div class="row small"><span><span class="dot" style="background:${goodColor(p.good!)}"></span>${cap(g.cfg.town.goods[p.good!])} ${at(r.producer)} → ${at(r.consumer)}</span><span><button data-unroute="${r.key}">−</button> ${r.trucks} <button data-route="${r.key}" ${freeTrucks(obs, r.depot) ? '' : 'disabled'}>+</button></span></div>`;
+        html += `<div class="row small"><span><span class="dot" style="background:${goodColor(p.good!)}"></span>${cap(names(p.good!).product)} ${at(r.producer)} → ${at(r.depot)} → ${at(r.consumer)}</span><span><button data-unroute="${r.key}">−</button> ${r.trucks} <button data-route="${r.key}" ${freeTrucks(obs, id) ? '' : 'disabled'}>+</button></span></div>`;
       }
     }
     html += '</div>';
@@ -513,17 +525,14 @@ function handleEvents(evs: GameEvent[]) {
     else if (e.type === 'payout' && e.paid[session.seat]) {
       text = `Dividend from ${coName(e.company)}: ${money(e.paid[session.seat])}${e.final ? ' (final)' : ''}`;
       cls = 'good';
-    } else if (e.type === 'opened') text = `A ${g.cfg.town.goods[e.good]} ${e.kind} opened`;
+    } else if (e.type === 'opened') text = `A ${e.kind === 'producer' ? names(e.good).source : names(e.good).shop} opened`;
     else if (e.type === 'closed') {
       text = 'A business closed';
       cls = 'bad';
     } else if (e.type === 'closing') {
       text = 'A business is about to close: serve it to save it';
       cls = 'bad';
-    } else if (e.type === 'brokeDown' && mine.has(e.company)) {
-      text = `A ${coName(e.company)} truck broke down`;
-      cls = 'bad';
-    } else if (e.type === 'boughtDepot') text = `${coName(e.company)} bought a depot for ${money(e.price)}`;
+    } else if (e.type === 'boughtDepot') text = `${coName(e.company)} bought a factory for ${money(e.price)}`;
     else if (e.type === 'end') text = 'Game over';
     if (!text) continue;
     const li = document.createElement('li');
@@ -557,9 +566,8 @@ function showHelp() {
   ov.innerHTML = `<div class="card help"><h1>How to play</h1>
   <p>You're an investor. Buy shares of trucking companies at auction; whoever holds the most shares of a company is its president and runs it. Every 3 minutes each company pays its dividend to its shareholders. After 15 minutes, the richest player wins.</p>
   <ul>
-  <li><b>Routes:</b> click a <b>producer</b> (round factory) and a <b>consumer</b> (house) of the same good. A free truck from your nearest depot starts carrying pallets between them. Click a route line to add a truck; right-click it to take one off.</li>
-  <li><b>Trucks and depots:</b> buy trucks and depots in <i>Your companies</i>. A depot site is cheaper where your company already does business.</li>
-  <li><b>Wear:</b> trucks wear out faster far from your depots; they service themselves at the nearest one and can break down if worn.</li>
+  <li><b>Routes:</b> click a <b>producer</b> (round: forest, farm or oil well) and a <b>shop</b> (house) of the same good. A free truck picks up the raw material, takes it through your company's factory to be made into product, and delivers it to the shop. Click a route line to add a truck; right-click it to take one off.</li>
+  <li><b>Factories:</b> every load goes through one, so where your factories are decides which routes pay. Each factory also adds ${session.cfg.depots.capacity} to your truck limit. A factory site is cheaper where your company already does business.</li>
   <li><b>Businesses</b> grow when served well (dots under each one show its level) and close if neglected (flashing red).</li>
   <li><b>Map:</b> drag to pan, scroll to zoom, double-click to fit. P or Space pauses.</li>
   </ul><button id="btn-close">Got it</button></div>`;
@@ -618,7 +626,6 @@ function newGame() {
   $('overlay').hidden = true;
   shown.clear();
   reachCache.clear();
-  hl.leash = session.cfg.trucks.leashBlocks;
   hl.picked = [];
   hl.buyFor = null;
   activeCompany = null;

@@ -23,14 +23,16 @@ describe('prices', () => {
   it('gives a quarter of consumers the premium price, the rest the normal one', () => {
     const prices = assignPrices([...Array(20).keys()], DEFAULT_MONEY, new Rng(1));
     const vals = [...prices.values()];
-    expect(vals.filter((p) => p === 3)).toHaveLength(5);
-    expect(vals.filter((p) => p === 2)).toHaveLength(15);
+    const { palletPrice, premiumPrice } = DEFAULT_MONEY;
+    expect(vals.filter((p) => p === premiumPrice)).toHaveLength(5);
+    expect(vals.filter((p) => p === palletPrice)).toHaveLength(15);
   });
 
   it('every consumer in a game has a price; producers have none', () => {
     const { g } = setup();
-    for (const l of g.locations) expect(l.price).toBe(l.kind === 'consumer' ? (l.price === 3 ? 3 : 2) : 0);
-    expect(g.locations.some((l) => l.price === 3)).toBe(true);
+    const { palletPrice, premiumPrice } = g.cfg.money;
+    for (const l of g.locations) expect(l.price).toBe(l.kind === 'consumer' ? (l.price === premiumPrice ? premiumPrice : palletPrice) : 0);
+    expect(g.locations.some((l) => l.price === premiumPrice)).toBe(true);
   });
 });
 

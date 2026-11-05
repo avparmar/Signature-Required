@@ -11,9 +11,12 @@
  */
 import { distancesFrom, routeVia, type Location, type Observation, type Route, type Town } from '@sr/core';
 
-// Company colours stay clear of the goods' colours (white milk, tan bread, slate fuel).
+// Company colours stay clear of the goods' colours (wood brown, wheat gold, oil slate).
 export const COMPANY_COLORS = ['#d1452f', '#2a7ab0', '#3f9a54', '#8a5cc2', '#d24f93', '#1f9e9a'];
-export const GOOD_COLORS = ['#ffffff', '#d9a35f', '#3d4660', '#8fbf5a', '#b05bb0'];
+export const GOOD_COLORS = ['#b07a4a', '#f0cf6a', '#4a5470', '#8fbf5a', '#b05bb0'];
+/** Producer icons (raw material) and shop icons (product), by good. */
+export const RAW_ICONS = ['🪵', '🌾', '🛢️'];
+export const PRODUCT_ICONS = ['🪑', '🍞', '⛽'];
 
 /** Chess-style name for a block: column letter (A at the left) and row number (1 at the top). */
 export function coordOf(x: number, y: number): string {
@@ -35,8 +38,6 @@ export interface Highlights {
   hoverRoute: string | null;
   /** Free depot sites to highlight with this company's prices (buy-depot mode). */
   buyFor: number | null;
-  /** Drive distance that counts as near a depot (drawn around a hovered depot). */
-  leash: number;
 }
 
 export class Renderer {
@@ -231,32 +232,13 @@ export class Renderer {
       ctx.stroke();
     }
 
-    // A hovered depot's reach: the streets within the leash distance (where trucks wear slowly).
-    const hoverLoc = hl.hover !== null ? town.locations[hl.hover] : null;
-    if (hoverLoc && hoverLoc.kind === 'depot') {
-      const d = this.reachOf(hoverLoc.node);
-      const owner = obs.depots[hoverLoc.id];
-      ctx.strokeStyle = owner === undefined ? '#8a8273' : companyColor(owner);
-      ctx.globalAlpha = 0.35;
-      ctx.lineWidth = roadW * 2.2;
-      ctx.beginPath();
-      for (const e of town.graph.edges) {
-        if (d[e.a] > hl.leash || d[e.b] > hl.leash || term[e.a] || term[e.b]) continue;
-        const a = town.graph.nodes[e.a];
-        const b = town.graph.nodes[e.b];
-        ctx.moveTo(this.X(a.x), this.Y(a.y));
-        ctx.lineTo(this.X(b.x), this.Y(b.y));
-      }
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-    }
-
     // Routes, along the streets.
     const routes = obs.routes;
     const lines = routes.map((r) => this.routeLine(r, routes));
     for (const [i, r] of routes.entries()) {
       const pts = lines[i];
-      const hot = hl.hoverRoute === r.key;
+      // Hovering a route, or the factory it runs through, highlights it.
+      const hot = hl.hoverRoute === r.key || hl.hover === r.depot;
       ctx.strokeStyle = companyColor(r.company);
       ctx.globalAlpha = hot ? 0.95 : 0.6;
       ctx.lineWidth = hot ? 3.5 : 2;
@@ -346,12 +328,12 @@ export class Renderer {
         ctx.stroke();
       }
       if (detail) {
-        ctx.fillStyle = l.good === 0 ? INK : '#ffffff';
-        ctx.font = `700 ${Math.round(r * 0.8)}px system-ui, sans-serif`;
+        // An icon for what it makes (raw material) or sells (product).
+        ctx.font = `${Math.round(r * 1.05)}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        const letter = town.cfg.goods[l.good!][0];
-        ctx.fillText(l.kind === 'producer' ? letter.toUpperCase() : letter, x, y + (l.kind === 'consumer' ? r * 0.25 : 0));
+        const icon = (l.kind === 'producer' ? RAW_ICONS : PRODUCT_ICONS)[l.good! % RAW_ICONS.length];
+        ctx.fillText(icon, x, y + (l.kind === 'consumer' ? r * 0.22 : 0));
       }
       // Level: pips when zoomed in, a ring tint when zoomed out.
       if (st) {
@@ -404,7 +386,7 @@ export class Renderer {
       const ang = Math.atan2(p.dy, p.dx);
       ctx.save();
       ctx.translate(x, y);
-      if (t.state === 'driving' || t.state === 'broken') ctx.rotate(Math.abs(p.dx) + Math.abs(p.dy) > 1e-6 ? ang : 0);
+      if (t.state === 'driving') ctx.rotate(Math.abs(p.dx) + Math.abs(p.dy) > 1e-6 ? ang : 0);
       // Body.
       ctx.fillStyle = companyColor(t.company);
       ctx.strokeStyle = INK;
@@ -415,35 +397,39 @@ export class Renderer {
       // Cab.
       ctx.fillStyle = 'rgba(0,0,0,0.4)';
       ctx.fillRect(tw / 2 - tw * 0.26, -th / 2, tw * 0.26, th);
-      // Open-top bed: a pallet in the good's colour, outlined so it stands out, or empty (dark).
+      // Open-top bed: raw material is a rough crate (cross-braced), product a wrapped pallet
+      // (with a band), both in the good's colour; an empty bed is dark.
       const bx = -tw / 2 + 1.5;
       const bw = tw * 0.6;
       if (t.cargo) {
+        const x0 = bx - 1;
+        const y0 = -th / 2 - 1;
+        const w = bw + 1;
+        const h = th + 2;
         ctx.fillStyle = goodColor(t.cargo.good);
-        ctx.fillRect(bx - 1, -th / 2 - 1, bw + 1, th + 2);
+        ctx.fillRect(x0, y0, w, h);
         ctx.strokeStyle = INK;
         ctx.lineWidth = 1.2;
-        ctx.strokeRect(bx - 1, -th / 2 - 1, bw + 1, th + 2);
+        ctx.strokeRect(x0, y0, w, h);
+        if (!t.cargo.processed) {
+          ctx.lineWidth = 0.9;
+          ctx.beginPath();
+          ctx.moveTo(x0, y0);
+          ctx.lineTo(x0 + w, y0 + h);
+          ctx.moveTo(x0 + w, y0);
+          ctx.lineTo(x0, y0 + h);
+          ctx.stroke();
+        } else {
+          ctx.fillStyle = t.cargo.good === 0 ? 'rgba(0,0,0,0.25)' : 'rgba(255,255,255,0.75)';
+          ctx.fillRect(x0 + w * 0.4, y0, w * 0.2, h);
+        }
       } else {
         ctx.fillStyle = 'rgba(0,0,0,0.22)';
         ctx.fillRect(bx, -th / 2 + 1.5, bw, th - 3);
       }
       ctx.restore();
-      // Breakdowns and repairs.
-      if (t.state === 'broken' || t.limping) {
-        const blink = t.state === 'broken' ? Math.floor(now * 4) % 2 === 0 : true;
-        if (blink) {
-          ctx.fillStyle = '#d1342f';
-          ctx.beginPath();
-          ctx.arc(x + tw * 0.55, y - th * 0.9, Math.max(3, tw * 0.28), 0, Math.PI * 2);
-          ctx.fill();
-          ctx.fillStyle = '#fff';
-          ctx.font = `800 ${Math.max(6, tw * 0.4)}px system-ui, sans-serif`;
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText('!', x + tw * 0.55, y - th * 0.9 + 0.5);
-        }
-      } else if (t.state === 'repairing') {
+      // Being processed at the factory.
+      if (t.state === 'processing') {
         ctx.fillStyle = '#5b6b7a';
         ctx.beginPath();
         ctx.arc(x + tw * 0.55, y - th * 0.9, Math.max(3, tw * 0.28), 0, Math.PI * 2);
@@ -506,7 +492,7 @@ export class Renderer {
     const atDepot = new Map<number, number[]>();
     for (const t of obs.trucks) {
       if (out.has(t.id)) continue;
-      if (t.state === 'idle' || t.state === 'repairing') {
+      if (t.state === 'idle' || t.state === 'processing') {
         atDepot.set(t.node, [...(atDepot.get(t.node) ?? []), t.id]);
         continue;
       }

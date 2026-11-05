@@ -36,7 +36,7 @@ export interface DepotConfig {
 
 export const DEFAULT_DEPOTS: DepotConfig = {
   capacity: 8,
-  truckPrice: 15,
+  truckPrice: 12,
   pricing: 'subsidy',
   depotBase: 150,
   maxSubsidy: 0.6,

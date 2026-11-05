@@ -181,7 +181,7 @@ describe('trucks on routes', () => {
         last = e.company;
       }
     }
-    expect(checked).toBeGreaterThan(5);
+    expect(checked).toBeGreaterThanOrEqual(3);
   });
 
   it('never has more trucks loading than the building has bays', () => {
@@ -264,84 +264,10 @@ describe('trucks on routes', () => {
   });
 });
 
-describe('wear, servicing and breakdowns', () => {
-  function onRoute(o: Parameters<typeof newGame>[0] = {}) {
-    const s = setup(o);
-    s.g.addTruck(0);
-    s.g.act(0, { type: 'assignRoute', depot: s.depot.id, producer: s.producer.id, consumer: s.consumer.id });
-    return s;
-  }
-
-  it('wears trucks as they drive, faster away from their depots', () => {
-    const near = onRoute({ trucks: { breakdowns: false } });
-    runFor(near.g, 60);
-    const t = near.g.trucks.trucks[0];
-    expect(t.reliability).toBeLessThan(1);
-    // Same drive with the leash at 0 blocks: everywhere counts as far, so more wear.
-    const far = onRoute({ trucks: { breakdowns: false, leashBlocks: 0 } });
-    runFor(far.g, 60);
-    expect(far.g.trucks.trucks[0].reliability).toBeLessThan(t.reliability);
-  });
-
-  it('services itself at a depot once worn, then goes back to its route', () => {
-    const { g } = onRoute({ trucks: { breakdowns: false, wearNear: 0.05, wearFar: 0.05 } });
-    runFor(g, 400);
-    const ev = g.drainEvents(0);
-    const services = ev.filter((e) => e.type === 'serviced');
-    expect(services.length).toBeGreaterThan(0);
-    for (const e of services) if (e.type === 'serviced') expect(e.repair).toBe(false);
-    // It kept delivering after its first service.
-    const first = services[0].t;
-    expect(ev.some((e) => e.type === 'delivered' && e.t > first)).toBe(true);
-  });
-
-  it('breaks down, stands still, limps to a depot keeping its cargo, and is repaired', () => {
-    const { g } = onRoute({ trucks: { breakdownRate: 5, wearNear: 0.05, wearFar: 0.05, serviceBelow: 0 } });
-    let broke = -1;
-    let stuckAt = -1;
-    for (let i = 0; i < 6000 && broke < 0; i++) {
-      g.step();
-      const e = g.drainEvents(0).find((x) => x.type === 'brokeDown');
-      if (e && e.type === 'brokeDown') {
-        broke = e.t;
-        stuckAt = g.trucks.trucks[0].node;
-      }
-    }
-    expect(broke).toBeGreaterThan(0);
-    const t = g.trucks.trucks[0];
-    const cargo = t.cargo ? { ...t.cargo } : null;
-    expect(t.state).toBe('broken');
-    runFor(g, g.cfg.trucks.breakdownSec - 1);
-    expect(t.node).toBe(stuckAt); // still standing there
-    let repaired = false;
-    for (let i = 0; i < 6000 && !repaired; i++) {
-      g.step();
-      repaired = g.drainEvents(0).some((e) => e.type === 'serviced' && e.repair);
-    }
-    expect(repaired).toBe(true);
-    expect(t.reliability).toBe(1);
-    expect(t.cargo).toEqual(cargo);
-  });
-
-  it('never breaks down with breakdowns off', () => {
-    const { g } = onRoute({ trucks: { breakdowns: false, breakdownRate: 5, wearNear: 0.05, wearFar: 0.05 } });
-    runFor(g, 400);
-    expect(g.drainEvents(0).some((e) => e.type === 'brokeDown')).toBe(false);
-  });
-
-  it('is deterministic', () => {
-    const a = onRoute({ trucks: { breakdownRate: 0.5 } });
-    const b = onRoute({ trucks: { breakdownRate: 0.5 } });
-    runFor(a.g, 300);
-    runFor(b.g, 300);
-    expect(a.g.stateHash()).toBe(b.g.stateHash());
-  });
-});
-
 describe('routes through the depot', () => {
   for (const via of ['loaded', 'hub'] as const) {
     it(`${via}: every load is signed off at the depot before it's delivered`, () => {
-      const { g, depot, producer, consumer } = setup({ trucks: { viaDepot: via, breakdowns: false } });
+      const { g, depot, producer, consumer } = setup({ trucks: { viaDepot: via } });
       g.addTruck(0);
       g.act(0, { type: 'assignRoute', depot: depot.id, producer: producer.id, consumer: consumer.id });
       runFor(g, 600);

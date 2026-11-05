@@ -318,8 +318,11 @@ export class Bot {
 
     // Buy a truck if there's money, room and a worthwhile route (one per think).
     const myDepots = Object.entries(obs.depots).filter(([, o]) => o === company).map(([s]) => Number(s));
+    // Trucks are a company-wide pool (each factory adds `capacity`); new ones start at the factory
+    // with the fewest trucks based there.
     const perDepot = (s: number) => obs.trucks.filter((t) => t.depot === s).length;
-    const spare = myDepots.find((s) => perDepot(s) < cfg.capacity);
+    const fleet = obs.trucks.filter((t) => t.company === company).length;
+    const spare = fleet < myDepots.length * cfg.capacity ? [...myDepots].sort((a, b) => perDepot(a) - perDepot(b))[0] : undefined;
     const worthIt = this.minutesLeft(obs) > 4 && this.pickRoute(obs, company, load) !== null;
     if (spare !== undefined && c.treasury >= cfg.truckPrice && worthIt) {
       out.push({ type: 'buyTruck', company, depot: spare });
