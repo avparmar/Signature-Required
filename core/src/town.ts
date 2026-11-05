@@ -32,12 +32,14 @@ export interface TownConfig {
   /**
    * Street layout. 'grid': a full grid with a share of streets removed. 'suburb': main roads every
    * few blocks, with tree-like neighbourhood streets (dead ends, one or two ways out) between them.
-   * 'snowflake': a city grid (with gaps) in the middle, six avenues fanning out, and neighbourhood
-   * streets branching off them at snowflake angles. (Rivers aren't supported here yet.)
+   * 'snowflake': a big round city grid (with gaps) in the middle, eight avenues leaving it, and
+   * tree-like neighbourhoods growing off each avenue. No ring roads: you go through the city.
    */
   layout: 'grid' | 'suburb' | 'snowflake';
   /** Share of grid streets removed (never disconnecting the town). Grid layout only. */
   removeFrac: number;
+  /** Snowflake layout: radius of the city in the middle, in blocks. */
+  cityRadius: number;
   /** Suburb layout: blocks between main roads. */
   mainRoadEvery: number;
   /** Suburb layout: ways out of each neighbourhood onto the main roads. */
@@ -75,6 +77,7 @@ export const DEFAULT_TOWN: TownConfig = {
   layout: 'grid',
   removeFrac: 0.12,
   mainRoadEvery: 4,
+  cityRadius: 5,
   suburbExits: [1, 2],
   suburbLoops: 0.08,
   diagonalFrac: 0.04,
@@ -152,6 +155,10 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
       if (i < W) edges.push([id(i, j), id(i + 1, j)]);
       if (j < H) edges.push([id(i, j), id(i, j + 1)]);
     }
+  // Snowflake towns keep only the city, the avenues and their neighbourhoods; the other
+  // intersections are left unused (and dropped from the final graph).
+  if (cfg.layout === 'snowflake') edges = snowflakeStreets(W, H, cfg, rng);
+
   // Rivers: a meandering band of blocks across the town. Streets crossing it are cut, except a
   // few bridges, which are protected from the random removals below.
   const riverBlocks = new Set<string>();
@@ -216,12 +223,14 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
       aj === bj
         ? wetAt(Math.min(ai, bi), aj - 1) && wetAt(Math.min(ai, bi), aj)
         : wetAt(ai - 1, Math.min(aj, bj)) && wetAt(ai, Math.min(aj, bj));
-    if (wet && !protectedEdges.has(ekey(a, b))) cut.add(ekey(a, b));
+    // A diagonal street through a river block is underwater too.
+    const diagWet = ai !== bi && aj !== bj && wetAt(Math.min(ai, bi), Math.min(aj, bj));
+    if ((wet || diagWet) && !protectedEdges.has(ekey(a, b))) cut.add(ekey(a, b));
   }
   edges = edges.filter(([a, b]) => !cut.has(ekey(a, b)));
   if (cfg.layout === 'suburb') edges = suburbStreets(edges, W, H, cfg, rng, protectedEdges);
 
-  if (!isConnected(nodes.length, edges)) {
+  if (!connectedIgnoringUnused(nodes.length, edges)) {
     // A river with too few bridges can split the town; reroll this attempt.
     return { cfg, graph: buildGraph([], []), river: [], bridges: [], locations: [], fairness: [], attempts: attempt, fair: false };
   }
@@ -242,22 +251,13 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
   const diagonals: [number, number][] = [];
   for (let j = 0; j < H; j++)
     for (let i = 0; i < W; i++) {
-      // Suburbs get fewer diagonals, so they don't undo the neighbourhood structure.
-      if (rng.next() >= cfg.diagonalFrac * (cfg.layout === 'suburb' ? 0.3 : 1)) continue;
+      // Suburbs get fewer diagonals, so they don't undo the neighbourhood structure; snowflakes
+      // have their diagonal avenues already.
+      if (cfg.layout === 'snowflake' || rng.next() >= cfg.diagonalFrac * (cfg.layout === 'suburb' ? 0.3 : 1)) continue;
       if (riverBlocks.has(`${i},${j}`)) continue; // no diagonals across a river
       diagonals.push(rng.next() < 0.5 ? [id(i, j), id(i + 1, j + 1)] : [id(i + 1, j), id(i, j + 1)]);
     }
 
-  if (cfg.layout === 'snowflake') {
-    const r = snowflakeStreets(W, H, rng);
-    nodes.length = 0;
-    nodes.push(...r.nodes);
-    edges = r.edges;
-    diagonals.length = 0;
-    riverBlocks.clear();
-    bridges.length = 0;
-    protectedEdges.clear();
-  }
 
   // Lots sit at the middle of a straight street segment; placing one splits the segment.
   // Bridges never carry a lot, so they stay a single street end to end.
@@ -291,8 +291,8 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
   const offset = rng.next() * ((2 * Math.PI) / cfg.companies);
   for (let c = 0; c < cfg.companies; c++) {
     const a = offset + (c * 2 * Math.PI) / cfg.companies + Math.PI / 4;
-    // Snowflake towns thin out towards the rim, so their starts sit halfway out.
-    const rad = cfg.layout === 'snowflake' ? 0.55 : 1;
+    // Snowflake towns start everyone near the edge of the city, facing their own outskirts.
+    const rad = cfg.layout === 'snowflake' ? 0.7 : 1;
     const p = { x: cx + Math.cos(a) * (cx - 1.5) * rad, y: cy + Math.sin(a) * (cy - 1.5) * rad };
     place({ kind: 'depot', good: null, level: 1, bays: 0, startCompany: c }, p);
   }
@@ -322,8 +322,20 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
     finalEdges.push([s.a, n], [n, s.b]);
   });
   finalEdges.push(...diagonals);
-  const graph = buildGraph(allNodes, finalEdges);
-  const locs: Location[] = locations.map((l, i) => ({ ...l, node: lotNode.get(lotOf[i])! }));
+  // Drop intersections no street uses (snowflake towns leave many), renumbering the rest.
+  const live = new Map<number, number>();
+  for (const [a, b] of finalEdges) for (const n of [a, b]) if (!live.has(n)) live.set(n, live.size);
+  const keptNodes = [...live.keys()].sort((p, q) => p - q);
+  keptNodes.forEach((n, k) => live.set(n, k));
+  const graph = buildGraph(
+    keptNodes.map((n) => allNodes[n]),
+    finalEdges.map(([a, b]) => [live.get(a)!, live.get(b)!] as [number, number]),
+  );
+  for (const br of bridges) {
+    br[0] = live.get(br[0])!;
+    br[1] = live.get(br[1])!;
+  }
+  const locs: Location[] = locations.map((l, i) => ({ ...l, node: live.get(lotNode.get(lotOf[i])!)! }));
 
   const fairness = scoreStarts(graph, locs, cfg);
   const scores = fairness.map((f) => f.score);
@@ -475,183 +487,122 @@ function suburbStreets(
 }
 
 /**
- * Snowflake streets: a city grid (with gaps) in the middle, six avenues fanning out from it, and
- * neighbourhood streets branching off the avenues at snowflake angles (and branching again), with a
- * couple of partial ring roads as rungs between avenues.
+ * Snowflake streets on the grid: a big round city (grid with gaps) in the middle, eight avenues
+ * leaving it (four along the grid, four diagonal), and neighbourhood streets branching off each
+ * avenue along the grid and branching again. There are no ring roads: getting from one
+ * neighbourhood to the next means going back through the city.
+ * Returns the street list (grid street edges and diagonal avenue edges) over grid node ids.
  */
-function snowflakeStreets(W: number, H: number, rng: Rng): { nodes: Vec[]; edges: [number, number][] } {
-  const cx = W / 2;
-  const cy = H / 2;
-  const R = Math.min(W, H) / 2 - 0.3;
-  const nodes: Vec[] = [];
-  let edges: [number, number][] = [];
-  const add = (p: Vec) => nodes.push(p) - 1;
-  const inside = (p: Vec) => p.x >= 0.2 && p.y >= 0.2 && p.x <= W - 0.2 && p.y <= H - 0.2;
+function snowflakeStreets(W: number, H: number, cfg: TownConfig, rng: Rng): [number, number][] {
+  const id = (i: number, j: number) => j * (W + 1) + i;
+  const cx = Math.round(W / 2);
+  const cy = Math.round(H / 2);
+  const ok = (i: number, j: number) => i >= 0 && j >= 0 && i <= W && j <= H;
+  const used = new Map<number, number>(); // node -> owner (-1 = city, k = avenue k's neighbourhood)
+  const edges: [number, number][] = [];
+  const have = new Set<string>();
+  const ekey = (a: number, b: number) => (a < b ? `${a}-${b}` : `${b}-${a}`);
+  const link = (a: number, b: number) => {
+    if (have.has(ekey(a, b))) return;
+    have.add(ekey(a, b));
+    edges.push([a, b]);
+  };
 
-  // City core: a roughly round patch of grid, radius C blocks, with some streets knocked out.
-  const C = 3.6;
-  const coreId = new Map<string, number>();
-  const K = Math.floor(C);
-  for (let j = -K; j <= K; j++)
-    for (let i = -K; i <= K; i++) if (Math.hypot(i, j) <= C) coreId.set(`${i},${j}`, add({ x: cx + i, y: cy + j }));
-  const core: [number, number][] = [];
-  for (const [k, n] of coreId) {
-    const [i, j] = k.split(',').map(Number);
-    const right = coreId.get(`${i + 1},${j}`);
-    const down = coreId.get(`${i},${j + 1}`);
-    if (right !== undefined) core.push([n, right]);
-    if (down !== undefined) core.push([n, down]);
-  }
-  const coreNodes = nodes.length;
+  // City: every grid street between nodes within cityRadius of the centre, then some knocked out.
+  const Rc = cfg.cityRadius;
+  const inCity = (i: number, j: number) => Math.hypot(i - cx, j - cy) <= Rc;
+  const city: [number, number][] = [];
+  for (let j = 0; j <= H; j++)
+    for (let i = 0; i <= W; i++) {
+      if (!inCity(i, j)) continue;
+      used.set(id(i, j), -1);
+      if (i < W && inCity(i + 1, j)) city.push([id(i, j), id(i + 1, j)]);
+      if (j < H && inCity(i, j + 1)) city.push([id(i, j), id(i, j + 1)]);
+    }
+  const cityNodes = [...used.keys()];
+  const remap = new Map(cityNodes.map((n, k) => [n, k]));
+  const local = (es: [number, number][]) => es.map(([a, b]) => [remap.get(a)!, remap.get(b)!] as [number, number]);
   let removed = 0;
-  for (const e of rng.shuffle([...core])) {
-    if (removed >= Math.round(core.length * 0.15)) break;
-    const without = core.filter((x) => x !== e);
-    if (isConnected(coreNodes, without)) {
-      core.splice(core.indexOf(e), 1);
+  const target = Math.round(city.length * cfg.removeFrac);
+  for (const e of rng.shuffle([...city])) {
+    if (removed >= target) break;
+    const without = city.filter((x) => x !== e);
+    if (isConnected(cityNodes.length, local(without))) {
+      city.splice(city.indexOf(e), 1);
       removed++;
     }
   }
-  edges = core;
-  const segs: [Vec, Vec][] = edges.map(([a, b]) => [nodes[a], nodes[b]]);
-  const link = (a: number, b: number) => {
-    edges.push([a, b]);
-    segs.push([nodes[a], nodes[b]]);
+  for (const [a, b] of city) link(a, b);
+
+  // Avenues: four along the grid and four diagonal, from the city's edge to the town's edge.
+  const dirs: [number, number][] = [[1, 0], [0, 1], [-1, 0], [0, -1], [1, 1], [-1, 1], [-1, -1], [1, -1]];
+  const avenues: { path: [number, number][]; d: [number, number] }[] = [];
+  dirs.forEach((d, k) => {
+    let [i, j] = [cx, cy];
+    while (inCity(i + d[0], j + d[1])) [i, j] = [i + d[0], j + d[1]];
+    const path: [number, number][] = [[i, j]];
+    while (ok(i + d[0], j + d[1])) {
+      const [ni, nj] = [i + d[0], j + d[1]];
+      link(id(i, j), id(ni, nj));
+      used.set(id(ni, nj), k);
+      path.push([ni, nj]);
+      [i, j] = [ni, nj];
+    }
+    avenues.push({ path, d });
+  });
+
+  // Neighbourhoods: streets grow along the grid from avenue nodes, turning and branching, onto
+  // free intersections only, so neighbouring neighbourhoods never join up.
+  const free = (i: number, j: number) => ok(i, j) && !used.has(id(i, j));
+  const grow = (i: number, j: number, d: [number, number], len: number, owner: number) => {
+    for (let s = 0; s < len; s++) {
+      const [ni, nj] = [i + d[0], j + d[1]];
+      if (!free(ni, nj)) return;
+      link(id(i, j), id(ni, nj));
+      used.set(id(ni, nj), owner);
+      [i, j] = [ni, nj];
+      if (rng.next() < 0.3) {
+        const side: [number, number] = rng.next() < 0.5 ? [d[1], -d[0]] : [-d[1], d[0]];
+        grow(i, j, side, rng.int(1, 3), owner);
+      }
+    }
   };
-  const crosses = (p: Vec, q: Vec) => segs.some(([a, b]) => segmentsCross(p, q, a, b));
-  const clear = (p: Vec, except: number[], min = 0.75) =>
-    nodes.every((n, i) => except.includes(i) || Math.hypot(n.x - p.x, n.y - p.y) >= min);
-
-  // Avenues: six straight-ish spokes from the edge of the core to the rim.
-  const spokes = 6;
-  const base = rng.next() * ((2 * Math.PI) / spokes);
-  const avenues: { nodes: number[]; angle: number }[] = [];
-  for (let k = 0; k < spokes; k++) {
-    const angle = base + (2 * Math.PI * k) / spokes;
-    // Start from the core's boundary node closest to this direction.
-    let start = 0;
-    let best = -Infinity;
-    for (let n = 0; n < coreNodes; n++) {
-      const p = nodes[n];
-      const onEdge = Math.hypot(p.x - cx, p.y - cy) >= C - 1.2;
-      if (!onEdge) continue;
-      const score = Math.cos(Math.atan2(p.y - cy, p.x - cx) - angle) * Math.hypot(p.x - cx, p.y - cy);
-      if (score > best) {
-        best = score;
-        start = n;
+  avenues.forEach(({ path, d }, k) => {
+    const diagonal = d[0] !== 0 && d[1] !== 0;
+    // Side streets leave an axis avenue at right angles; a diagonal avenue sheds streets along both axes.
+    const sides: [number, number][] = diagonal ? [[d[0], 0], [0, d[1]], [-d[0], 0], [0, -d[1]]] : [[d[1], -d[0]], [-d[1], d[0]]];
+    for (let s = 1; s < path.length; s++)
+      for (const side of rng.shuffle([...sides])) {
+        if (rng.next() < 0.35) continue;
+        grow(path[s][0], path[s][1], side, rng.int(2, 5), k);
       }
+  });
+  // Fill: grow more streets from any neighbourhood street end into space that's still empty.
+  for (let pass = 0; pass < 2; pass++)
+    for (const [n, owner] of rng.shuffle([...used.entries()])) {
+      if (owner < 0 || rng.next() < 0.5) continue;
+      const i = n % (W + 1);
+      const j = Math.floor(n / (W + 1));
+      const d = rng.pick<[number, number]>([[1, 0], [-1, 0], [0, 1], [0, -1]]);
+      grow(i, j, d, rng.int(1, 3), owner);
     }
-    const list = [start];
-    let r = Math.hypot(nodes[start].x - cx, nodes[start].y - cy);
-    let a = Math.atan2(nodes[start].y - cy, nodes[start].x - cx);
-    for (;;) {
-      r += 1;
-      let turn = angle - a;
-      while (turn > Math.PI) turn -= 2 * Math.PI;
-      while (turn < -Math.PI) turn += 2 * Math.PI;
-      a += turn * 0.5 + (rng.next() - 0.5) * 0.06; // ease onto the spoke's heading
-      const p = { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) };
-      if (r > R + 2 || !inside(p)) break;
-      const n = add(p);
-      link(list[list.length - 1], n);
-      list.push(n);
-    }
-    avenues.push({ nodes: list, angle });
-  }
-
-  // Rungs: partial ring roads joining neighbouring avenues at a couple of distances.
-  for (const step of [2, 4]) {
-    for (let k = 0; k < spokes; k++) {
-      if (step === 4 && rng.next() < 0.35) continue;
-      const A = avenues[k].nodes;
-      const B = avenues[(k + 1) % spokes].nodes;
-      if (A.length <= step || B.length <= step) continue;
-      const a = A[step];
-      const b = B[step];
-      const pa = nodes[a];
-      const pb = nodes[b];
-      const ra = Math.hypot(pa.x - cx, pa.y - cy);
-      const a0 = Math.atan2(pa.y - cy, pa.x - cx);
-      let a1 = Math.atan2(pb.y - cy, pb.x - cx);
-      while (a1 < a0) a1 += 2 * Math.PI;
-      const pieces = Math.max(1, Math.round(((a1 - a0) * ra) / 1.1));
-      const pts: Vec[] = [];
-      for (let q = 1; q < pieces; q++) pts.push({ x: cx + ra * Math.cos(a0 + ((a1 - a0) * q) / pieces), y: cy + ra * Math.sin(a0 + ((a1 - a0) * q) / pieces) });
-      const path = [pa, ...pts, pb];
-      let ok = pts.every(inside);
-      for (let q = 0; ok && q + 1 < path.length; q++) if (crosses(path[q], path[q + 1])) ok = false;
-      if (!ok) continue;
-      let prev = a;
-      for (const p of pts) {
-        const n = add(p);
-        link(prev, n);
-        prev = n;
-      }
-      link(prev, b);
+  // A few small loops inside a neighbourhood: join two of its intersections that sit side by side.
+  for (const [n, owner] of used) {
+    if (owner < 0) continue;
+    const i = n % (W + 1);
+    const j = Math.floor(n / (W + 1));
+    for (const [di, dj] of [[1, 0], [0, 1]]) {
+      const m = id(i + di, j + dj);
+      if (ok(i + di, j + dj) && used.get(m) === owner && !have.has(ekey(n, m)) && rng.next() < cfg.suburbLoops) link(n, m);
     }
   }
-
-  // Snowflake branches: off each avenue at ±60°, each branch sprouting smaller ±60° branches.
-  const grow = (from: number, dir: number, depth: number) => {
-    if (depth <= 0) return;
-    const len = 0.95 + rng.next() * 0.2;
-    const d = dir + (rng.next() - 0.5) * 0.25;
-    const p = { x: nodes[from].x + len * Math.cos(d), y: nodes[from].y + len * Math.sin(d) };
-    if (!inside(p) || !clear(p, [from]) || crosses(nodes[from], p)) {
-      // Blocked: sometimes join the street we ran into, making a loop.
-      return;
-    }
-    const n = add(p);
-    link(from, n);
-    grow(n, d, depth - 1);
-    if (depth >= 2 && rng.next() < 0.45) grow(n, d + (rng.next() < 0.5 ? 1 : -1) * (Math.PI / 3), depth - 2);
-  };
-  for (const { nodes: list, angle } of avenues) {
-    for (let s = 1; s < list.length; s++) {
-      for (const side of [1, -1]) {
-        if (rng.next() < 0.25) continue;
-        grow(list[s], angle + side * (Math.PI / 3), rng.int(2, 4));
-      }
-    }
-  }
-  // Branches off the rungs too, outward and inward, so the space between avenues fills in.
-  const ringNodes = nodes.map((_, i) => i).filter((i) => i >= coreNodes && !avenues.some((a) => a.nodes.includes(i)));
-  for (const n of rng.shuffle(ringNodes)) {
-    if (rng.next() < 0.5) continue;
-    const p = nodes[n];
-    const out = Math.atan2(p.y - cy, p.x - cx);
-    grow(n, out + (rng.next() < 0.7 ? 0 : Math.PI) + (rng.next() - 0.5) * 0.5, rng.int(1, 3));
-  }
-  // A few loops: join dead ends to a nearby node when the link is short and crosses nothing.
-  const degree = new Array(nodes.length).fill(0);
-  for (const [a, b] of edges) {
-    degree[a]++;
-    degree[b]++;
-  }
-  for (let n = coreNodes; n < nodes.length; n++) {
-    if (degree[n] !== 1 || rng.next() > 0.3) continue;
-    let best = -1;
-    let bestD = 1.4;
-    for (let m = 0; m < nodes.length; m++) {
-      if (m === n || edges.some(([a, b]) => (a === n && b === m) || (a === m && b === n))) continue;
-      const dd = Math.hypot(nodes[m].x - nodes[n].x, nodes[m].y - nodes[n].y);
-      if (dd < bestD && !crosses(nodes[n], nodes[m])) {
-        bestD = dd;
-        best = m;
-      }
-    }
-    if (best >= 0) {
-      link(n, best);
-      degree[n]++;
-      degree[best]++;
-    }
-  }
-  return { nodes, edges };
+  return edges;
 }
 
-function segmentsCross(p: Vec, q: Vec, a: Vec, b: Vec): boolean {
-  const same = (u: Vec, v: Vec) => Math.abs(u.x - v.x) < 1e-9 && Math.abs(u.y - v.y) < 1e-9;
-  if (same(p, a) || same(p, b) || same(q, a) || same(q, b)) return false;
-  const o = (u: Vec, v: Vec, w: Vec) => Math.sign((v.x - u.x) * (w.y - u.y) - (v.y - u.y) * (w.x - u.x));
-  return o(p, q, a) !== o(p, q, b) && o(a, b, p) !== o(a, b, q);
+/** Like isConnected, but intersections no street touches don't count. */
+function connectedIgnoringUnused(nodeCount: number, edges: [number, number][]): boolean {
+  const ids = new Map<number, number>();
+  for (const [a, b] of edges) for (const n of [a, b]) if (!ids.has(n)) ids.set(n, ids.size);
+  void nodeCount;
+  return isConnected(ids.size, edges.map(([a, b]) => [ids.get(a)!, ids.get(b)!] as [number, number]));
 }

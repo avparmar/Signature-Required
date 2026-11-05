@@ -18,7 +18,7 @@ export function townSvg(town: Town, title = ''): string {
   out.push(`<rect width="${w}" height="${h}" fill="#e9e4d4"/>`);
   out.push(`<text x="${M}" y="${M + 6}" font-size="15" font-weight="bold" fill="#333">${title}</text>`);
   // Blocks (green), then water.
-  if (town.cfg.layout !== 'snowflake')
+  if (town.cfg.layout === 'grid' || town.cfg.layout === 'suburb')
     for (let j = 0; j < H; j++)
       for (let i = 0; i < W; i++) out.push(`<rect x="${X(i) + 4}" y="${Y(j) + 4}" width="${S - 8}" height="${S - 8}" rx="3" fill="#cfd8b8"/>`);
   for (const { i, j } of town.river) out.push(`<rect x="${X(i) - 4}" y="${Y(j) - 4}" width="${S + 8}" height="${S + 8}" fill="#6fa8dc"/>`);

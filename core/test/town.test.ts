@@ -156,13 +156,25 @@ describe('suburb layout', () => {
 
 describe('snowflake layout', () => {
   it(
-    'is connected and leaves the grid behind',
+    'is connected, has no ring roads, and keeps every street on the grid or a diagonal',
     () => {
       for (const seed of [1, 2, 3]) {
         const t = town(seed, { layout: 'snowflake' });
         const { nodes, edges } = t.graph;
         expect(isConnected(nodes.length, edges.map((e) => [e.a, e.b]))).toBe(true);
-        expect(nodes.filter((n) => !Number.isInteger(n.x) || !Number.isInteger(n.y)).length).toBeGreaterThan(nodes.length / 2);
+        for (const e of edges) {
+          const dx = Math.abs(nodes[e.a].x - nodes[e.b].x);
+          const dy = Math.abs(nodes[e.a].y - nodes[e.b].y);
+          expect(dx === 0 || dy === 0 || Math.abs(dx - dy) < 1e-9).toBe(true);
+        }
+        // Outside the city, neighbourhoods only meet via the avenues: removing the city cuts the
+        // outskirts into several separate pieces.
+        const c = t.cfg.blocksX / 2;
+        const outside = (n: number) => Math.hypot(nodes[n].x - c, nodes[n].y - c) > t.cfg.cityRadius + 0.5;
+        const ids = new Map<number, number>();
+        nodes.forEach((_, n) => outside(n) && ids.set(n, ids.size));
+        const outer = edges.filter((e) => outside(e.a) && outside(e.b)).map((e) => [ids.get(e.a)!, ids.get(e.b)!] as [number, number]);
+        expect(isConnected(ids.size, outer)).toBe(false);
         expect(t.locations.length).toBeGreaterThan(40);
       }
     },
