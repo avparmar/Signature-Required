@@ -320,7 +320,8 @@ if (which === 'final') {
 } else if (which === 'fairness' || which === 'rivers') {
   // Looser fairness: how unequal do starts get, and what does that do to auctions and returns?
   // "rivers" runs the same comparison with and without a river through the town.
-  const riverCounts = which === 'rivers' ? [0, 1] : [0];
+  // An optional third argument picks the river counts, e.g. `rivers 24 0,1,2`.
+  const riverCounts = which === 'rivers' ? (process.argv[4] ?? '0,1,2').split(',').map(Number) : [0];
   console.log(`\n${which} experiment (${games} games per variant)\n`);
   console.log('| Town | Fairness (weakest start ≥ x × strongest) | Start score: weakest ÷ strongest | Opening price: dearest / cheapest company | Companies opening at $0 | Best / worst paid per share | Trucks per co. (best start / worst start) | Shares sold | Contested locations | Handovers per location-minute | Depot→producer distance (blocks) | Closures |');
   console.log('|---|---|---|---|---|---|---|---|---|---|---|---|');
@@ -364,7 +365,7 @@ if (which === 'final') {
       }
       const pct = (x: number) => `${(100 * x).toFixed(0)}%`;
       console.log(
-        `| ${rivers ? 'River' : 'No river'} | ${label} | ${avg(ratios).toFixed(2)} | $${avg(dear).toFixed(0)} / $${avg(cheap).toFixed(0)} | ${avg(zero).toFixed(1)} | $${avg(best).toFixed(0)} / $${avg(worst).toFixed(0)} | ${avg(bestTrucks).toFixed(1)} / ${avg(worstTrucks).toFixed(1)} | ${avg(sold).toFixed(1)} | ${pct(avg(contested))} | ${(100 * avg(handover)).toFixed(1)}% | ${avg(reach).toFixed(1)} | ${avg(closed).toFixed(0)} |`,
+        `| ${rivers === 0 ? 'No river' : rivers === 1 ? '1 river' : `${rivers} rivers`} | ${label} | ${avg(ratios).toFixed(2)} | $${avg(dear).toFixed(0)} / $${avg(cheap).toFixed(0)} | ${avg(zero).toFixed(1)} | $${avg(best).toFixed(0)} / $${avg(worst).toFixed(0)} | ${avg(bestTrucks).toFixed(1)} / ${avg(worstTrucks).toFixed(1)} | ${avg(sold).toFixed(1)} | ${pct(avg(contested))} | ${(100 * avg(handover)).toFixed(1)}% | ${avg(reach).toFixed(1)} | ${avg(closed).toFixed(0)} |`,
       );
     }
 } else {

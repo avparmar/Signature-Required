@@ -97,12 +97,12 @@ describe('rivers', () => {
   it(
     'cut every street across the water except the bridges, and the town stays connected',
     () => {
-      for (const seed of [1, 2, 3, 4, 5, 6]) {
-        const t = town(seed, { rivers: 1 });
+      for (const [seed, rivers] of [[1, 1], [2, 1], [3, 1], [4, 1], [5, 2], [6, 2], [7, 2]]) {
+        const t = town(seed, { rivers });
         const W = t.cfg.blocksX;
         expect(t.river.length).toBeGreaterThanOrEqual(t.cfg.blocksY);
-        expect(t.bridges.length).toBeGreaterThanOrEqual(t.cfg.bridgesPerRiver[0]);
-        expect(t.bridges.length).toBeLessThanOrEqual(t.cfg.bridgesPerRiver[1]);
+        expect(t.bridges.length).toBeGreaterThanOrEqual(rivers * t.cfg.bridgesPerRiver[0] - (rivers - 1));
+        expect(t.bridges.length).toBeLessThanOrEqual(rivers * t.cfg.bridgesPerRiver[1]);
         const wet = new Set(t.river.map((b) => `${b.i},${b.j}`));
         const key = (a: number, b: number) => `${Math.min(a, b)}-${Math.max(a, b)}`;
         const bridges = new Set(t.bridges.map(([a, b]) => key(a, b)));

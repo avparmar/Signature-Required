@@ -141,62 +141,67 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
   const bridges: [number, number][] = [];
   const protectedEdges = new Set<string>();
   const ekey = (a: number, b: number) => (a < b ? `${a}-${b}` : `${b}-${a}`);
+  const cut = new Set<string>();
   for (let r = 0; r < cfg.rivers; r++) {
     const vertical = rng.next() < 0.5;
     const len = vertical ? H : W; // blocks along the river's course
     const across = vertical ? W : H;
     const block = (k: number, c: number) => (vertical ? `${c},${k}` : `${k},${c}`);
+    const mine = new Set<string>();
     // Course: one step along per block, drifting at most one block sideways (and never straight
     // back), so the river reads as one band. A sideways step floods both blocks in that column.
     let pos = rng.int(Math.floor(across * 0.3), Math.ceil(across * 0.7) - 1);
     let lastDrift = 0;
     for (let k = 0; k < len; k++) {
-      riverBlocks.add(block(k, pos));
+      mine.add(block(k, pos));
       const roll = rng.next();
       let drift = roll < 0.2 ? -1 : roll > 0.8 ? 1 : 0;
       if (drift === -lastDrift || pos + drift < 2 || pos + drift > across - 3) drift = 0;
       if (drift !== 0 && k < len - 1) {
         pos += drift;
-        riverBlocks.add(block(k, pos));
+        mine.add(block(k, pos));
       }
       if (drift !== 0) lastDrift = drift;
     }
-  }
-  // Every street with water on both sides crosses a river. Keep a few per river as bridges,
-  // spread out along it; cut the rest.
-  const blockAt = (i: number, j: number) => i >= 0 && j >= 0 && i < W && j < H && riverBlocks.has(`${i},${j}`);
-  const crossings: { e: [number, number] }[] = [];
-  for (const e of edges) {
-    const [a, b] = e;
-    const ai = a % (W + 1), aj = Math.floor(a / (W + 1));
-    const bi = b % (W + 1), bj = Math.floor(b / (W + 1));
-    const wet =
-      aj === bj
-        ? blockAt(Math.min(ai, bi), aj - 1) && blockAt(Math.min(ai, bi), aj)
-        : blockAt(ai - 1, Math.min(aj, bj)) && blockAt(ai, Math.min(aj, bj));
-    if (wet) crossings.push({ e });
-  }
-  if (crossings.length > 0) {
-    // Order along the dominant direction of the crossings and pick evenly spaced bridges.
-    const xs = crossings.map((c) => c.e[0] % (W + 1));
-    const spreadX = Math.max(...xs) - Math.min(...xs);
-    const ys = crossings.map((c) => Math.floor(c.e[0] / (W + 1)));
-    const spreadY = Math.max(...ys) - Math.min(...ys);
-    crossings.sort((p, q) =>
-      spreadX >= spreadY ? p.e[0] % (W + 1) - q.e[0] % (W + 1) : Math.floor(p.e[0] / (W + 1)) - Math.floor(q.e[0] / (W + 1)),
-    );
-    const nb = cfg.rivers * rng.int(...cfg.bridgesPerRiver);
+    for (const b of mine) riverBlocks.add(b);
+    // Every street with this river's water on both sides crosses it. Keep a few as bridges,
+    // spread out along the river; cut the rest.
+    const wetAt = (i: number, j: number) => mine.has(`${i},${j}`);
+    const crossings: { e: [number, number]; along: number }[] = [];
+    for (const e of edges) {
+      const [a, b] = e;
+      const ai = a % (W + 1), aj = Math.floor(a / (W + 1));
+      const bi = b % (W + 1), bj = Math.floor(b / (W + 1));
+      const wet =
+        aj === bj
+          ? wetAt(Math.min(ai, bi), aj - 1) && wetAt(Math.min(ai, bi), aj)
+          : wetAt(ai - 1, Math.min(aj, bj)) && wetAt(ai, Math.min(aj, bj));
+      if (wet) crossings.push({ e, along: vertical ? Math.min(aj, bj) : Math.min(ai, bi) });
+    }
+    crossings.sort((p, q) => p.along - q.along);
+    const nb = rng.int(...cfg.bridgesPerRiver);
     const keep = new Set<number>();
     for (let q = 0; q < nb; q++) keep.add(Math.min(crossings.length - 1, Math.floor(((q + 0.5) / nb) * crossings.length)));
-    const cut = new Set<string>();
     crossings.forEach(({ e: [a, b] }, idx) => {
-      if (keep.has(idx)) {
+      const k = ekey(a, b);
+      if (keep.has(idx) && !protectedEdges.has(k) && !cut.has(k)) {
         bridges.push([a, b]);
-        protectedEdges.add(ekey(a, b));
-      } else cut.add(ekey(a, b));
+        protectedEdges.add(k);
+      } else if (!protectedEdges.has(k)) cut.add(k);
     });
-    edges = edges.filter(([a, b]) => !cut.has(ekey(a, b)));
   }
+  // Where two rivers meet, a street can have one river on each side: that's water too.
+  for (const [a, b] of edges) {
+    const ai = a % (W + 1), aj = Math.floor(a / (W + 1));
+    const bi = b % (W + 1), bj = Math.floor(b / (W + 1));
+    const wetAt = (i: number, j: number) => riverBlocks.has(`${i},${j}`);
+    const wet =
+      aj === bj
+        ? wetAt(Math.min(ai, bi), aj - 1) && wetAt(Math.min(ai, bi), aj)
+        : wetAt(ai - 1, Math.min(aj, bj)) && wetAt(ai, Math.min(aj, bj));
+    if (wet && !protectedEdges.has(ekey(a, b))) cut.add(ekey(a, b));
+  }
+  edges = edges.filter(([a, b]) => !cut.has(ekey(a, b)));
   if (!isConnected(nodes.length, edges)) {
     // A river with too few bridges can split the town; reroll this attempt.
     return { cfg, graph: buildGraph([], []), river: [], bridges: [], locations: [], fairness: [], attempts: attempt, fair: false };
