@@ -89,7 +89,7 @@ if (cmd === 'town') {
   const games = Number(arg ?? 20);
   const seed = Number(process.argv[4] ?? 1);
   const t0 = performance.now();
-  runBatch('4 balanced bots, default rules', games, {}, [], seed);
+  runBatch('1 speculator + 3 investors, default rules', games, {}, [], seed);
   console.log(`(${((performance.now() - t0) / games).toFixed(0)} ms per game)`);
 } else {
   console.log('usage: npm run sim -- town [seed] | towns [count] | game [seed] | trucks [seed] [n] | bots [games] [seed]');

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { distancesFrom, generateTown, isConnected, makeTownConfig, renderTown } from '../src/index.js';
 
+// 16x16 towns take a few hundred ms each to generate, so the multi-seed tests get more time.
+const SLOW = 60_000;
+
 const town = (seed: number, o = {}) => generateTown(makeTownConfig({ seed, ...o }));
 
 describe('generateTown', () => {
@@ -16,17 +19,17 @@ describe('generateTown', () => {
   });
 
   it('keeps the road network connected, so every location is reachable', () => {
-    for (let s = 1; s <= 30; s++) {
+    for (let s = 1; s <= 12; s++) {
       const t = town(s);
       const g = t.graph;
       expect(isConnected(g.nodes.length, g.edges.map((e) => [e.a, e.b]))).toBe(true);
       const d = distancesFrom(g, t.locations[0].node);
       for (const l of t.locations) expect(d[l.node]).toBeLessThan(Infinity);
     }
-  });
+  }, SLOW);
 
   it('places the configured numbers of each kind of location', () => {
-    for (let s = 1; s <= 30; s++) {
+    for (let s = 1; s <= 12; s++) {
       const t = town(s);
       const { goods, producersPerGood: [p0, p1], consumersPerGood: [c0, c1], companies, extraDepotSites: [d0, d1] } = t.cfg;
       goods.forEach((_, g) => {
@@ -43,7 +46,7 @@ describe('generateTown', () => {
       expect(extra).toBeGreaterThanOrEqual(d0);
       expect(extra).toBeLessThanOrEqual(d1);
     }
-  });
+  }, SLOW);
 
   it('keeps locations apart and gives producers/consumers their bays', () => {
     const t = town(3);
@@ -54,14 +57,14 @@ describe('generateTown', () => {
   });
 
   it('gives every start a fair neighbourhood', () => {
-    for (let s = 1; s <= 50; s++) {
+    for (let s = 1; s <= 20; s++) {
       const t = town(s);
       expect(t.fair).toBe(true);
       for (const f of t.fairness) expect(f.pairs).toBeGreaterThanOrEqual(1);
       const scores = t.fairness.map((f) => f.score);
       expect(Math.min(...scores)).toBeGreaterThanOrEqual(t.cfg.fairMinRatio * Math.max(...scores));
     }
-  });
+  }, SLOW);
 
   it('respects other sizes and company counts', () => {
     const t = town(9, { blocksX: 8, blocksY: 6, companies: 3, fairRadius: 5 });

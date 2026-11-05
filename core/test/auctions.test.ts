@@ -10,14 +10,14 @@ function stepFor(g: Game, sec: number) {
 
 /** A running game (opening round skipped) where player 0 owns shares of company 0. */
 function running(shares: (number | null)[] = [0, null, null, null, null]) {
-  const g = newGame({ seed: 3, auctions: { openingRound: false } });
+  const g = newGame({ seed: 3, auctions: { openingRound: false, openingBid: 20 } });
   g.companies[0].shares = [...shares];
   return g;
 }
 
 describe('opening round', () => {
   it('auctions one share of each company in turn, 30s each, before the game clock starts', () => {
-    const g = newGame({ seed: 3 });
+    const g = newGame({ seed: 3, auctions: { openingBid: 20 } });
     expect(g.phase).toBe('opening');
     g.step();
     expect(g.auction).toMatchObject({ company: 0, opening: true, seller: null });
@@ -33,7 +33,7 @@ describe('opening round', () => {
   });
 
   it('the winner gets the share and becomes president; the money funds the company', () => {
-    const g = newGame({ seed: 3 });
+    const g = newGame({ seed: 3, auctions: { openingBid: 20 } });
     g.step();
     g.act(1, { type: 'bid', company: 0, amount: 20 });
     g.act(2, { type: 'bid', company: 0, amount: 24 });
@@ -47,7 +47,7 @@ describe('opening round', () => {
   });
 
   it('a company nobody bids on stays with the bank', () => {
-    const g = newGame({ seed: 3 });
+    const g = newGame({ seed: 3, auctions: { openingBid: 20 } });
     stepFor(g, 31);
     expect(g.companies[0].shares.every((s) => s === null)).toBe(true);
     expect(of(g.drainEvents(0), 'auctionNoBids')).toHaveLength(1);
@@ -56,7 +56,7 @@ describe('opening round', () => {
 
 describe('bidding', () => {
   it('needs the opening bid first, then raises of at least $2', () => {
-    const g = newGame({ seed: 3 });
+    const g = newGame({ seed: 3, auctions: { openingBid: 20 } });
     g.step();
     g.act(0, { type: 'bid', company: 0, amount: 19 });
     g.act(0, { type: 'bid', company: 0, amount: 20 });
@@ -69,7 +69,7 @@ describe('bidding', () => {
   });
 
   it('holds the leading bid from your cash and releases it when you are outbid', () => {
-    const g = newGame({ seed: 3 });
+    const g = newGame({ seed: 3, auctions: { openingBid: 20 } });
     g.step();
     g.act(0, { type: 'bid', company: 0, amount: 90 });
     g.step();
@@ -86,7 +86,7 @@ describe('bidding', () => {
   });
 
   it("can't bid more than you have, but can raise your own lead using it", () => {
-    const g = newGame({ seed: 3 });
+    const g = newGame({ seed: 3, auctions: { openingBid: 20 } });
     g.step();
     g.act(0, { type: 'bid', company: 0, amount: 101 });
     g.act(0, { type: 'bid', company: 0, amount: 60 });
@@ -97,7 +97,7 @@ describe('bidding', () => {
   });
 
   it('soft close: a late bid resets the clock to 10s', () => {
-    const g = newGame({ seed: 3 });
+    const g = newGame({ seed: 3, auctions: { openingBid: 20 } });
     g.step();
     stepFor(g, 25);
     g.act(0, { type: 'bid', company: 0, amount: 20 });
@@ -112,7 +112,7 @@ describe('bidding', () => {
   });
 
   it('rejects bids for a company that is not being auctioned', () => {
-    const g = newGame({ seed: 3 });
+    const g = newGame({ seed: 3, auctions: { openingBid: 20 } });
     g.step();
     g.act(0, { type: 'bid', company: 2, amount: 20 });
     g.step();
@@ -187,7 +187,7 @@ describe('in-game auctions', () => {
   });
 
   it("can't start auctions during the opening round", () => {
-    const g = newGame({ seed: 3 });
+    const g = newGame({ seed: 3, auctions: { openingBid: 20 } });
     g.companies[0].shares = [0, null, null, null, null];
     g.act(0, { type: 'startAuction', company: 0 });
     g.step();
@@ -197,7 +197,7 @@ describe('in-game auctions', () => {
 
 describe('determinism with auctions', () => {
   it('replays an opening round with bids exactly', () => {
-    const cfg = makeGameConfig({ seed: 5, durationSec: 30 });
+    const cfg = makeGameConfig({ seed: 5, durationSec: 30, auctions: { openingBid: 20 } });
     const g = new Game(cfg);
     let k = 0;
     while (!g.done) {

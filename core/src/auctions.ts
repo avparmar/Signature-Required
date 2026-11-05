@@ -33,7 +33,7 @@ export const DEFAULT_AUCTIONS: AuctionConfig = {
   openingClockSec: 30,
   clockSec: 30,
   softCloseSec: 10,
-  openingBid: 20,
+  openingBid: 0,
   minRaise: 2,
   noBidCooldownSec: 60,
 };

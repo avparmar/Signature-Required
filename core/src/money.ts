@@ -51,7 +51,7 @@ export const DEFAULT_MONEY: MoneyConfig = {
   deliveryToPot: 1,
   payoutEverySec: 180,
   finalBonus: 'assets',
-  finalAssetShare: 0.5,
+  finalAssetShare: 0.1,
   finalEarningsMultiple: 2,
   investBase: 60,
   investGrowth: 1.5,

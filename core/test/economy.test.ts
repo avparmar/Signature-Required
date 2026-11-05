@@ -10,7 +10,8 @@ import {
   type LocationState,
 } from '../src/index.js';
 
-const cfg: CycleConfig = { ...DEFAULT_CYCLES, demandBase: [3, 3] };
+// These tests check the arithmetic, so they pin the original numbers (3 pallets made, 3 wanted).
+const cfg: CycleConfig = { ...DEFAULT_CYCLES, produceBase: 3, demandBase: [3, 3] };
 
 function loc(kind: 'producer' | 'consumer', o: Partial<LocationState> = {}): LocationState {
   return {
@@ -63,7 +64,7 @@ describe('cycles', () => {
     const seen = new Set<number>();
     for (let i = 0; i < 40; i++) {
       c.demand = 0;
-      updateCycles([c], i * 45, { ...DEFAULT_CYCLES, growthWindow: 1000 }, rng);
+      updateCycles([c], i * 45, { ...DEFAULT_CYCLES, demandBase: [2, 4], growthWindow: 1000 }, rng);
       seen.add(c.cycleAmount);
     }
     expect([...seen].sort()).toEqual([2, 3, 4]);

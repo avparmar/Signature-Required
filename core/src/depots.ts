@@ -25,7 +25,7 @@ export interface DepotConfig {
 
 export const DEFAULT_DEPOTS: DepotConfig = {
   capacity: 3,
-  truckPrice: 30,
+  truckPrice: 15,
   depotBase: 80,
   depotFreeBlocks: 4,
   depotPerBlock: 10,
