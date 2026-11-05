@@ -46,11 +46,11 @@ export const DEFAULT_CYCLES: CycleConfig = {
   startLevel: 3,
   maxLevel: 5,
   carryCycles: 2,
-  window: 4,
+  window: 2,
   growAbove: 0.75,
   shrinkBelow: 0.5,
   closingCycles: 1,
-  graceSec: 0,
+  graceSec: 120,
 };
 
 /** Dynamic state of a producer or consumer. */
