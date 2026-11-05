@@ -29,8 +29,19 @@ export interface TownConfig {
   /** Blocks across and down. Intersections sit at integer coordinates 0..blocksX, 0..blocksY. */
   blocksX: number;
   blocksY: number;
-  /** Share of grid streets removed (never disconnecting the town). */
+  /**
+   * Street layout. 'grid': a full grid with a share of streets removed. 'suburb': main roads every
+   * few blocks, with tree-like neighbourhood streets (dead ends, one or two ways out) between them.
+   */
+  layout: 'grid' | 'suburb';
+  /** Share of grid streets removed (never disconnecting the town). Grid layout only. */
   removeFrac: number;
+  /** Suburb layout: blocks between main roads. */
+  mainRoadEvery: number;
+  /** Suburb layout: ways out of each neighbourhood onto the main roads. */
+  suburbExits: [number, number];
+  /** Suburb layout: share of extra neighbourhood streets added back to make loops. */
+  suburbLoops: number;
   /** Share of blocks that get a diagonal street. */
   diagonalFrac: number;
   goods: string[];
@@ -59,7 +70,11 @@ export const DEFAULT_TOWN: TownConfig = {
   seed: 1,
   blocksX: 16,
   blocksY: 16,
+  layout: 'grid',
   removeFrac: 0.12,
+  mainRoadEvery: 4,
+  suburbExits: [1, 2],
+  suburbLoops: 0.08,
   diagonalFrac: 0.04,
   goods: ['milk', 'bread', 'fuel'],
   producersPerGood: [4, 5],
@@ -202,12 +217,14 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
     if (wet && !protectedEdges.has(ekey(a, b))) cut.add(ekey(a, b));
   }
   edges = edges.filter(([a, b]) => !cut.has(ekey(a, b)));
+  if (cfg.layout === 'suburb') edges = suburbStreets(edges, W, H, cfg, rng, protectedEdges);
+
   if (!isConnected(nodes.length, edges)) {
     // A river with too few bridges can split the town; reroll this attempt.
     return { cfg, graph: buildGraph([], []), river: [], bridges: [], locations: [], fairness: [], attempts: attempt, fair: false };
   }
 
-  const target = Math.round(edges.length * cfg.removeFrac);
+  const target = cfg.layout === 'grid' ? Math.round(edges.length * cfg.removeFrac) : 0;
   let removed = 0;
   for (const e of rng.shuffle([...edges])) {
     if (removed >= target) break;
@@ -223,7 +240,8 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
   const diagonals: [number, number][] = [];
   for (let j = 0; j < H; j++)
     for (let i = 0; i < W; i++) {
-      if (rng.next() >= cfg.diagonalFrac) continue;
+      // Suburbs get fewer diagonals, so they don't undo the neighbourhood structure.
+      if (rng.next() >= cfg.diagonalFrac * (cfg.layout === 'suburb' ? 0.3 : 1)) continue;
       if (riverBlocks.has(`${i},${j}`)) continue; // no diagonals across a river
       diagonals.push(rng.next() < 0.5 ? [id(i, j), id(i + 1, j + 1)] : [id(i + 1, j), id(i, j + 1)]);
     }
@@ -343,4 +361,100 @@ export function scoreStarts(graph: RoadGraph, locs: Location[], cfg: TownConfig)
         near.reduce((s, l) => s + (1 - d[l.node] / (cfg.fairRadius + 1)), 0) + 2 * pairs;
       return { company: start.startCompany!, nearby: near.length, pairs, score };
     });
+}
+
+/**
+ * Suburb streets: keep the main roads (every `mainRoadEvery` grid lines) whole, and inside each
+ * neighbourhood between them keep a random spanning tree of the local streets, a few ways out onto
+ * the main roads, and a few extra streets for loops. Bridges are always kept.
+ */
+function suburbStreets(
+  edges: [number, number][],
+  W: number,
+  H: number,
+  cfg: TownConfig,
+  rng: Rng,
+  keepAlways: Set<string>,
+): [number, number][] {
+  const A = cfg.mainRoadEvery;
+  const ekey = (a: number, b: number) => (a < b ? `${a}-${b}` : `${b}-${a}`);
+  const xy = (n: number) => ({ i: n % (W + 1), j: Math.floor(n / (W + 1)) });
+  const onMainX = (i: number) => i % A === 0 || i === W; // a vertical main road runs along x = i
+  const onMainY = (j: number) => j % A === 0 || j === H;
+  const isMain = (n: number) => {
+    const { i, j } = xy(n);
+    return onMainX(i) || onMainY(j);
+  };
+  const mainEdge = ([a, b]: [number, number]) => {
+    const p = xy(a);
+    const q = xy(b);
+    return (p.i === q.i && onMainX(p.i)) || (p.j === q.j && onMainY(p.j));
+  };
+  const cellOf = (n: number) => {
+    const { i, j } = xy(n);
+    return `${Math.floor(i / A)},${Math.floor(j / A)}`;
+  };
+
+  const kept: [number, number][] = [];
+  const cells = new Map<string, { inner: [number, number][]; exits: [number, number][] }>();
+  for (const e of edges) {
+    if (mainEdge(e) || keepAlways.has(ekey(e[0], e[1]))) {
+      kept.push(e);
+      continue;
+    }
+    // A local street: inside one neighbourhood (both ends off the main roads), or an exit.
+    const [a, b] = e;
+    const inner = isMain(a) ? b : a;
+    const key = cellOf(inner);
+    if (!cells.has(key)) cells.set(key, { inner: [], exits: [] });
+    const c = cells.get(key)!;
+    if (isMain(a) || isMain(b)) c.exits.push(e);
+    else c.inner.push(e);
+  }
+
+  // Union-find over road nodes for the spanning trees.
+  const parent = new Map<number, number>();
+  const find = (n: number): number => {
+    let r = n;
+    while (parent.has(r) && parent.get(r) !== r) r = parent.get(r)!;
+    parent.set(n, r);
+    return r;
+  };
+  const union = (a: number, b: number) => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra === rb) return false;
+    parent.set(ra, rb);
+    return true;
+  };
+
+  for (const { inner, exits } of [...cells.values()]) {
+    const spare: [number, number][] = [];
+    for (const e of rng.shuffle([...inner])) {
+      if (union(e[0], e[1])) kept.push(e);
+      else spare.push(e);
+    }
+    // Ways out: at least one per separate piece of the neighbourhood (a river can split one).
+    const shuffled = rng.shuffle([...exits]);
+    const want = rng.int(...cfg.suburbExits);
+    const served = new Set<number>();
+    let used = 0;
+    const leftover: [number, number][] = [];
+    for (const e of shuffled) {
+      const inside = isMain(e[0]) ? e[1] : e[0];
+      const piece = find(inside);
+      if (!served.has(piece)) {
+        served.add(piece);
+        kept.push(e);
+        used++;
+      } else leftover.push(e);
+    }
+    for (const e of leftover) {
+      if (used >= want) break;
+      kept.push(e);
+      used++;
+    }
+    for (const e of spare) if (rng.next() < cfg.suburbLoops) kept.push(e);
+  }
+  return kept;
 }

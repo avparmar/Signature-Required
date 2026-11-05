@@ -131,3 +131,25 @@ describe('rivers', () => {
     SLOW,
   );
 });
+
+describe('suburb layout', () => {
+  it(
+    'keeps the town connected, with dead ends, and works with rivers',
+    () => {
+      for (const [seed, rivers] of [[1, 0], [2, 1], [3, 2]]) {
+        const t = town(seed, { layout: 'suburb', rivers });
+        const { nodes, edges } = t.graph;
+        expect(isConnected(nodes.length, edges.map((e) => [e.a, e.b]))).toBe(true);
+        const degree = new Array(nodes.length).fill(0);
+        for (const e of edges) {
+          degree[e.a]++;
+          degree[e.b]++;
+        }
+        // Dead ends at grid intersections (lot nodes always have degree 2).
+        const deadEnds = degree.filter((d, n) => d === 1 && Number.isInteger(nodes[n].x) && Number.isInteger(nodes[n].y)).length;
+        expect(deadEnds).toBeGreaterThan(10);
+      }
+    },
+    SLOW,
+  );
+});

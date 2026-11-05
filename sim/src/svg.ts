@@ -62,6 +62,8 @@ export function townSvg(town: Town, title = ''): string {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const seed = Number(process.argv[2] ?? 1);
   const rivers = Number(process.argv[3] ?? 1);
-  const t = generateTown(makeTownConfig({ seed, rivers }));
-  console.log(townSvg(t, `Seed ${seed}, ${rivers ? `${rivers} river${rivers > 1 ? 's' : ''}, ${t.bridges.length} bridges` : 'no river'}`));
+  const layout = (process.argv[4] ?? 'grid') as 'grid' | 'suburb';
+  const t = generateTown(makeTownConfig({ seed, rivers, layout }));
+  const water = rivers ? `${rivers} river${rivers > 1 ? 's' : ''}, ${t.bridges.length} bridges` : 'no river';
+  console.log(townSvg(t, `Seed ${seed}, ${layout}, ${water}`));
 }
