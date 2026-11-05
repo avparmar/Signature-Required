@@ -3,9 +3,11 @@
  *
  * - A truck carries one pallet.
  * - Orders are a repeating list of stops: load at a producer, unload at a consumer.
- * - Trucks pass each other freely on streets; at a building they queue in arrival order and
- *   hold a bay only while loading/unloading. Trucks waiting for stock or demand keep their place
- *   in the queue without blocking a bay.
+ * - Trucks pass each other freely on streets; at a building they queue and hold a bay only while
+ *   loading/unloading. Trucks waiting for stock or demand keep their place without blocking a bay.
+ * - Companies take turns: when trucks from several companies are waiting, the building serves
+ *   the next company after the one it served last, so swarming a building with trucks doesn't
+ *   let one company hog it. Within a company, trucks go in arrival order.
  * - No dumping: a pallet only leaves a truck when a consumer of that good accepts it.
  */
 import { deliverPallet, takePallet, type LocationState } from './economy.js';
@@ -16,11 +18,14 @@ export interface TruckConfig {
   speed: number;
   /** Seconds to load or unload one pallet at a bay. */
   serviceSec: number;
+  /** Companies take turns at a building (true), or it's first come, first served (false). */
+  takeTurns: boolean;
 }
 
 export const DEFAULT_TRUCKS: TruckConfig = {
   speed: 0.35,
   serviceSec: 3,
+  takeTurns: true,
 };
 
 export interface Stop {
@@ -96,6 +101,8 @@ export class TruckSystem {
   readonly trucks: Truck[] = [];
   /** Trucks queued or servicing at each location, in arrival order. */
   readonly queues = new Map<number, number[]>();
+  /** The company each location served last, for taking turns. */
+  readonly lastServed = new Map<number, number>();
 
   constructor(
     private graph: RoadGraph,
@@ -257,24 +264,42 @@ export class TruckSystem {
     const l = this.loc(location);
     if (!l) return;
     let busy = q.filter((id) => this.trucks[id].state === 'servicing').length;
-    for (const id of q) {
-      if (busy >= bays) break;
+    const skip = new Set<number>(); // trucks this building can't serve at all right now
+    while (busy < bays) {
+      // The first waiting truck of each company, in arrival order.
+      const firsts = new Map<number, number>();
+      for (const id of q) {
+        const t = this.trucks[id];
+        if (t.state === 'queued' && !skip.has(id) && !firsts.has(t.company)) firsts.set(t.company, id);
+      }
+      if (firsts.size === 0) return;
+      // Next company after the one served last (wrapping round by company id).
+      const last = this.lastServed.get(location) ?? -1;
+      const order = [...firsts.keys()].sort((a, b) => a - b);
+      const company = this.cfg.takeTurns
+        ? order.find((c) => c > last) ?? order[0]
+        : this.trucks[q.find((id) => this.trucks[id].state === 'queued' && !skip.has(id))!].company;
+      const id = firsts.get(company)!;
       const truck = this.trucks[id];
-      if (truck.state !== 'queued') continue;
       const stop = truck.orders[truck.orderIndex];
       if (stop.action === 'load') {
-        if (!takePallet(l)) continue; // no stock: wait in line for the next cycle
+        if (!takePallet(l)) return; // no stock: everyone waits for the next cycle
         truck.cargo = { good: l.good, origin: l.id };
         this.emit({ type: 'loaded', t: now, truck: id, company: truck.company, location, good: l.good });
       } else {
         const origin = truck.cargo ? this.loc(truck.cargo.origin) ?? null : null;
-        if (!deliverPallet(l, origin)) continue; // satisfied: wait for the next cycle
+        if (!deliverPallet(l, origin)) {
+          if (l.closed || l.demand <= 0) return; // satisfied: everyone waits for the next cycle
+          skip.add(id); // this truck's pallet is no use here; serve the others
+          continue;
+        }
         const cargo = truck.cargo!;
         truck.cargo = null;
         this.emit({ type: 'delivered', t: now, truck: id, company: truck.company, location, good: cargo.good, origin: cargo.origin, price: l.price });
       }
       truck.state = 'servicing';
       truck.busyUntil = now + this.cfg.serviceSec;
+      this.lastServed.set(location, company);
       busy++;
     }
   }
@@ -336,6 +361,7 @@ export class TruckSystem {
    */
   locationClosed(location: number, now: number) {
     this.queues.delete(location);
+    this.lastServed.delete(location);
     for (const truck of this.trucks) {
       const had = truck.orders.length;
       truck.orders = truck.orders.filter((s) => s.location !== location);
