@@ -9,7 +9,7 @@
  */
 import { generateTown, makeGameConfig, type GameConfigOverrides, type MoneyConfig } from '@sr/core';
 import { PERSONALITIES, type BotPersonality } from './bot.js';
-import { runGame, type GameResult } from './runner.js';
+import { defaultTable, runGame, type GameResult } from './runner.js';
 
 const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 
@@ -378,6 +378,30 @@ if (which === 'final') {
       `| ${label} | ${avg(rs.map((r) => r.delivered)).toFixed(0)} | ${avg(rs.map((r) => avg(r.companies.map((c) => c.trucks)))).toFixed(1)} | ${avg(rs.map((r) => r.depotBuys.count)).toFixed(1)} | ${avg(rs.map((r) => r.territory.avgReach)).toFixed(1)} | ${pct(avg(rs.map((r) => r.territory.contestedShare)))} | ${(100 * avg(rs.map((r) => r.territory.handoverRate))).toFixed(1)}% | ${avg(rs.map((r) => r.sharing.producers)).toFixed(1)} | $${avg(rs.map((r) => avg(r.companies.map((c) => c.paidPerShare)))).toFixed(0)} | $${avg(rs.map((r) => avg(r.companies.filter((c) => c.avgPrice > 0).map((c) => c.avgPrice)))).toFixed(0)} | ${avg(rs.map((r) => r.closed)).toFixed(0)} |`,
     );
   }
+} else if (which === 'tables') {
+  // Who's at the table: does every company get funded? An idle seat stands in for a human who
+  // hasn't bid yet (the client's situation); a starting treasury is the proposed fix.
+  console.log(`\ntables experiment (${games} games per variant)\n`);
+  console.log('| Table | Starting treasury | Companies stuck with no trucks | Opening shares sold for ≤$2 | Avg opening price | Trucks per company | Avg paid per share |');
+  console.log('|---|---|---|---|---|---|---|');
+  const idle: BotPersonality = { greed: 0, maxCashPerBid: 0, controlBonus: 0, investReserve: 1e9 };
+  const S = PERSONALITIES.speculator;
+  const B = PERSONALITIES.balanced;
+  const rows: [string, BotPersonality[], number][] = [
+    ['Speculator + 3 balanced (default)', defaultTable(4), 0],
+    ['Idle seat + speculator + 2 balanced (client)', [idle, S, B, B], 0],
+    ['4 speculators', [S, S, S, S], 0],
+    ['Idle seat + 3 speculators', [idle, S, S, S], 0],
+    ['Speculator + 3 balanced (default)', defaultTable(4), 24],
+    ['Idle seat + speculator + 2 balanced (client)', [idle, S, B, B], 24],
+  ];
+  for (const [label, table, start] of rows) {
+    const rs = Array.from({ length: games }, (_, i) => runGame({ seed: 1 + i, startingTreasury: start }, table));
+    const open = rs.map((r) => r.auctions.filter((a) => a.opening).map((a) => a.amount));
+    console.log(
+      `| ${label} | $${start} | ${avg(rs.map((r) => r.companies.filter((c) => c.trucks === 0).length)).toFixed(2)} | ${avg(open.map((o) => o.filter((x) => x <= 2).length)).toFixed(1)} | $${avg(open.flat()).toFixed(0)} | ${avg(rs.map((r) => avg(r.companies.map((c) => c.trucks)))).toFixed(1)} | $${avg(rs.map((r) => avg(r.companies.map((c) => c.paidPerShare)))).toFixed(0)} |`,
+    );
+  }
 } else if (which === 'invest') {
   worldHeader(games);
   runWorld('$60 level-up (default)', games);
@@ -448,5 +472,5 @@ if (which === 'final') {
       );
     }
 } else {
-  console.log('usage: npm run experiments -- final|income|shortlist|scale|map|split|sar|depots|speculator|world|bays|invest|grace|fairness|rivers|loading|depots2|dividends|viadepot [games]');
+  console.log('usage: npm run experiments -- final|income|shortlist|scale|map|split|sar|depots|speculator|world|bays|invest|grace|fairness|rivers|loading|depots2|dividends|viadepot|tables [games]');
 }
