@@ -49,3 +49,30 @@ describe('bots', () => {
     }
   });
 });
+
+describe('speculator', () => {
+  it('values shares optimistically and pays real money for its own company, even with no minimum bid', () => {
+    const g = newGame({ seed: 1, auctions: { openingBid: 0 } });
+    g.step();
+    const spec = new Bot(0, g.town, g.cfg, PERSONALITIES.speculator);
+    const inv = new Bot(1, g.town, g.cfg, PERSONALITIES.balanced);
+    const obs = g.observe(0);
+    expect(spec.shareValue(obs, 0, 0, true)).toBeGreaterThan(inv.shareValue(obs, 0, 0));
+    // Run the opening round with just the speculator bidding: its target sells for real money.
+    while (g.phase === 'opening') {
+      for (const a of spec.decide(g.observe(0), [])) g.act(0, a);
+      g.step();
+    }
+    const bought = g.companies.filter((c) => c.shares.includes(0));
+    expect(bought.length).toBeGreaterThan(0);
+    expect(bought.some((c) => c.treasury >= PERSONALITIES.speculator.speculator!.assumedSharePrice)).toBe(true);
+    // It kept its reserve.
+    expect(g.players[0].cash).toBeGreaterThanOrEqual(PERSONALITIES.speculator.speculator!.reserveFrac * g.cfg.startingCash - 1e-9);
+  });
+
+  it('revives a no-minimum game: companies get funded and build fleets', () => {
+    const r = runGame({ seed: 3, auctions: { openingBid: 0 } }, [PERSONALITIES.speculator, PERSONALITIES.balanced, PERSONALITIES.balanced, PERSONALITIES.balanced]);
+    expect(r.companies.reduce((s, c) => s + c.trucks, 0)).toBeGreaterThan(2);
+    expect(r.auctions.some((a) => a.amount > 0)).toBe(true);
+  });
+});

@@ -19,10 +19,24 @@ export interface MoneyConfig {
   premiumPrice: number;
   /** Share of consumers that are premium buyers. */
   premiumShare: number;
+  /**
+   * Where each delivery's price goes, as multiples of the price. 1 and 1 = the company and its
+   * shareholders each get the full price (the bank prints the second copy). SAR-style is 0 and 1:
+   * income goes only to dividends, so companies grow only from share auctions.
+   */
+  deliveryToTreasury: number;
+  deliveryToPot: number;
   /** Seconds between dividend payouts; the last payout is at the end of the game. */
   payoutEverySec: number;
-  /** Share of company assets (trucks and depots at purchase price, plus treasury) in the final payout. */
+  /**
+   * What the final payout adds on top of the pot:
+   * - 'assets': `finalAssetShare` of the company's assets (trucks and depots at purchase price, plus treasury)
+   * - 'earnings': `finalEarningsMultiple` x what the company earned since the previous payout
+   *   (a buy-out based on performance, so money invested is only rewarded if it earned)
+   */
+  finalBonus: 'assets' | 'earnings';
   finalAssetShare: number;
+  finalEarningsMultiple: number;
   /** Price to raise a location from level 1 to 2. */
   investBase: number;
   /** Each further level costs this much more (multiplied). */
@@ -33,8 +47,12 @@ export const DEFAULT_MONEY: MoneyConfig = {
   palletPrice: 2,
   premiumPrice: 3,
   premiumShare: 0.25,
+  deliveryToTreasury: 1,
+  deliveryToPot: 1,
   payoutEverySec: 180,
+  finalBonus: 'assets',
   finalAssetShare: 0.5,
+  finalEarningsMultiple: 2,
   investBase: 60,
   investGrowth: 1.5,
 };

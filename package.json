@@ -15,7 +15,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "sim": "tsx sim/src/run.ts",
     "dev": "npm run dev -w client",
-    "build": "npm run build -w client"
+    "build": "npm run build -w client",
+    "experiments": "tsx sim/src/experiments.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
