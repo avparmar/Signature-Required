@@ -22,7 +22,17 @@ const fmtClock = (sec: number) => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 };
 
-let session = new Session();
+/**
+ * Rule options from the page address, for trying settings out: ?via=loaded or ?via=hub runs routes
+ * through the depot (with wear and breakdowns off, since every sign-off services the truck).
+ */
+function overridesFromUrl() {
+  const via = new URLSearchParams(location.search).get('via');
+  if (via === 'loaded' || via === 'hub') return { trucks: { viaDepot: via, wearNear: 0, wearFar: 0, breakdowns: false } } as const;
+  return {};
+}
+
+let session = new Session({ overrides: overridesFromUrl() });
 const renderer = new Renderer($<HTMLCanvasElement>('map'), session.game.town);
 renderer.via = session.cfg.trucks.viaDepot;
 let last = performance.now();
@@ -599,7 +609,7 @@ function togglePause() {
 }
 
 function newGame() {
-  session = new Session();
+  session = new Session({ overrides: overridesFromUrl() });
   session.speed = Number($<HTMLSelectElement>('speed').value);
   renderer.setTown(session.game.town);
   renderer.via = session.cfg.trucks.viaDepot;
