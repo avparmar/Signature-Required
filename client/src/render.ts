@@ -9,10 +9,16 @@
  * - Trucks move smoothly between ticks, show the pallet they carry (empty = hollow), queue
  *   neatly beside a building, and show breakdowns and repairs.
  */
-import type { Location, Observation, Route, Town } from '@sr/core';
+import { distancesFrom, shortestPath, type Location, type Observation, type Route, type Town } from '@sr/core';
 
-export const COMPANY_COLORS = ['#c8553d', '#2a7ab0', '#d99a1e', '#3f8f5a', '#7b5ea7', '#c2477f'];
-export const GOOD_COLORS = ['#f4f1ea', '#c98b4b', '#55607d', '#8fbf5a', '#b05bb0'];
+// Company colours stay clear of the goods' colours (white milk, tan bread, slate fuel).
+export const COMPANY_COLORS = ['#d1452f', '#2a7ab0', '#3f9a54', '#8a5cc2', '#d24f93', '#1f9e9a'];
+export const GOOD_COLORS = ['#ffffff', '#d9a35f', '#3d4660', '#8fbf5a', '#b05bb0'];
+
+/** Chess-style name for a spot: column letter (A at the left) and row number (1 at the top). */
+export function coordOf(x: number, y: number): string {
+  return `${String.fromCharCode(65 + Math.round(x))}${Math.round(y) + 1}`;
+}
 const INK = '#23201b';
 const ROAD = '#d9d2c3';
 const WATER = '#9cc3e0';
@@ -29,6 +35,8 @@ export interface Highlights {
   hoverRoute: string | null;
   /** Free depot sites to highlight with this company's prices (buy-depot mode). */
   buyFor: number | null;
+  /** Drive distance that counts as near a depot (drawn around a hovered depot). */
+  leash: number;
 }
 
 export class Renderer {
@@ -50,6 +58,8 @@ export class Renderer {
 
   setTown(town: Town) {
     this.town = town;
+    this.paths.clear();
+    this.reach.clear();
   }
 
   /** Match the canvas to its box and fit the whole town. */
@@ -113,36 +123,60 @@ export class Renderer {
     return best;
   }
 
-  /** The route line under a screen point, if any (producer -> consumer segment). */
+  /** The route line under a screen point, if any. */
   routeAt(sx: number, sy: number, routes: Route[]): Route | null {
     let best: Route | null = null;
-    let bestD = 7;
-    for (const [i, r] of routes.entries()) {
-      const [a, b] = this.routeEnds(r, i, routes);
-      const d = distToSegment(sx, sy, a.x, a.y, b.x, b.y);
-      if (d < bestD) {
-        bestD = d;
-        best = r;
+    let bestD = 6;
+    for (const r of routes) {
+      const pts = this.routeLine(r, routes);
+      for (let i = 1; i < pts.length; i++) {
+        const d = distToSegment(sx, sy, pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y);
+        if (d < bestD) {
+          bestD = d;
+          best = r;
+        }
       }
     }
     return best;
   }
 
-  /** Screen endpoints of a route line, nudged sideways so parallel routes don't overlap. */
-  private routeEnds(r: Route, _i: number, routes: Route[]) {
-    const p = this.town.locations[r.producer];
-    const q = this.town.locations[r.consumer];
+  private paths = new Map<string, number[]>();
+  /** Road nodes a truck drives from producer to consumer (cached; the roads never change). */
+  private routePath(r: Route): number[] {
+    const key = `${r.producer}>${r.consumer}`;
+    let path = this.paths.get(key);
+    if (!path) {
+      const a = this.town.locations[r.producer].node;
+      const b = this.town.locations[r.consumer].node;
+      path = shortestPath(this.town.graph, a, b) ?? [a, b];
+      this.paths.set(key, path);
+    }
+    return path;
+  }
+
+  /**
+   * A route's line on screen, along the streets from producer to consumer. Routes with the same
+   * ends (several companies, or several depots) are nudged apart sideways.
+   */
+  private routeLine(r: Route, routes: Route[]): { x: number; y: number }[] {
+    const nodes = this.routePath(r).map((n) => this.town.graph.nodes[n]);
     const same = routes.filter((x) => x.producer === r.producer && x.consumer === r.consumer);
-    const k = same.indexOf(r) - (same.length - 1) / 2;
-    const dx = this.X(q.x) - this.X(p.x);
-    const dy = this.Y(q.y) - this.Y(p.y);
-    const len = Math.hypot(dx, dy) || 1;
-    const nx = (-dy / len) * 5 * k;
-    const ny = (dx / len) * 5 * k;
-    return [
-      { x: this.X(p.x) + nx, y: this.Y(p.y) + ny },
-      { x: this.X(q.x) + nx, y: this.Y(q.y) + ny },
-    ];
+    const k = (same.indexOf(r) - (same.length - 1) / 2) * 4;
+    return nodes.map((n, i) => {
+      const a = nodes[Math.max(0, i - 1)];
+      const b = nodes[Math.min(nodes.length - 1, i + 1)];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const len = Math.hypot(dx, dy) || 1;
+      return { x: this.X(n.x) + (-dy / len) * k, y: this.Y(n.y) + (dx / len) * k };
+    });
+  }
+
+  private reach = new Map<number, Float64Array>();
+  private reachOf(node: number): Float64Array {
+    const d = this.reach.get(node) ?? distancesFrom(this.town.graph, node);
+    this.reach.set(node, d);
+    return d;
   }
 
   draw(obs: Observation, trucks: { id: number; x: number; y: number; dx: number; dy: number }[], hl: Highlights, now: number) {
@@ -185,18 +219,39 @@ export class Renderer {
       ctx.stroke();
     }
 
-    // Routes.
+    // A hovered depot's reach: the streets within the leash distance (where trucks wear slowly).
+    const hoverLoc = hl.hover !== null ? town.locations[hl.hover] : null;
+    if (hoverLoc && hoverLoc.kind === 'depot') {
+      const d = this.reachOf(hoverLoc.node);
+      const owner = obs.depots[hoverLoc.id];
+      ctx.strokeStyle = owner === undefined ? '#8a8273' : companyColor(owner);
+      ctx.globalAlpha = 0.35;
+      ctx.lineWidth = roadW * 2.2;
+      ctx.beginPath();
+      for (const e of town.graph.edges) {
+        if (d[e.a] > hl.leash || d[e.b] > hl.leash) continue;
+        const a = town.graph.nodes[e.a];
+        const b = town.graph.nodes[e.b];
+        ctx.moveTo(this.X(a.x), this.Y(a.y));
+        ctx.lineTo(this.X(b.x), this.Y(b.y));
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    // Routes, along the streets.
     const routes = obs.routes;
+    const lines = routes.map((r) => this.routeLine(r, routes));
     for (const [i, r] of routes.entries()) {
-      const [a, b] = this.routeEnds(r, i, routes);
+      const pts = lines[i];
       const hot = hl.hoverRoute === r.key;
       ctx.strokeStyle = companyColor(r.company);
-      ctx.globalAlpha = hot ? 0.95 : 0.55;
+      ctx.globalAlpha = hot ? 0.95 : 0.6;
       ctx.lineWidth = hot ? 3.5 : 2;
+      ctx.lineJoin = 'round';
       ctx.setLineDash([6, 5]);
       ctx.beginPath();
-      ctx.moveTo(a.x, a.y);
-      ctx.lineTo(b.x, b.y);
+      pts.forEach((p, k) => (k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.globalAlpha = 1;
@@ -309,15 +364,26 @@ export class Renderer {
       if (picked || hovered) ring(ctx, x, y, r * 1.6, picked ? INK : '#8a8273');
     }
 
-    // Route truck counts (on top of buildings).
+    // Route truck counts (on top of buildings), halfway along each route.
     for (const [i, rt] of routes.entries()) {
-      const [a, b] = this.routeEnds(rt, i, routes);
-      badge(ctx, `${rt.trucks}`, (a.x + b.x) / 2, (a.y + b.y) / 2, companyColor(rt.company));
+      const m = midpoint(lines[i]);
+      badge(ctx, `${rt.trucks}`, m.x, m.y, companyColor(rt.company));
+    }
+
+    // Grid coordinates along the top and left edges.
+    if (this.scale >= 14) {
+      ctx.fillStyle = '#a39b8c';
+      ctx.font = '600 10px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      for (let i = 0; i <= blocksX; i++) ctx.fillText(String.fromCharCode(65 + i), this.X(i), Math.max(8, this.Y(-0.3) - 8));
+      ctx.textAlign = 'right';
+      for (let j = 0; j <= blocksY; j++) ctx.fillText(`${j + 1}`, Math.max(14, this.X(-0.3) - 4), this.Y(j));
     }
 
     // Trucks.
-    const tw = Math.max(5, Math.min(14, this.scale * 0.3));
-    const th = tw * 0.62;
+    const tw = Math.max(8, Math.min(18, this.scale * 0.4));
+    const th = tw * 0.6;
     const tById = new Map(obs.trucks.map((t) => [t.id, t]));
     for (const p of trucks) {
       const t = tById.get(p.id)!;
@@ -335,18 +401,19 @@ export class Renderer {
       ctx.fill();
       ctx.stroke();
       // Cab.
-      ctx.fillStyle = 'rgba(0,0,0,0.35)';
-      ctx.fillRect(tw / 2 - tw * 0.28, -th / 2, tw * 0.28, th);
-      // Open-top payload: a pallet in the good's colour, or an empty bed.
+      ctx.fillStyle = 'rgba(0,0,0,0.4)';
+      ctx.fillRect(tw / 2 - tw * 0.26, -th / 2, tw * 0.26, th);
+      // Open-top bed: a pallet in the good's colour, outlined so it stands out, or empty (dark).
       const bx = -tw / 2 + 1.5;
-      const bw = tw * 0.58;
+      const bw = tw * 0.6;
       if (t.cargo) {
         ctx.fillStyle = goodColor(t.cargo.good);
-        ctx.fillRect(bx, -th / 2 + 1.5, bw, th - 3);
+        ctx.fillRect(bx - 1, -th / 2 - 1, bw + 1, th + 2);
         ctx.strokeStyle = INK;
-        ctx.strokeRect(bx, -th / 2 + 1.5, bw, th - 3);
+        ctx.lineWidth = 1.2;
+        ctx.strokeRect(bx - 1, -th / 2 - 1, bw + 1, th + 2);
       } else {
-        ctx.fillStyle = 'rgba(255,255,255,0.75)';
+        ctx.fillStyle = 'rgba(0,0,0,0.22)';
         ctx.fillRect(bx, -th / 2 + 1.5, bw, th - 3);
       }
       ctx.restore();
@@ -455,6 +522,21 @@ function label(ctx: CanvasRenderingContext2D, text: string, x: number, y: number
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(text, x, y);
+}
+
+function midpoint(pts: { x: number; y: number }[]) {
+  let total = 0;
+  for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+  let left = total / 2;
+  for (let i = 1; i < pts.length; i++) {
+    const seg = Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+    if (left <= seg && seg > 0) {
+      const f = left / seg;
+      return { x: pts[i - 1].x + (pts[i].x - pts[i - 1].x) * f, y: pts[i - 1].y + (pts[i].y - pts[i - 1].y) * f };
+    }
+    left -= seg;
+  }
+  return pts[pts.length - 1] ?? { x: 0, y: 0 };
 }
 
 function distToSegment(px: number, py: number, ax: number, ay: number, bx: number, by: number) {

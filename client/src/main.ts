@@ -10,7 +10,7 @@
  * - Auction panel (#35): bid on the running auction; presidents can put bank-held shares up.
  */
 import { distancesFrom, minimumBid, type GameEvent, type Location, type Observation } from '@sr/core';
-import { Renderer, companyColor, goodColor, type Highlights } from './render.js';
+import { Renderer, companyColor, coordOf, goodColor, type Highlights } from './render.js';
 import { Session } from './session.js';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -29,7 +29,7 @@ let lastUi = 0;
 
 // ------------------------------------------------------------------ selection and input state
 
-const hl: Highlights = { hover: null, picked: [], hoverRoute: null, buyFor: null };
+const hl: Highlights = { hover: null, picked: [], hoverRoute: null, buyFor: null, leash: session.cfg.trucks.leashBlocks };
 /** Company the player last acted for (route clicks default to it). */
 let activeCompany: number | null = null;
 /** Smoothed on-screen truck positions (town coordinates). */
@@ -121,6 +121,14 @@ function bestDepot(obs: Observation, company: number, producer: Location): numbe
     if (best === null || d[g.town.locations[id].node] < d[g.town.locations[best].node]) best = id;
   }
   return best;
+}
+
+const reachCache = new Map<number, Float64Array>();
+/** Drive distances from a depot site (cached per game). */
+function siteReach(site: number): Float64Array {
+  const d = reachCache.get(site) ?? distancesFrom(session.game.town.graph, session.game.town.locations[site].node);
+  reachCache.set(site, d);
+  return d;
 }
 
 const freeTrucks = (obs: Observation, depot: number) =>
@@ -241,7 +249,7 @@ function tooltip(obs: Observation) {
     if (s) {
       const good = goods[s.good];
       const recent = s.history.length ? Math.round((100 * s.history.reduce((a, b) => a + b, 0)) / s.history.length) : null;
-      html = `<b>${cap(good)} ${s.kind === 'producer' ? 'producer' : 'consumer'}</b> · level ${s.level}/${g.cfg.cycles.maxLevel}`;
+      html = `<b>${cap(good)} ${s.kind === 'producer' ? 'producer' : 'consumer'} ${at(l.id)}</b> · level ${s.level}/${g.cfg.cycles.maxLevel}`;
       html +=
         s.kind === 'producer'
           ? `<div>${s.stock} pallet${s.stock === 1 ? '' : 's'} waiting · makes ${s.cycleAmount} per cycle</div>`
@@ -254,19 +262,19 @@ function tooltip(obs: Observation) {
   } else if (l && l.kind === 'depot') {
     const owner = obs.depots[l.id];
     if (owner === undefined) {
-      html = '<b>Free depot site</b>';
+      html = `<b>Free depot site ${at(l.id)}</b>`;
       const prices = obs.depotPrices[l.id];
       for (const c of myCompanies(obs)) html += `<div>${coName(c)} would pay ${money(prices[c])}${prices[c] < g.cfg.depots.depotBase ? ' (local subsidy)' : ''}</div>`;
       if (!myCompanies(obs).length) html += `<div class="muted">Full price ${money(g.cfg.depots.depotBase)}, less a subsidy for companies serving the area.</div>`;
     } else {
       const n = obs.trucks.filter((t) => t.depot === l.id).length;
-      html = `<b>${coName(owner)} depot</b><div>${n}/${g.cfg.depots.capacity} trucks · ${freeTrucks(obs, l.id)} free</div>`;
+      html = `<b>${coName(owner)} depot ${at(l.id)}</b><div>${n}/${g.cfg.depots.capacity} trucks · ${freeTrucks(obs, l.id)} free</div><div class="muted">Shaded streets: within ${g.cfg.trucks.leashBlocks} blocks, where its trucks wear slowly</div>`;
     }
   } else if (l && l.kind === 'lot') {
     html = '<span class="muted">Empty lot: a business may open here.</span>';
   } else if (route) {
     const p = g.town.locations[route.producer];
-    html = `<b>${coName(route.company)}</b> · ${goods[p.good!]} route · ${route.trucks} truck${route.trucks === 1 ? '' : 's'}`;
+    html = `<b>${coName(route.company)}</b> · ${goods[p.good!]} ${at(route.producer)} → ${at(route.consumer)} · ${route.trucks} truck${route.trucks === 1 ? '' : 's'} from depot ${at(route.depot)}`;
     if (obs.companies[route.company].presidents.includes(obs.me)) html += '<div class="muted">Click to add a truck · right-click to take one off</div>';
   }
   if (!html) {
@@ -283,6 +291,11 @@ function tooltip(obs: Observation) {
 }
 
 const cap = (s: string) => s[0].toUpperCase() + s.slice(1);
+/** A location's grid name, like C4. */
+const at = (id: number) => {
+  const l = session.game.town.locations[id];
+  return coordOf(l.x, l.y);
+};
 
 // ------------------------------------------------------------------ panels
 
@@ -310,6 +323,21 @@ function refreshPanels(obs: Observation) {
     }
   } else html += '<div class="muted small">No shares yet.</div>';
   $('me').innerHTML = html;
+
+  // Everyone else: cash and holdings, as for you.
+  $('players').innerHTML = obs.players
+    .filter((p) => p.id !== obs.me)
+    .map((p) => {
+      const held = obs.companies.filter((c) => c.shares.includes(p.id));
+      const shares = held
+        .map((c) => {
+          const n = c.shares.filter((s) => s === p.id).length;
+          return `<span class="holding">${sw(c.id)}${c.id + 1}×${n}${c.presidents.includes(p.id) ? '<span class="tag">P</span>' : ''}</span>`;
+        })
+        .join(' ');
+      return `<div class="co"><div class="row"><span><b>Player ${p.id + 1}</b></span><span>${money(p.cash)}</span></div><div class="small">${shares || '<span class="muted">No shares</span>'}</div></div>`;
+    })
+    .join('');
 
   // Companies: everyone's at a glance.
   $('companies').innerHTML = obs.companies
@@ -385,17 +413,27 @@ function refreshMyCompanies(obs: Observation) {
       const n = trucks.filter((t) => t.depot === s).length;
       const full = n >= g.cfg.depots.capacity;
       const canPay = c.treasury >= g.cfg.depots.truckPrice;
-      html += `<div class="row small"><span>Depot ${s}: ${n}/${g.cfg.depots.capacity} trucks, ${freeTrucks(obs, s)} free</span><button data-truck="${id}:${s}" ${full || !canPay ? 'disabled' : ''} title="${full ? 'Depot full' : canPay ? '' : 'Not enough in the treasury'}">Buy truck ${money(g.cfg.depots.truckPrice)}</button></div>`;
+      html += `<div class="row small"><span>Depot ${at(s)}: ${n}/${g.cfg.depots.capacity} trucks, ${freeTrucks(obs, s)} free</span><button data-truck="${id}:${s}" ${full || !canPay ? 'disabled' : ''} title="${full ? 'Depot full' : canPay ? '' : 'Not enough in the treasury'}">Buy truck ${money(g.cfg.depots.truckPrice)}</button></div>`;
     }
-    const prices = Object.values(obs.depotPrices).map((p) => p[id]);
-    const cheapest = prices.length ? Math.min(...prices) : null;
-    html += `<div class="row small"><span>${cheapest === null ? 'No free depot sites left' : `Free depot sites from ${money(cheapest)}`}</span>${cheapest === null ? '' : `<button data-depot="${id}" class="${hl.buyFor === id ? 'on' : ''}">${hl.buyFor === id ? 'Cancel' : 'Buy depot…'}</button>`}</div>`;
+    // The free depot sites nearest this company's depots, with its price for each.
+    const sites = Object.keys(obs.depotPrices).map(Number);
+    if (sites.length) {
+      const own = Object.entries(obs.depots).filter(([, o]) => o === id).map(([site]) => g.town.locations[Number(site)].node);
+      const dist = (site: number) => Math.min(...own.map((n) => siteReach(site)[n]));
+      const near = sites.sort((a, b) => dist(a) - dist(b)).slice(0, 3);
+      html += `<div class="row small"><span class="muted">Nearby depot sites</span><button data-depot="${id}" class="${hl.buyFor === id ? 'on' : ''}">${hl.buyFor === id ? 'Cancel' : 'Pick on map…'}</button></div><div class="sites">`;
+      for (const site of near) {
+        const price = obs.depotPrices[site][id];
+        html += `<button data-buysite="${id}:${site}" ${c.treasury < price ? 'disabled' : ''} title="${Math.round(dist(site))} blocks away${price < g.cfg.depots.depotBase ? ', local subsidy' : ''}">${at(site)} ${money(price)}</button>`;
+      }
+      html += '</div>';
+    } else html += '<div class="row small muted"><span>No free depot sites left</span></div>';
     const routes = obs.routes.filter((r) => r.company === id);
     if (routes.length) {
       html += '<div class="sub">Routes</div>';
       for (const r of routes) {
         const p = g.town.locations[r.producer];
-        html += `<div class="row small"><span><span class="dot" style="background:${goodColor(p.good!)}"></span>${g.cfg.town.goods[p.good!]} ${r.producer}→${r.consumer} (depot ${r.depot})</span><span><button data-unroute="${r.key}">−</button> ${r.trucks} <button data-route="${r.key}" ${freeTrucks(obs, r.depot) ? '' : 'disabled'}>+</button></span></div>`;
+        html += `<div class="row small"><span><span class="dot" style="background:${goodColor(p.good!)}"></span>${cap(g.cfg.town.goods[p.good!])} ${at(r.producer)} → ${at(r.consumer)}</span><span><button data-unroute="${r.key}">−</button> ${r.trucks} <button data-route="${r.key}" ${freeTrucks(obs, r.depot) ? '' : 'disabled'}>+</button></span></div>`;
       }
     }
     html += '</div>';
@@ -423,6 +461,11 @@ document.addEventListener('pointerdown', (e) => {
     const [c, s] = b.dataset.truck.split(':').map(Number);
     session.act({ type: 'buyTruck', company: c, depot: s });
     activeCompany = c;
+  } else if (b.dataset.buysite) {
+    const [c, site] = b.dataset.buysite.split(':').map(Number);
+    session.act({ type: 'buyDepot', company: c, site });
+    activeCompany = c;
+    hl.buyFor = null;
   } else if (b.dataset.depot) {
     const c = Number(b.dataset.depot);
     hl.buyFor = hl.buyFor === c ? null : c;
@@ -562,6 +605,8 @@ function newGame() {
   $('log').innerHTML = '';
   $('overlay').hidden = true;
   shown.clear();
+  reachCache.clear();
+  hl.leash = session.cfg.trucks.leashBlocks;
   hl.picked = [];
   hl.buyFor = null;
   activeCompany = null;
