@@ -45,10 +45,10 @@ describe('payPerShare', () => {
 
 describe('deliveries and dividends', () => {
   it('each delivery pays the treasury and the pot the same amount', () => {
-    const { g, producer, consumer } = setup();
+    const { g, home, producer, consumer } = setup();
     g.companies[0].shares = [0, null, null, null, null];
-    const truck = g.addTruck(0);
-    g.act(0, { type: 'setOrders', truck: truck.id, stops: [{ location: producer.id, action: 'load' }, { location: consumer.id, action: 'unload' }] });
+    g.addTruck(0);
+    g.act(0, { type: 'assignRoute', depot: home.id, producer: producer.id, consumer: consumer.id });
     runFor(g, 170);
     const deliveries = of(g.drainEvents(0), 'delivered');
     expect(deliveries.length).toBeGreaterThan(0);

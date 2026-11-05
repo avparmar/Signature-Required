@@ -51,9 +51,9 @@ export interface Truck {
   state: TruckState;
   /** Node the truck is at, or last passed. */
   node: number;
-  /** Remaining route (next node first) while driving. */
-  route: number[];
-  /** Distance travelled along the current street (from `node` towards route[0]). */
+  /** Remaining road nodes to drive through (next first) while driving. */
+  path: number[];
+  /** Distance travelled along the current street (from `node` towards path[0]). */
   progress: number;
   cargo: Cargo | null;
   orders: Stop[];
@@ -65,6 +65,14 @@ export interface Truck {
   busyUntil: number;
   /** Orders set while mid-street take effect at the next intersection. */
   pendingOrders: Stop[] | null;
+  /** The route this truck is assigned to (see Game.routes), or null when free. */
+  route: string | null;
+  /** Road node of the truck's home depot. */
+  home: number;
+  /** Unassigned from its route: deliver anything in hand, then go back to the depot and wait. */
+  homing: boolean;
+  /** True while the current path leads to the depot rather than a stop. */
+  toHome: boolean;
 }
 
 export type TruckEvent =
@@ -104,7 +112,7 @@ export class TruckSystem {
       depot,
       state: 'idle',
       node,
-      route: [],
+      path: [],
       progress: 0,
       cargo: null,
       orders: [],
@@ -112,6 +120,10 @@ export class TruckSystem {
       at: null,
       busyUntil: 0,
       pendingOrders: null,
+      route: null,
+      home: node,
+      homing: false,
+      toHome: false,
     };
     this.trucks.push(t);
     return t;
@@ -153,7 +165,7 @@ export class TruckSystem {
    */
   private departForStop(truck: Truck, now: number, advance: boolean) {
     const n = truck.orders.length;
-    if (n === 0) return this.goIdle(truck, now, 'no orders');
+    if (n === 0) return truck.homing ? this.driveTo(truck, truck.home, now) : this.goIdle(truck, now, 'no orders');
     let idx = advance ? (truck.orderIndex + 1) % n : ((truck.orderIndex % n) + n) % n;
     let tries = 0;
     while (!this.actionable(truck, truck.orders[idx]) && tries < n) {
@@ -168,16 +180,17 @@ export class TruckSystem {
     const target = this.nodeOf(stop.location);
     const route = routeVia(this.graph, [truck.node, ...(stop.via ?? []), target]);
     if (!route) return this.goIdle(truck, now, 'no route');
-    truck.route = route.slice(1);
+    truck.toHome = false;
+    truck.path = route.slice(1);
     truck.progress = 0;
     truck.state = 'driving';
-    if (truck.route.length === 0) this.arrive(truck, stop.location);
+    if (truck.path.length === 0) this.arrive(truck, stop.location);
   }
 
   private goIdle(truck: Truck, now: number, reason: string) {
     const was = truck.state;
     truck.state = 'idle';
-    truck.route = [];
+    truck.path = [];
     truck.progress = 0;
     if (was !== 'idle') this.emit({ type: 'truckIdle', t: now, truck: truck.id, company: truck.company, reason });
   }
@@ -212,8 +225,8 @@ export class TruckSystem {
 
   private drive(truck: Truck, distance: number, now: number) {
     let left = distance;
-    while (left > 0 && truck.route.length) {
-      const next = truck.route[0];
+    while (left > 0 && truck.path.length) {
+      const next = truck.path[0];
       const len = edgeLength(this.graph, truck.node, next);
       const remaining = len - truck.progress;
       if (left < remaining) {
@@ -222,7 +235,7 @@ export class TruckSystem {
       }
       left -= remaining;
       truck.node = next;
-      truck.route.shift();
+      truck.path.shift();
       truck.progress = 0;
       if (truck.pendingOrders) {
         // New orders take over at this intersection.
@@ -230,7 +243,13 @@ export class TruckSystem {
         if (truck.state !== 'driving') return;
       }
     }
-    if (truck.route.length === 0 && truck.state === 'driving') this.arrive(truck, truck.orders[truck.orderIndex].location);
+    if (truck.path.length === 0 && truck.state === 'driving') {
+      if (truck.toHome) {
+        truck.toHome = false;
+        truck.homing = false;
+        this.goIdle(truck, now, 'home');
+      } else this.arrive(truck, truck.orders[truck.orderIndex].location);
+    }
   }
 
   private serve(location: number, now: number, bays: number) {
@@ -263,11 +282,52 @@ export class TruckSystem {
   private finishService(truck: Truck, now: number) {
     this.leaveQueue(truck);
     truck.state = 'driving'; // departForStop sets the real state
+    if (truck.homing) {
+      // Unassigned: deliver what it's carrying, then home.
+      if (truck.cargo && truck.orders.length) return this.departForStop(truck, now, false);
+      truck.orders = [];
+      return this.driveTo(truck, truck.home, now);
+    }
     // orderIndex -1 means orders were replaced mid-service: start the new list from the top.
     if (truck.orderIndex < 0) {
       truck.orderIndex = 0;
       this.departForStop(truck, now, false);
     } else this.departForStop(truck, now, true);
+  }
+
+  /**
+   * Take a truck off its route: it drives back to its depot and waits there as a free truck.
+   * A truck carrying a pallet delivers it first (no dumping): it keeps only its unload stop, and
+   * heads home once the pallet is gone.
+   */
+  sendHome(truck: Truck, now: number) {
+    truck.route = null;
+    truck.homing = true;
+    truck.pendingOrders = null;
+    const unload = truck.cargo ? truck.orders.find((s) => s.action === 'unload') : undefined;
+    truck.orders = unload ? [unload] : [];
+    truck.orderIndex = 0;
+    if (truck.state === 'servicing') return; // finishService sends it on
+    if (unload) {
+      truck.state = 'driving';
+      truck.path = [];
+      truck.progress = 0;
+      this.departForStop(truck, now, false);
+    } else this.driveTo(truck, truck.home, now);
+  }
+
+  /** Drive to a node with no stop at the end (used to return to the depot). */
+  private driveTo(truck: Truck, node: number, now: number) {
+    this.leaveQueue(truck);
+    const route = routeVia(this.graph, [truck.node, node]);
+    if (!route || route.length <= 1) {
+      truck.homing = false;
+      return this.goIdle(truck, now, 'home');
+    }
+    truck.toHome = true;
+    truck.path = route.slice(1);
+    truck.progress = 0;
+    truck.state = 'driving';
   }
 
   /**
@@ -286,7 +346,7 @@ export class TruckSystem {
         if (truck.state === 'servicing' && truck.at !== null) continue; // finishing a pallet elsewhere
         truck.orderIndex = Math.min(truck.orderIndex, Math.max(0, truck.orders.length - 1));
         truck.state = 'driving';
-        truck.route = [];
+        truck.path = [];
         truck.progress = 0;
         this.departForStop(truck, now, false);
       }
@@ -296,9 +356,9 @@ export class TruckSystem {
   /** Where a truck is right now, for drawing. */
   position(truck: Truck): { x: number; y: number } {
     const a = this.graph.nodes[truck.node];
-    if (truck.state !== 'driving' || truck.route.length === 0) return { x: a.x, y: a.y };
-    const b = this.graph.nodes[truck.route[0]];
-    const len = edgeLength(this.graph, truck.node, truck.route[0]);
+    if (truck.state !== 'driving' || truck.path.length === 0) return { x: a.x, y: a.y };
+    const b = this.graph.nodes[truck.path[0]];
+    const len = edgeLength(this.graph, truck.node, truck.path[0]);
     const f = len > 0 ? truck.progress / len : 0;
     return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f };
   }

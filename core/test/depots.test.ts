@@ -99,7 +99,7 @@ describe('buying', () => {
     const d = distancesFrom(g.town.graph, home.node);
     const p = g.town.locations.filter((l) => l.kind === 'producer').sort((a, b) => d[a.node] - d[b.node])[0];
     const c = g.town.locations.filter((l) => l.kind === 'consumer' && l.good === p.good).sort((a, b) => d[a.node] - d[b.node])[0];
-    g.act(0, { type: 'setOrders', truck: 0, stops: [{ location: p.id, action: 'load' }, { location: c.id, action: 'unload' }] });
+    g.act(0, { type: 'assignRoute', depot: home.id, producer: p.id, consumer: c.id });
     for (let i = 0; i < 3000; i++) g.step();
     expect(g.drainEvents(0).some((e) => e.type === 'delivered')).toBe(true);
   });

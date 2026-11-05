@@ -78,6 +78,8 @@ function trucksPerRoute(cfg: GameConfig): number {
 }
 
 interface Route {
+  /** Depot (town location id) the route runs from. */
+  depot: number;
   producer: number;
   consumer: number;
   /** Rough round trip from the company's depot, in blocks. */
@@ -144,7 +146,7 @@ export class Bot {
     const assumed = optimistic ? Math.max(extraCash, this.personality.speculator?.assumedSharePrice ?? 0) : extraCash;
     const futureRaise = unsoldAfter * assumed;
     const canBuy = Math.floor((c.treasury + extraCash + futureRaise) / this.cfg.depots.truckPrice);
-    const routes = this.routesFor(obs, company).length;
+    const routes = new Set(this.routesFor(obs, company).map((r) => `${r.producer}-${r.consumer}`)).size;
     const fleet = Math.min(trucks + canBuy, capacity, routes * this.perRoute);
     // Earning rate: what it's been doing recently, or the fleet estimate, whichever is higher.
     const recentPerMin = this.recent.filter((r) => r.company === company).reduce((s, r) => s + r.price, 0) / 3;
@@ -259,20 +261,12 @@ export class Bot {
         const dp = distancesFrom(this.town.graph, p.node);
         for (const q of this.town.locations) {
           if (q.kind !== 'consumer' || q.good !== p.good || !near(q)) continue;
-          routes.push({ producer: p.id, consumer: q.id, length: d[p.node] + 2 * dp[q.node] });
+          routes.push({ depot: depot.id, producer: p.id, consumer: q.id, length: d[p.node] + 2 * dp[q.node] });
         }
       }
     }
-    // Dedupe (a route can be near two depots) and sort shortest first.
-    const seen = new Set<string>();
-    return routes
-      .sort((a, b) => a.length - b.length)
-      .filter((r) => {
-        const k = `${r.producer}-${r.consumer}`;
-        if (seen.has(k)) return false;
-        seen.add(k);
-        return true;
-      });
+    // Shortest first. The same producer -> consumer pair can appear from several depots.
+    return routes.sort((a, b) => a.length - b.length);
   }
 
   /** Trucks (any company) already working a producer or consumer. */
@@ -282,10 +276,11 @@ export class Bot {
     return m;
   }
 
-  private pickRoute(obs: Observation, company: number, load: Map<number, number>): Route | null {
+  private pickRoute(obs: Observation, company: number, load: Map<number, number>, fromDepot?: number): Route | null {
     let best: Route | null = null;
     let bestScore = -Infinity;
     for (const r of this.routesFor(obs, company)) {
+      if (fromDepot !== undefined && r.depot !== fromDepot) continue;
       const busy = Math.max(load.get(r.producer) ?? 0, load.get(r.consumer) ?? 0);
       if (busy >= this.perRoute + 1) continue;
       const price = obs.locations.find((l) => l.id === r.consumer)?.price ?? this.cfg.money.palletPrice;
@@ -304,12 +299,12 @@ export class Bot {
     const cfg = this.cfg.depots;
     const load = this.load(obs);
 
-    // Give orders to trucks that have none (or went idle).
+    // Put every free truck (idle at its depot, no route) on the best route from that depot.
     for (const t of obs.trucks) {
-      if (t.company !== company || (t.state !== 'idle' && t.orders.length > 0)) continue;
-      const r = this.pickRoute(obs, company, load);
+      if (t.company !== company || t.route !== null || t.state !== 'idle') continue;
+      const r = this.pickRoute(obs, company, load, t.depot);
       if (!r) continue;
-      out.push({ type: 'setOrders', truck: t.id, stops: [{ location: r.producer, action: 'load' }, { location: r.consumer, action: 'unload' }] });
+      out.push({ type: 'assignRoute', depot: t.depot, producer: r.producer, consumer: r.consumer });
       load.set(r.producer, (load.get(r.producer) ?? 0) + 1);
       load.set(r.consumer, (load.get(r.consumer) ?? 0) + 1);
     }

@@ -10,7 +10,7 @@ import { assignPrices, investCost, payPerShare } from './money.js';
 import { chooseOpening } from './openings.js';
 import { initLocations, newLocationState, raiseLevel, updateCycles, type CycleEvent, type LocationState } from './economy.js';
 import { Rng } from './rng.js';
-import { TruckSystem, validateOrders, type Stop, type Truck, type TruckEvent } from './trucks.js';
+import { TruckSystem, type Truck, type TruckEvent } from './trucks.js';
 import { clearToLot, generateTown, openOnLot, type Town } from './town.js';
 
 // ------------------------------------------------------------------ state
@@ -36,6 +36,22 @@ export interface Company {
 /** opening: the opening share auctions, before the game clock starts. */
 export type Phase = 'opening' | 'running' | 'ended';
 
+// ------------------------------------------------------------------ routes
+
+/** A standing assignment: trucks based at `depot` carry `producer`'s good to `consumer`. */
+export interface Route {
+  key: string;
+  company: number;
+  depot: number;
+  producer: number;
+  consumer: number;
+  trucks: number;
+}
+
+export function routeKey(depot: number, producer: number, consumer: number): string {
+  return `${depot}>${producer}>${consumer}`;
+}
+
 // ------------------------------------------------------------------ actions & events
 
 /**
@@ -44,8 +60,13 @@ export type Phase = 'opening' | 'running' | 'ended';
  */
 export type Action =
   | { type: 'noop' }
-  /** Replace a truck's repeating orders (presidents of the truck's company only). */
-  | { type: 'setOrders'; truck: number; stops: Stop[] }
+  /**
+   * Put one more free truck from `depot` on the producer -> consumer route (presidents of the
+   * depot's company only). The route is created if it doesn't exist.
+   */
+  | { type: 'assignRoute'; depot: number; producer: number; consumer: number }
+  /** Take one truck off a route; it drives back to its depot and becomes free. */
+  | { type: 'unassignRoute'; depot: number; producer: number; consumer: number }
   /** Buy a truck for a company, based at one of its depots (presidents only; from the treasury). */
   | { type: 'buyTruck'; company: number; depot: number }
   /** Buy a free depot site for a company (presidents only; from the treasury). */
@@ -75,6 +96,9 @@ export type GameEvent =
   | { type: 'boughtDepot'; t: number; company: number; site: number; price: number }
   | { type: 'invested'; t: number; player: number; location: number; level: number; price: number }
   | { type: 'opened'; t: number; location: number; kind: 'producer' | 'consumer'; good: number }
+  | { type: 'routeChanged'; t: number; company: number; depot: number; producer: number; consumer: number; trucks: number }
+  /** A route lost one of its ends (closure); its trucks are free again at the depot. */
+  | { type: 'routeLost'; t: number; company: number; depot: number; producer: number; consumer: number; trucks: number }
   | {
       type: 'payout';
       t: number;
@@ -112,6 +136,8 @@ export interface Observation {
   /** Producers and consumers: stock, demand, level, growth, next cycle. */
   locations: LocationState[];
   trucks: (Truck & { x: number; y: number })[];
+  /** Every company's routes: depot -> producer -> consumer, with how many trucks run it. */
+  routes: Route[];
   /** Trucks queued or loading at each location (location id -> truck ids, in arrival order). */
   queues: Record<number, number[]>;
   /** Owner company of each depot site (site location id -> company); free sites are absent. */
@@ -262,13 +288,31 @@ export class Game {
     switch (action.type) {
       case 'noop':
         break;
-      case 'setOrders': {
-        const truck = this.trucks.trucks[action.truck];
-        if (!truck) return reject(`no truck ${action.truck}`);
-        if (!this.presidents(truck.company).includes(player)) return reject('only a president of this company can give its trucks orders');
-        const why = validateOrders(action.stops, (id) => this.town.locations[id]?.kind, this.town.graph.nodes.length);
-        if (why) return reject(why);
-        this.trucks.setOrders(truck, action.stops.map((st) => ({ ...st, via: st.via ? [...st.via] : undefined })), this.t);
+      case 'assignRoute':
+      case 'unassignRoute': {
+        const company = this.depotOwner.get(action.depot);
+        if (company === undefined) return reject(`nobody owns depot ${action.depot}`);
+        if (!this.presidents(company).includes(player)) return reject("only a president can direct this company's trucks");
+        const p = this.town.locations[action.producer];
+        const c = this.town.locations[action.consumer];
+        if (!p || p.kind !== 'producer') return reject(`${action.producer} is not a producer`);
+        if (!c || c.kind !== 'consumer') return reject(`${action.consumer} is not a consumer`);
+        if (p.good !== c.good) return reject(`${this.cfg.town.goods[p.good!]} can't be sold at a ${this.cfg.town.goods[c.good!]} consumer`);
+        const key = routeKey(action.depot, action.producer, action.consumer);
+        if (action.type === 'assignRoute') {
+          const free = this.trucks.trucks.find((t) => t.depot === action.depot && t.orders.length === 0 && t.cargo === null);
+          if (!free) return reject('no free truck at that depot (buy one, or take one off another route)');
+          this.trucks.setOrders(free, [{ location: action.producer, action: 'load' }, { location: action.consumer, action: 'unload' }], this.t);
+          free.route = key;
+        } else {
+          const onRoute = this.trucks.trucks.filter((t) => t.route === key);
+          if (onRoute.length === 0) return reject('no trucks on that route');
+          // Send home the one with the least invested: empty first, then whichever is furthest along.
+          const truck = onRoute.find((t) => t.cargo === null) ?? onRoute[onRoute.length - 1];
+          this.trucks.sendHome(truck, this.t);
+        }
+        const trucks = this.trucks.trucks.filter((t) => t.route === key).length;
+        this.emit('all', { type: 'routeChanged', t: this.t, company, depot: action.depot, producer: action.producer, consumer: action.consumer, trucks });
         break;
       }
       case 'buyTruck': {
@@ -477,12 +521,33 @@ export class Game {
     }
   }
 
-  /** A closed location becomes an empty lot again; trucks heading there go idle. */
+  /** A closed location becomes an empty lot again; routes through it end and their trucks go home. */
   private removeLocation(id: number) {
     this.locations = this.locations.filter((l) => l.id !== id);
     this.locById.delete(id);
     clearToLot(this.town, id);
+    for (const r of this.routes()) {
+      if (r.producer !== id && r.consumer !== id) continue;
+      for (const t of this.trucks.trucks) if (t.route === r.key) this.trucks.sendHome(t, this.t);
+      this.emit('all', { type: 'routeLost', t: this.t, company: r.company, depot: r.depot, producer: r.producer, consumer: r.consumer, trucks: r.trucks });
+    }
     this.trucks.locationClosed(id, this.t);
+  }
+
+  /** Every route in play, from the trucks' assignments. */
+  routes(): Route[] {
+    const byKey = new Map<string, Route>();
+    for (const t of this.trucks.trucks) {
+      if (!t.route) continue;
+      let r = byKey.get(t.route);
+      if (!r) {
+        const [depot, producer, consumer] = t.route.split('>').map(Number);
+        r = { key: t.route, company: t.company, depot, producer, consumer, trucks: 0 };
+        byKey.set(t.route, r);
+      }
+      r.trucks++;
+    }
+    return [...byKey.values()].sort((a, b) => a.key.localeCompare(b.key));
   }
 
   private nextOpeningAt = -1;
@@ -552,9 +617,10 @@ export class Game {
       })),
       nextPayoutAt: this.nextPayoutAt,
       locations: this.locations.map((l) => ({ ...l, history: [...l.history] })),
+      routes: this.routes(),
       trucks: this.trucks.trucks.map((t) => ({
         ...t,
-        route: [...t.route],
+        path: [...t.path],
         orders: t.orders.map((o) => ({ ...o, via: o.via ? [...o.via] : undefined })),
         cargo: t.cargo ? { ...t.cargo } : null,
         pendingOrders: t.pendingOrders ? [...t.pendingOrders] : null,
