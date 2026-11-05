@@ -153,3 +153,19 @@ describe('suburb layout', () => {
     SLOW,
   );
 });
+
+describe('radial layout', () => {
+  it(
+    'is connected and leaves the grid behind',
+    () => {
+      for (const seed of [1, 2, 3]) {
+        const t = town(seed, { layout: 'radial' });
+        const { nodes, edges } = t.graph;
+        expect(isConnected(nodes.length, edges.map((e) => [e.a, e.b]))).toBe(true);
+        expect(nodes.filter((n) => !Number.isInteger(n.x) || !Number.isInteger(n.y)).length).toBeGreaterThan(nodes.length / 2);
+        expect(t.locations.length).toBeGreaterThan(40);
+      }
+    },
+    SLOW,
+  );
+});

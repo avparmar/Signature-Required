@@ -18,8 +18,9 @@ export function townSvg(town: Town, title = ''): string {
   out.push(`<rect width="${w}" height="${h}" fill="#e9e4d4"/>`);
   out.push(`<text x="${M}" y="${M + 6}" font-size="15" font-weight="bold" fill="#333">${title}</text>`);
   // Blocks (green), then water.
-  for (let j = 0; j < H; j++)
-    for (let i = 0; i < W; i++) out.push(`<rect x="${X(i) + 4}" y="${Y(j) + 4}" width="${S - 8}" height="${S - 8}" rx="3" fill="#cfd8b8"/>`);
+  if (town.cfg.layout !== 'radial')
+    for (let j = 0; j < H; j++)
+      for (let i = 0; i < W; i++) out.push(`<rect x="${X(i) + 4}" y="${Y(j) + 4}" width="${S - 8}" height="${S - 8}" rx="3" fill="#cfd8b8"/>`);
   for (const { i, j } of town.river) out.push(`<rect x="${X(i) - 4}" y="${Y(j) - 4}" width="${S + 8}" height="${S + 8}" fill="#6fa8dc"/>`);
   // Roads.
   const { nodes, edges } = town.graph;
@@ -62,7 +63,7 @@ export function townSvg(town: Town, title = ''): string {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const seed = Number(process.argv[2] ?? 1);
   const rivers = Number(process.argv[3] ?? 1);
-  const layout = (process.argv[4] ?? 'grid') as 'grid' | 'suburb';
+  const layout = (process.argv[4] ?? 'grid') as 'grid' | 'suburb' | 'radial';
   const t = generateTown(makeTownConfig({ seed, rivers, layout }));
   const water = rivers ? `${rivers} river${rivers > 1 ? 's' : ''}, ${t.bridges.length} bridges` : 'no river';
   console.log(townSvg(t, `Seed ${seed}, ${layout}, ${water}`));

@@ -32,8 +32,10 @@ export interface TownConfig {
   /**
    * Street layout. 'grid': a full grid with a share of streets removed. 'suburb': main roads every
    * few blocks, with tree-like neighbourhood streets (dead ends, one or two ways out) between them.
+   * 'radial': no grid; curved arms spiral out from a central hub, joined by partial ring roads, with
+   * cul-de-sac neighbourhoods branching off the arms. (Rivers aren't supported here yet.)
    */
-  layout: 'grid' | 'suburb';
+  layout: 'grid' | 'suburb' | 'radial';
   /** Share of grid streets removed (never disconnecting the town). Grid layout only. */
   removeFrac: number;
   /** Suburb layout: blocks between main roads. */
@@ -246,6 +248,17 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
       diagonals.push(rng.next() < 0.5 ? [id(i, j), id(i + 1, j + 1)] : [id(i + 1, j), id(i, j + 1)]);
     }
 
+  if (cfg.layout === 'radial') {
+    const r = radialStreets(W, H, rng);
+    nodes.length = 0;
+    nodes.push(...r.nodes);
+    edges = r.edges;
+    diagonals.length = 0;
+    riverBlocks.clear();
+    bridges.length = 0;
+    protectedEdges.clear();
+  }
+
   // Lots sit at the middle of a straight street segment; placing one splits the segment.
   // Bridges never carry a lot, so they stay a single street end to end.
   const streets = edges.map(([a, b]) => ({ a, b, used: false, bridge: protectedEdges.has(ekey(a, b)) }));
@@ -457,4 +470,98 @@ function suburbStreets(
     for (const e of spare) if (rng.next() < cfg.suburbLoops) kept.push(e);
   }
   return kept;
+}
+
+/**
+ * Radial streets: a hub in the middle, curved arms spiralling out from it, a few partial ring roads
+ * joining neighbouring arms, and small tree-shaped neighbourhoods (dead ends) branching off.
+ */
+function radialStreets(W: number, H: number, rng: Rng): { nodes: Vec[]; edges: [number, number][] } {
+  const cx = W / 2;
+  const cy = H / 2;
+  const R = Math.min(W, H) / 2 - 0.3;
+  const nodes: Vec[] = [];
+  const edges: [number, number][] = [];
+  const add = (p: Vec) => nodes.push(p) - 1;
+  const segs: [Vec, Vec][] = [];
+  const link = (a: number, b: number) => {
+    edges.push([a, b]);
+    segs.push([nodes[a], nodes[b]]);
+  };
+  const polar = (r: number, a: number): Vec => ({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
+  const inside = (p: Vec) => p.x >= 0 && p.y >= 0 && p.x <= W && p.y <= H;
+
+  const arms = rng.int(6, 7);
+  const twist = (rng.next() < 0.5 ? -1 : 1) * (0.9 + rng.next() * 0.5); // radians of turn from hub to edge
+  const base = rng.next() * 2 * Math.PI;
+  const step = 1;
+  const r0 = 1.2;
+  const armAngle = (k: number, r: number) => base + (2 * Math.PI * k) / arms + twist * (r / R) + 0.08 * Math.sin(r * 1.7 + k);
+  // Arms: one node per block of radius; armNodes[k][s] is the node at radius r0 + s * step.
+  const armNodes: number[][] = [];
+  for (let k = 0; k < arms; k++) {
+    const list: number[] = [];
+    for (let r = r0; r <= R + 1e-9; r += step) {
+      const p = polar(r, armAngle(k, r));
+      if (!inside(p)) break;
+      const n = add(p);
+      if (list.length) link(list[list.length - 1], n);
+      list.push(n);
+    }
+    armNodes.push(list);
+  }
+  // Hub: a small ring through the arm starts.
+  for (let k = 0; k < arms; k++) link(armNodes[k][0], armNodes[(k + 1) % arms][0]);
+
+  // Ring roads at a few radii, as arcs between neighbouring arms; some outer arcs are left out.
+  const ringSteps = [2, 4, 6].filter((s) => armNodes.every((l) => l.length > s));
+  for (const sIdx of ringSteps) {
+    for (let k = 0; k < arms; k++) {
+      if (sIdx > 2 && rng.next() < 0.3) continue;
+      const a = armNodes[k][sIdx];
+      const b = armNodes[(k + 1) % arms][sIdx];
+      const r = r0 + sIdx * step;
+      const a0 = armAngle(k, r);
+      let a1 = armAngle((k + 1) % arms, r);
+      while (a1 < a0) a1 += 2 * Math.PI;
+      const pieces = Math.max(1, Math.round(((a1 - a0) * r) / 1.1));
+      let prev = a;
+      for (let q = 1; q < pieces; q++) {
+        const n = add(polar(r, a0 + ((a1 - a0) * q) / pieces));
+        link(prev, n);
+        prev = n;
+      }
+      link(prev, b);
+    }
+  }
+
+  // Neighbourhoods: short branching streets grown from road nodes into empty space.
+  const crosses = (p: Vec, q: Vec) => segs.some(([a, b]) => segmentsCross(p, q, a, b));
+  const clear = (p: Vec, except: number) => nodes.every((n, i) => i === except || Math.hypot(n.x - p.x, n.y - p.y) >= 0.75);
+  const grow = (from: number, dir: number, depth: number) => {
+    if (depth <= 0) return;
+    const turn = (rng.next() - 0.5) * 1.2;
+    const len = 0.9 + rng.next() * 0.3;
+    const p = { x: nodes[from].x + len * Math.cos(dir + turn), y: nodes[from].y + len * Math.sin(dir + turn) };
+    if (!inside(p) || Math.hypot(p.x - cx, p.y - cy) > R + 0.5 || !clear(p, from) || crosses(nodes[from], p)) return;
+    const n = add(p);
+    link(from, n);
+    grow(n, dir + turn, depth - 1);
+    if (rng.next() < 0.35) grow(n, dir + turn + (rng.next() < 0.5 ? 1.4 : -1.4), depth - 2);
+  };
+  for (const n of rng.shuffle(nodes.map((_, i) => i))) {
+    if (rng.next() < 0.5) continue;
+    const p = nodes[n];
+    const out = Math.atan2(p.y - cy, p.x - cx);
+    // Branch roughly sideways off the road, into the gap between arms.
+    grow(n, out + (rng.next() < 0.5 ? 1 : -1) * (Math.PI / 2) + (rng.next() - 0.5) * 0.6, rng.int(2, 4));
+  }
+  return { nodes, edges };
+}
+
+function segmentsCross(p: Vec, q: Vec, a: Vec, b: Vec): boolean {
+  const same = (u: Vec, v: Vec) => Math.abs(u.x - v.x) < 1e-9 && Math.abs(u.y - v.y) < 1e-9;
+  if (same(p, a) || same(p, b) || same(q, a) || same(q, b)) return false;
+  const o = (u: Vec, v: Vec, w: Vec) => Math.sign((v.x - u.x) * (w.y - u.y) - (v.y - u.y) * (w.x - u.x));
+  return o(p, q, a) !== o(p, q, b) && o(a, b, p) !== o(a, b, q);
 }
