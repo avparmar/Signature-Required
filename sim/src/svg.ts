@@ -64,7 +64,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const seed = Number(process.argv[2] ?? 1);
   const rivers = Number(process.argv[3] ?? 1);
   const layout = (process.argv[4] ?? 'grid') as 'grid' | 'suburb' | 'snowflake';
-  const t = generateTown(makeTownConfig({ seed, rivers, layout }));
+  const cityRadius = Number(process.argv[5] ?? 5);
+  const t = generateTown(makeTownConfig({ seed, rivers, layout, cityRadius }));
   const water = rivers ? `${rivers} river${rivers > 1 ? 's' : ''}, ${t.bridges.length} bridges` : 'no river';
-  console.log(townSvg(t, `Seed ${seed}, ${layout}, ${water}`));
+  console.log(townSvg(t, `Seed ${seed}, ${layout}${layout === 'snowflake' ? ` (city radius ${cityRadius})` : ''}, ${water}`));
 }

@@ -270,9 +270,19 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
     x: (nodes[s.a].x + nodes[s.b].x) / 2,
     y: (nodes[s.a].y + nodes[s.b].y) / 2,
   });
+  // Snowflake towns put businesses at the ends of their cul-de-sacs, and depots on through streets.
+  const degree = new Map<number, number>();
+  for (const [a, b] of [...edges, ...diagonals]) for (const n of [a, b]) degree.set(n, (degree.get(n) ?? 0) + 1);
+  const deadEnd = (st: { a: number; b: number }) => degree.get(st.a) === 1 || degree.get(st.b) === 1;
   const place = (loc: Omit<Location, 'node' | 'x' | 'y' | 'id'>, near?: Vec): boolean => {
     let candidates = streets.map((s, i) => ({ s, i })).filter(({ s }) => !s.used && !s.bridge && free(mid(s)));
     if (candidates.length === 0) return false;
+    if (cfg.layout === 'snowflake') {
+      const ends = candidates.filter(({ s }) => deadEnd(s));
+      const through = candidates.filter(({ s }) => !deadEnd(s));
+      if (loc.kind === 'depot' && through.length > 0) candidates = through;
+      else if (loc.kind !== 'depot' && ends.length > 0 && rng.next() < 0.7) candidates = ends;
+    }
     let pick;
     if (near) {
       candidates.sort((p, q) => dist(mid(p.s), near) - dist(mid(q.s), near));
