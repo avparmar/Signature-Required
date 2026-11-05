@@ -189,6 +189,8 @@ export class Game {
   private events: GameEvent[][];
   /** Game-time randomness (separate from the town generator, so map and play don't interfere). */
   readonly rng: Rng;
+  /** Separate stream for breakdowns, so switching them off leaves everything else unchanged. */
+  private readonly breakdownRng: Rng;
 
   constructor(cfg: GameConfig) {
     this.cfg = cfg;
@@ -196,6 +198,7 @@ export class Game {
     if (cfg.companies < cfg.players) throw new Error('need at least one company per player');
     this.town = generateTown(cfg.town);
     this.rng = new Rng(cfg.seed * 2654435761 + 17);
+    this.breakdownRng = new Rng(cfg.seed * 40503 + 29);
     this.players = Array.from({ length: cfg.players }, (_, id) => ({ id, cash: cfg.startingCash, held: 0 }));
     // Every company starts fully owned by the bank, with an empty treasury: shares are sold at
     // auction (pre-game, then during play), and that money is what gets companies going.
@@ -228,6 +231,8 @@ export class Game {
         }
         this.emit('all', e);
       },
+      (company, node) => this.nearestDepot(company, node),
+      () => this.breakdownRng.next(),
     );
     this.events = Array.from({ length: cfg.players }, () => []);
     this.auctionCooldownUntil = this.companies.map(() => 0);
@@ -617,6 +622,24 @@ export class Game {
     return counts;
   }
   private districtCache: { t: number; counts: Map<number, number[]> } = { t: -1, counts: new Map() };
+
+  /** Drive distances from a depot site (cached). */
+  private siteDist(site: number): Float64Array {
+    const d = this.siteDistances.get(site) ?? distancesFrom(this.town.graph, this.town.locations[site].node);
+    this.siteDistances.set(site, d);
+    return d;
+  }
+
+  /** A company's nearest depot to a road node, and the drive distance to it. */
+  nearestDepot(company: number, node: number): { node: number; dist: number } | null {
+    let best: { node: number; dist: number } | null = null;
+    for (const [site, owner] of this.depotOwner) {
+      if (owner !== company) continue;
+      const dist = this.siteDist(site)[node];
+      if (!best || dist < best.dist) best = { node: this.town.locations[site].node, dist };
+    }
+    return best;
+  }
 
   /** What a depot site would cost this company now. */
   depotPriceFor(company: number, site: number): number {
