@@ -9,6 +9,12 @@
  *   the next company after the one it served last, so swarming a building with trucks doesn't
  *   let one company hog it. Within a company, trucks go in arrival order.
  * - No dumping: a pallet only leaves a truck when a consumer of that good accepts it.
+ * - Wear: a truck's reliability drains as it drives, slowly within `leashBlocks` of one of its
+ *   company's depots and faster beyond. Once it drops below `serviceBelow`, the truck services
+ *   itself at the company's nearest depot after its next delivery (only the detour costs).
+ * - Breakdowns (optional): the lower the reliability, the likelier a breakdown on each street. A
+ *   broken truck stands still for a while, then limps (slower) to the nearest depot for a free
+ *   repair, keeping its cargo, and goes back to its route.
  */
 import { deliverPallet, takePallet, type LocationState } from './economy.js';
 import { edgeLength, routeVia, type RoadGraph } from './graph.js';
@@ -20,12 +26,39 @@ export interface TruckConfig {
   serviceSec: number;
   /** Companies take turns at a building (true), or it's first come, first served (false). */
   takeTurns: boolean;
+  /** Reliability lost per block driven within `leashBlocks` of one of the company's depots. */
+  wearNear: number;
+  /** Reliability lost per block driven further out. */
+  wearFar: number;
+  /** Drive distance (blocks) from the nearest own depot that counts as near. */
+  leashBlocks: number;
+  /** Trucks below this reliability service themselves after their next delivery. */
+  serviceBelow: number;
+  /** Seconds a service or repair takes at the depot. */
+  repairSec: number;
+  /** Trucks can break down. With false, trucks still wear and service. */
+  breakdowns: boolean;
+  /** Breakdown chance per block driven is this × (1 − reliability). */
+  breakdownRate: number;
+  /** Seconds a broken-down truck stands still before limping to a depot. */
+  breakdownSec: number;
+  /** Speed of a limping truck, as a share of normal speed. */
+  limpSpeed: number;
 }
 
 export const DEFAULT_TRUCKS: TruckConfig = {
   speed: 0.35,
   serviceSec: 3,
   takeTurns: true,
+  wearNear: 0.004,
+  wearFar: 0.015,
+  leashBlocks: 6,
+  serviceBelow: 0.5,
+  repairSec: 6,
+  breakdowns: true,
+  breakdownRate: 0.015,
+  breakdownSec: 8,
+  limpSpeed: 0.5,
 };
 
 export interface Stop {
@@ -46,7 +79,9 @@ export type TruckState =
   | 'idle' // no orders, or nothing it can do with them
   | 'driving'
   | 'queued' // at a building, waiting for a bay, stock or demand
-  | 'servicing'; // loading or unloading at a bay
+  | 'servicing' // loading or unloading at a bay
+  | 'broken' // broken down on the road, standing still
+  | 'repairing'; // being serviced or repaired at a depot
 
 export interface Truck {
   id: number;
@@ -78,12 +113,20 @@ export interface Truck {
   homing: boolean;
   /** True while the current path leads to the depot rather than a stop. */
   toHome: boolean;
+  /** Reliability, 1 (just serviced) down to 0. */
+  reliability: number;
+  /** True while the current path leads to a depot for a service or repair. */
+  toService: boolean;
+  /** Broke down and is limping to a depot (slower). */
+  limping: boolean;
 }
 
 export type TruckEvent =
   | { type: 'loaded'; t: number; truck: number; company: number; location: number; good: number }
   | { type: 'delivered'; t: number; truck: number; company: number; location: number; good: number; origin: number; price: number }
-  | { type: 'truckIdle'; t: number; truck: number; company: number; reason: string };
+  | { type: 'truckIdle'; t: number; truck: number; company: number; reason: string }
+  | { type: 'brokeDown'; t: number; truck: number; company: number; node: number }
+  | { type: 'serviced'; t: number; truck: number; company: number; depotNode: number; repair: boolean };
 
 /** Why a set of orders is invalid, or null if it's fine. */
 export function validateOrders(stops: Stop[], kindOf: (loc: number) => string | undefined, nodeCount: number): string | null {
@@ -110,6 +153,10 @@ export class TruckSystem {
     private loc: (id: number) => LocationState | undefined,
     private nodeOf: (locationId: number) => number,
     private emit: (e: TruckEvent) => void,
+    /** The company's nearest depot to a road node, and the drive distance to it (null if none). */
+    private nearestDepot: (company: number, node: number) => { node: number; dist: number } | null = () => null,
+    /** A random number in [0, 1), from the game's seeded generator. */
+    private random: () => number = () => 1,
   ) {}
 
   add(company: number, depot: number, node: number): Truck {
@@ -131,6 +178,9 @@ export class TruckSystem {
       home: node,
       homing: false,
       toHome: false,
+      reliability: 1,
+      toService: false,
+      limping: false,
     };
     this.trucks.push(t);
     return t;
@@ -147,6 +197,12 @@ export class TruckSystem {
 
   private applyOrders(truck: Truck, stops: Stop[], now: number) {
     truck.pendingOrders = null;
+    if (this.inWorkshop(truck)) {
+      // Broken down or off for a service: the new orders start once it's fixed.
+      truck.orders = stops;
+      truck.orderIndex = 0;
+      return;
+    }
     if (truck.state === 'servicing') {
       // Finish the pallet in hand first; the new orders start when it's done.
       truck.orders = stops;
@@ -156,6 +212,43 @@ export class TruckSystem {
     this.leaveQueue(truck);
     truck.orders = stops;
     truck.orderIndex = 0;
+    this.departForStop(truck, now, false);
+  }
+
+  /** Broken down, being repaired, or on the way to a depot for it. */
+  private inWorkshop(truck: Truck): boolean {
+    return truck.state === 'broken' || truck.state === 'repairing' || truck.toService;
+  }
+
+  /** Head for the company's nearest depot for a service (or, limping, a repair). */
+  private goService(truck: Truck, now: number, limping: boolean) {
+    const depot = this.nearestDepot(truck.company, truck.node);
+    this.leaveQueue(truck);
+    truck.toHome = false;
+    truck.limping = limping;
+    truck.toService = true;
+    const route = depot ? routeVia(this.graph, [truck.node, depot.node]) : null;
+    truck.path = route ? route.slice(1) : [];
+    truck.progress = 0;
+    truck.state = 'driving';
+    if (truck.path.length === 0) this.startRepair(truck, now);
+  }
+
+  private startRepair(truck: Truck, now: number) {
+    truck.state = 'repairing';
+    truck.busyUntil = now + this.cfg.repairSec;
+  }
+
+  private finishRepair(truck: Truck, now: number) {
+    this.emit({ type: 'serviced', t: now, truck: truck.id, company: truck.company, depotNode: truck.node, repair: truck.limping });
+    truck.reliability = 1;
+    truck.toService = false;
+    truck.limping = false;
+    truck.state = 'driving'; // departForStop sets the real state
+    if (truck.homing && !(truck.cargo && truck.orders.length)) {
+      truck.orders = [];
+      return this.driveTo(truck, truck.home, now);
+    }
     this.departForStop(truck, now, false);
   }
 
@@ -223,8 +316,10 @@ export class TruckSystem {
   /** Advance every truck by dt seconds, then serve the queues. */
   update(now: number, dt: number, baysOf: (locationId: number) => number) {
     for (const truck of this.trucks) {
-      if (truck.state === 'driving') this.drive(truck, this.cfg.speed * dt, now);
+      if (truck.state === 'driving') this.drive(truck, this.cfg.speed * (truck.limping ? this.cfg.limpSpeed : 1) * dt, now);
       else if (truck.state === 'servicing' && now >= truck.busyUntil - 1e-9) this.finishService(truck, now);
+      else if (truck.state === 'broken' && now >= truck.busyUntil - 1e-9) this.goService(truck, now, true);
+      else if (truck.state === 'repairing' && now >= truck.busyUntil - 1e-9) this.finishRepair(truck, now);
     }
     // Serve queues in a fixed order (by location id) for determinism.
     for (const location of [...this.queues.keys()].sort((a, b) => a - b)) this.serve(location, now, baysOf(location));
@@ -244,6 +339,7 @@ export class TruckSystem {
       truck.node = next;
       truck.path.shift();
       truck.progress = 0;
+      if (this.wear(truck, len, now)) return;
       if (truck.pendingOrders) {
         // New orders take over at this intersection.
         this.applyOrders(truck, truck.pendingOrders, now);
@@ -251,12 +347,31 @@ export class TruckSystem {
       }
     }
     if (truck.path.length === 0 && truck.state === 'driving') {
-      if (truck.toHome) {
+      if (truck.toService) this.startRepair(truck, now);
+      else if (truck.toHome) {
         truck.toHome = false;
         truck.homing = false;
         this.goIdle(truck, now, 'home');
       } else this.arrive(truck, truck.orders[truck.orderIndex].location);
     }
+  }
+
+  /** Wear from driving `len` blocks ending at the truck's node; true if it broke down there. */
+  private wear(truck: Truck, len: number, now: number): boolean {
+    const home = this.nearestDepot(truck.company, truck.node);
+    const near = home !== null && home.dist <= this.cfg.leashBlocks;
+    const before = truck.reliability;
+    truck.reliability = Math.max(0, truck.reliability - len * (near ? this.cfg.wearNear : this.cfg.wearFar));
+    // No breakdowns on the way to a repair: it's limping already.
+    if (!this.cfg.breakdowns || truck.limping || truck.toHome) return false;
+    const chance = this.cfg.breakdownRate * (1 - (before + truck.reliability) / 2) * len;
+    if (this.random() >= chance) return false;
+    truck.state = 'broken';
+    truck.busyUntil = now + this.cfg.breakdownSec;
+    truck.toService = true;
+    truck.path = [];
+    this.emit({ type: 'brokeDown', t: now, truck: truck.id, company: truck.company, node: truck.node });
+    return true;
   }
 
   private serve(location: number, now: number, bays: number) {
@@ -313,6 +428,11 @@ export class TruckSystem {
       truck.orders = [];
       return this.driveTo(truck, truck.home, now);
     }
+    // Due a service: go now, once it's empty (it resumes its orders afterwards).
+    if (truck.reliability < this.cfg.serviceBelow && truck.cargo === null) {
+      if (truck.orderIndex < 0) truck.orderIndex = 0;
+      return this.goService(truck, now, false);
+    }
     // orderIndex -1 means orders were replaced mid-service: start the new list from the top.
     if (truck.orderIndex < 0) {
       truck.orderIndex = 0;
@@ -333,6 +453,7 @@ export class TruckSystem {
     truck.orders = unload ? [unload] : [];
     truck.orderIndex = 0;
     if (truck.state === 'servicing') return; // finishService sends it on
+    if (this.inWorkshop(truck)) return; // goes home (or delivers first) once it's fixed
     if (unload) {
       truck.state = 'driving';
       truck.path = [];
@@ -370,6 +491,10 @@ export class TruckSystem {
       if (truck.at === location) truck.at = null;
       if (truck.orders.length !== had || affected) {
         if (truck.state === 'servicing' && truck.at !== null) continue; // finishing a pallet elsewhere
+        if (this.inWorkshop(truck)) {
+          truck.orderIndex = Math.min(truck.orderIndex, Math.max(0, truck.orders.length - 1));
+          continue; // re-plans once it's fixed
+        }
         truck.orderIndex = Math.min(truck.orderIndex, Math.max(0, truck.orders.length - 1));
         truck.state = 'driving';
         truck.path = [];
