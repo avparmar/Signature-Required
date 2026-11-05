@@ -35,6 +35,8 @@ export interface CycleConfig {
   shrinkBelow: number;
   /** A closing location stays open this many more cycles, marked as closing, before it goes. */
   closingCycles: number;
+  /** A location can't level down or close for this many seconds after it opens (or the game starts). It can still level up. */
+  graceSec: number;
 }
 
 export const DEFAULT_CYCLES: CycleConfig = {
@@ -48,6 +50,7 @@ export const DEFAULT_CYCLES: CycleConfig = {
   growAbove: 0.75,
   shrinkBelow: 0.5,
   closingCycles: 1,
+  graceSec: 0,
 };
 
 /** Dynamic state of a producer or consumer. */
@@ -75,6 +78,8 @@ export interface LocationState {
   closingIn: number | null;
   /** True once it has closed; closed locations are removed from the live list. */
   closed: boolean;
+  /** Game time until which it can't level down or close. */
+  graceUntil: number;
 }
 
 export type CycleEvent =
@@ -113,6 +118,7 @@ export function newLocationState(l: Location, cfg: CycleConfig, rng: Rng, now = 
     price: 0,
     closingIn: null,
     closed: false,
+    graceUntil: now + cfg.graceSec,
   };
 }
 
@@ -165,6 +171,11 @@ function applyLevel(s: LocationState, t: number, cfg: CycleConfig): CycleEvent |
     s.level++;
     s.history = [];
     return { type: 'levelUp', t, location: s.id, level: s.level };
+  }
+  if (avg < cfg.shrinkBelow && t < s.graceUntil - 1e-9) {
+    // Still in its grace period: not judged downwards yet (start the window again).
+    s.history = [];
+    return null;
   }
   if (avg < cfg.shrinkBelow) {
     s.history = [];

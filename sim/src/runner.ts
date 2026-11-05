@@ -1,5 +1,5 @@
 /** Play whole games headless with bots in every seat, and summarise them. */
-import { Game, makeGameConfig, Rng, type GameConfigOverrides } from '@sr/core';
+import { Game, distancesFrom, makeGameConfig, Rng, type GameConfigOverrides } from '@sr/core';
 import { Bot, PERSONALITIES, type BotPersonality } from './bot.js';
 
 export interface GameResult {
@@ -32,6 +32,19 @@ export interface GameResult {
   locationsShrunk: number;
   opened: number;
   closed: number;
+  /** Territory: how contested locations were, sampled once a minute. */
+  territory: {
+    /** Of locations served at all, the share served by more than one company. */
+    contestedShare: number;
+    /** How often a location's main server changed between consecutive minutes (per location-minute). */
+    handoverRate: number;
+    /** Average drive distance (blocks) from a route's depot to its producer, over all routes. */
+    avgReach: number;
+  };
+  /** Loading bays: average trucks waiting (queued, not loading) per busy building, and max queue seen. */
+  bays: { avgWaiting: number; maxQueue: number; waitingShare: number };
+  /** Location investment: level-ups bought, and $ spent, across all players. */
+  invested: { count: number; spent: number };
 }
 
 /**
@@ -52,6 +65,20 @@ export function runGame(overrides: GameConfigOverrides, personalities: BotPerson
   const paidPerShare = new Array(cfg.companies).fill(0);
   let opened = 0;
   let closed = 0;
+  let investCount = 0;
+  let investSpent = 0;
+  // Territory samples: per minute, for each location, the company with most trucks routed to it.
+  const mainServer: Map<number, number>[] = [];
+  let contested = 0;
+  let servedAny = 0;
+  let reachSum = 0;
+  let reachN = 0;
+  // Bays: sample queues every 5 seconds.
+  let waitingSum = 0;
+  let waitingSamples = 0;
+  let maxQueue = 0;
+  let waitingTrucks = 0;
+  let sampledTrucks = 0;
   const bonusPerShare = new Array(cfg.companies).fill(0);
   const auctions: GameResult['auctions'] = [];
   const payouts: number[] = [];
@@ -63,6 +90,10 @@ export function runGame(overrides: GameConfigOverrides, personalities: BotPerson
     for (const e of events) {
       if (e.type === 'delivered') deliveries[e.company]++;
       if (e.type === 'opened') opened++;
+      if (e.type === 'invested') {
+        investCount++;
+        investSpent += e.price;
+      }
       if (e.type === 'closed') closed++;
       if (e.type === 'auctionWon') auctions.push({ t: e.t, company: e.company, amount: e.amount, opening: phase === 'opening' });
       if (e.type === 'payout') {
@@ -99,6 +130,39 @@ export function runGame(overrides: GameConfigOverrides, personalities: BotPerson
     }
     phase = g.phase;
     g.step();
+    if (g.phase === 'running' && g.tick % 50 === 0) {
+      // Bays: trucks queued (waiting for a bay, stock or demand) per building with a queue.
+      for (const q of g.trucks.queues.values()) {
+        const waiting = q.filter((id) => g.trucks.trucks[id].state === 'queued').length;
+        if (q.length === 0) continue;
+        waitingSum += waiting;
+        waitingSamples++;
+        maxQueue = Math.max(maxQueue, waiting);
+      }
+      waitingTrucks += g.trucks.trucks.filter((t) => t.state === 'queued').length;
+      sampledTrucks += g.trucks.trucks.length;
+    }
+    if (g.phase === 'running' && g.tick % 600 === 0) {
+      // Territory: who serves each location this minute.
+      const byLoc = new Map<number, Map<number, number>>();
+      for (const r of g.routes()) {
+        for (const loc of [r.producer, r.consumer]) {
+          const m = byLoc.get(loc) ?? new Map();
+          m.set(r.company, (m.get(r.company) ?? 0) + r.trucks);
+          byLoc.set(loc, m);
+        }
+        const depotNode = g.town.locations[r.depot].node;
+        reachSum += distancesFrom(g.town.graph, depotNode)[g.town.locations[r.producer].node];
+        reachN++;
+      }
+      const main = new Map<number, number>();
+      for (const [loc, m] of byLoc) {
+        servedAny++;
+        if (m.size > 1) contested++;
+        main.set(loc, [...m].sort((a, b) => b[1] - a[1])[0][0]);
+      }
+      mainServer.push(main);
+    }
     if (soldOutAt === null && g.companies.every((c) => c.shares.every((s) => s !== null))) soldOutAt = g.t / 60;
   }
   record(g.drainEvents(0), phase); // the final step (last payout)
@@ -128,6 +192,29 @@ export function runGame(overrides: GameConfigOverrides, personalities: BotPerson
     locationsShrunk: g.locations.filter((l) => l.level < cfg.cycles.startLevel).length,
     opened,
     closed,
+    territory: (() => {
+      let handovers = 0;
+      let pairs = 0;
+      for (let i = 1; i < mainServer.length; i++) {
+        for (const [loc, who] of mainServer[i]) {
+          const prev = mainServer[i - 1].get(loc);
+          if (prev === undefined) continue;
+          pairs++;
+          if (prev !== who) handovers++;
+        }
+      }
+      return {
+        contestedShare: servedAny ? contested / servedAny : 0,
+        handoverRate: pairs ? handovers / pairs : 0,
+        avgReach: reachN ? reachSum / reachN : 0,
+      };
+    })(),
+    bays: {
+      avgWaiting: waitingSamples ? waitingSum / waitingSamples : 0,
+      maxQueue,
+      waitingShare: sampledTrucks ? waitingTrucks / sampledTrucks : 0,
+    },
+    invested: { count: investCount, spent: investSpent },
   };
 }
 

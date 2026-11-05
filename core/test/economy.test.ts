@@ -30,6 +30,7 @@ function loc(kind: 'producer' | 'consumer', o: Partial<LocationState> = {}): Loc
     price: 0,
     closingIn: null,
     closed: false,
+    graceUntil: 0,
     ...o,
   };
 }
@@ -204,5 +205,24 @@ describe('the town over a game', () => {
     const g = newGame({ seed: 2, auctions: { openingRound: false }, openings: { everySec: 0 } });
     g.runToEnd();
     expect(g.drainEvents(0).some((e) => e.type === 'opened')).toBe(false);
+  });
+});
+
+describe('grace period', () => {
+  it("a new location can't level down or close during its grace period, but can level up", () => {
+    const g = { ...DEFAULT_CYCLES, demandPerLevel: [2, 2] as [number, number], window: 2, graceSec: 120 };
+    const c: LocationState = {
+      id: 2, kind: 'consumer', good: 0, level: 1, cycleSec: 45, nextCycleAt: 0, stock: 0, demand: 0,
+      cycleAmount: 0, served: 0, history: [], price: 0, closingIn: null, closed: false, graceUntil: 120,
+    };
+    const rng = new Rng(1);
+    // Unserved for 2 minutes: nothing happens.
+    for (let i = 0; i <= 2; i++) updateCycles([c], i * 45, g, rng);
+    expect(c.closingIn).toBeNull();
+    expect(c.level).toBe(1);
+    // After the grace period, neglect counts.
+    const evs = [];
+    for (let i = 3; i <= 8; i++) evs.push(...updateCycles([c], i * 45, g, rng));
+    expect(evs.map((e) => e.type)).toContain('closing');
   });
 });
