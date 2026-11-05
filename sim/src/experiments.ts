@@ -304,6 +304,19 @@ if (which === 'final') {
   runWorld('$60 level-up (default)', games);
   runWorld('$30 level-up', games, { money: { investBase: 30 } });
   runWorld('$15 level-up', games, { money: { investBase: 15 } });
+} else if (which === 'grace') {
+  // Lower starting levels and a grace period, on the recommended 2-cycle window.
+  const base = (startLevel: number, openLevel: number, graceSec: number): GameConfigOverrides => ({
+    cycles: { window: 2, startLevel, graceSec },
+    openings: { openLevel },
+  });
+  worldHeader(games);
+  runWorld('Start 3, open 2, no grace (recommended)', games, base(3, 2, 0));
+  runWorld('Start 3, open 2, 2-min grace', games, base(3, 2, 120));
+  runWorld('Start 2, open 2, no grace', games, base(2, 2, 0));
+  runWorld('Start 2, open 2, 2-min grace', games, base(2, 2, 120));
+  runWorld('Start 2, open 1, 2-min grace', games, base(2, 1, 120));
+  runWorld('Start 1, open 1, 2-min grace', games, base(1, 1, 120));
 } else {
-  console.log('usage: npm run experiments -- final|income|shortlist|scale|map|split|sar|depots|speculator|world|bays|invest [games]');
+  console.log('usage: npm run experiments -- final|income|shortlist|scale|map|split|sar|depots|speculator|world|bays|invest|grace [games]');
 }
