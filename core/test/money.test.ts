@@ -108,17 +108,18 @@ describe('deliveries and dividends', () => {
 });
 
 describe('location investment', () => {
-  it('costs $60, then 1.5x per level', () => {
+  it('costs $60 from the start level, then 1.5x per level, and less for a shrunken location', () => {
+    expect(investCost(DEFAULT_MONEY, 3, 3)).toBe(60);
+    expect(investCost(DEFAULT_MONEY, 4, 3)).toBe(90);
+    expect(investCost(DEFAULT_MONEY, 1, 3)).toBe(27);
     expect(investCost(DEFAULT_MONEY, 1)).toBe(60);
-    expect(investCost(DEFAULT_MONEY, 2)).toBe(90);
-    expect(investCost(DEFAULT_MONEY, 3)).toBe(135);
   });
 
   it('any player can raise a location from their own cash', () => {
     const { g, producer } = setup();
     g.act(3, { type: 'invest', location: producer.id });
     g.step();
-    expect(g.location(producer.id)!.level).toBe(2);
+    expect(g.location(producer.id)!.level).toBe(g.cfg.cycles.startLevel + 1);
     expect(g.players[3].cash).toBe(g.cfg.startingCash - 60);
     expect(of(g.drainEvents(0), 'invested')).toHaveLength(1);
   });
@@ -129,7 +130,7 @@ describe('location investment', () => {
     g.act(0, { type: 'invest', location: producer.id }); // $90: too much
     g.act(1, { type: 'invest', location: home.id });
     g.step();
-    expect(g.location(producer.id)!.level).toBe(2);
+    expect(g.location(producer.id)!.level).toBe(g.cfg.cycles.startLevel + 1);
     expect(of(g.drainEvents(0), 'rejected')).toHaveLength(1);
     expect(of(g.drainEvents(1), 'rejected')).toHaveLength(1);
   });

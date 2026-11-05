@@ -75,8 +75,9 @@ if (cmd === 'town') {
     for (const e of g.drainEvents(0)) if (e.type === 'delivered') delivered[e.company]++;
   }
   const ms = performance.now() - t0;
-  const grown = g.locations.filter((l) => l.growth > 0).length;
-  const shrunk = g.locations.filter((l) => l.growth < 0).length;
+  const start = g.cfg.cycles.startLevel;
+  const grown = g.locations.filter((l) => l.level > start).length;
+  const shrunk = g.locations.filter((l) => l.level < start).length;
   console.log(`seed ${seed}, ${perCompany} trucks per company, 15 minutes (${ms.toFixed(0)} ms):`);
   delivered.slice(0, g.cfg.players).forEach((n, c) =>
     console.log(

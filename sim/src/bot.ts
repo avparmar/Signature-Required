@@ -70,8 +70,9 @@ function deliveriesPerTruckMin(cfg: GameConfig): number {
   return 1.0 * (cfg.trucks.speed / 0.25);
 }
 function trucksPerRoute(cfg: GameConfig): number {
-  const demand = (cfg.cycles.demandBase[0] + cfg.cycles.demandBase[1]) / 2;
-  const supply = cfg.cycles.produceBase;
+  const c = cfg.cycles;
+  const demand = ((c.demandPerLevel[0] + c.demandPerLevel[1]) / 2) * c.startLevel;
+  const supply = c.producePerLevel * c.startLevel;
   const palletsPerMin = (Math.min(demand, supply) * 60) / ((cfg.cycles.cycleSec[0] + cfg.cycles.cycleSec[1]) / 2);
   return Math.max(1, Math.round(palletsPerMin / deliveriesPerTruckMin(cfg) * 0.75));
 }
@@ -105,7 +106,10 @@ export class Bot {
   }
 
   decide(obs: Observation, events: GameEvent[]): Action[] {
-    for (const e of events) if (e.type === 'delivered') this.recent.push({ t: obs.t, company: e.company, price: e.price });
+    for (const e of events) {
+      if (e.type === 'delivered') this.recent.push({ t: obs.t, company: e.company, price: e.price });
+      if (e.type === 'opened' || e.type === 'closed') this.routeCache.clear(); // the map changed
+    }
     this.recent = this.recent.filter((r) => r.t > obs.t - 180);
     const out: Action[] = [];
     const bid = this.bid(obs);
@@ -241,7 +245,7 @@ export class Bot {
     return result;
   }
 
-  /** Routes only depend on which depots a company has, so they're cached by depot set. */
+  /** Routes depend on a company's depots and the live map; cached by depot set, cleared on openings/closures. */
   private routeCache = new Map<string, Route[]>();
 
   private computeRoutes(depots: Location[]): Route[] {
@@ -359,7 +363,7 @@ export class Bot {
     const target = [...counts].filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1])[0];
     if (!target) return null;
     const l = obs.locations.find((x) => x.id === target[0])!;
-    const cost = investCost(this.cfg.money, l.level);
+    const cost = investCost(this.cfg.money, l.level, this.cfg.cycles.startLevel);
     if (available - cost < this.personality.investReserve) return null;
     this.lastInvest = obs.t;
     return { type: 'invest', location: l.id };

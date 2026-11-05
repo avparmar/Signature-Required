@@ -5,7 +5,8 @@
 import { buildGraph, dist, distancesFrom, isConnected, type RoadGraph, type Vec } from './graph.js';
 import { Rng } from './rng.js';
 
-export type LocationKind = 'producer' | 'consumer' | 'depot';
+/** `lot` is an empty lot: a place where a producer or consumer may open during the game. */
+export type LocationKind = 'producer' | 'consumer' | 'depot' | 'lot';
 
 export interface Location {
   id: number;
@@ -39,6 +40,8 @@ export interface TownConfig {
   /** Number of delivery companies (N players + 1). Each gets a starting depot. */
   companies: number;
   extraDepotSites: [number, number];
+  /** Empty lots where locations can open during the game. */
+  emptyLots: [number, number];
   /** Minimum straight-line distance between any two locations, in blocks. */
   minSpacing: number;
   /** Drive distance (blocks) that counts as "near" a starting depot for the fairness check. */
@@ -60,6 +63,7 @@ export const DEFAULT_TOWN: TownConfig = {
   bays: 2,
   companies: 5,
   extraDepotSites: [18, 27],
+  emptyLots: [20, 30],
   minSpacing: 1.2,
   fairRadius: 6,
   fairMinRatio: 0.6,
@@ -182,6 +186,8 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
   });
   const nd = rng.int(...cfg.extraDepotSites);
   for (let k = 0; k < nd; k++) place({ kind: 'depot', good: null, level: 1, bays: 0, startCompany: null });
+  const nl = rng.int(...cfg.emptyLots);
+  for (let k = 0; k < nl; k++) place({ kind: 'lot', good: null, level: 0, bays: cfg.bays, startCompany: null });
 
   // Split each used street at its midpoint with a lot node.
   const allNodes = [...nodes];
@@ -208,6 +214,28 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
   return { cfg, graph, locations: locs, fairness, attempts: attempt, fair };
 }
 
+/**
+ * Open a producer or consumer on an empty lot (mutates the town). Returns the updated location.
+ */
+export function openOnLot(town: Town, lotId: number, kind: 'producer' | 'consumer', good: number): Location {
+  const l = town.locations[lotId];
+  if (!l || l.kind !== 'lot') throw new Error(`location ${lotId} is not an empty lot`);
+  l.kind = kind;
+  l.good = good;
+  l.level = 1;
+  return l;
+}
+
+/** Turn a closed producer or consumer back into an empty lot (mutates the town). */
+export function clearToLot(town: Town, id: number): Location {
+  const l = town.locations[id];
+  if (!l || (l.kind !== 'producer' && l.kind !== 'consumer')) throw new Error(`location ${id} is not a producer or consumer`);
+  l.kind = 'lot';
+  l.good = null;
+  l.level = 0;
+  return l;
+}
+
 /** How good each starting depot's neighbourhood is. */
 export function scoreStarts(graph: RoadGraph, locs: Location[], cfg: TownConfig): StartFairness[] {
   return locs
@@ -215,7 +243,7 @@ export function scoreStarts(graph: RoadGraph, locs: Location[], cfg: TownConfig)
     .sort((a, b) => a.startCompany! - b.startCompany!)
     .map((start) => {
       const d = distancesFrom(graph, start.node);
-      const near = locs.filter((l) => l.kind !== 'depot' && d[l.node] <= cfg.fairRadius);
+      const near = locs.filter((l) => (l.kind === 'producer' || l.kind === 'consumer') && d[l.node] <= cfg.fairRadius);
       let pairs = 0;
       cfg.goods.forEach((_, g) => {
         if (near.some((l) => l.kind === 'producer' && l.good === g) && near.some((l) => l.kind === 'consumer' && l.good === g))

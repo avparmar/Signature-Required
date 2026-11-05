@@ -133,7 +133,6 @@ if (which === 'final') {
   const scale: GameConfigOverrides = {
     trucks: { speed: 0.35 },
     depots: { truckPrice: 15, capacity: 6 },
-    cycles: { produceBase: 6, demandBase: [4, 8] },
   };
   const rich = { palletPrice: 3, premiumPrice: 4 };
   print(
@@ -153,7 +152,6 @@ if (which === 'final') {
   const scale: GameConfigOverrides = {
     trucks: { speed: 0.35 },
     depots: { truckPrice: 15, capacity: 6 },
-    cycles: { produceBase: 6, demandBase: [4, 8] },
   };
   const money = { finalBonus: 'assets' as const, finalAssetShare: 0.1 };
   const size = (n: number, p: [number, number], c: [number, number], d: [number, number]): GameConfigOverrides => ({
@@ -174,7 +172,6 @@ if (which === 'final') {
   const base: GameConfigOverrides = {
     trucks: { speed: 0.35 },
     depots: { truckPrice: 15, capacity: 6 },
-    cycles: { produceBase: 6, demandBase: [4, 8] },
     town: { blocksX: 16, blocksY: 16, producersPerGood: [4, 5], consumersPerGood: [7, 11], extraDepotSites: [18, 27] },
   };
   const bonus = { finalBonus: 'assets' as const, finalAssetShare: 0.1 };
@@ -191,7 +188,6 @@ if (which === 'final') {
   // Dividends-only (SAR-style) variations: truck and depot prices.
   const base: GameConfigOverrides = {
     trucks: { speed: 0.35 },
-    cycles: { produceBase: 6, demandBase: [4, 8] },
     town: { blocksX: 16, blocksY: 16, producersPerGood: [4, 5], consumersPerGood: [7, 11], extraDepotSites: [18, 27] },
   };
   const sar = { finalBonus: 'assets' as const, finalAssetShare: 0.1, deliveryToTreasury: 0, deliveryToPot: 1 };
@@ -212,7 +208,6 @@ if (which === 'final') {
   const base = (capacity: number, openingBid: number): GameConfigOverrides => ({
     trucks: { speed: 0.35 },
     depots: { truckPrice: 15, capacity },
-    cycles: { produceBase: 6, demandBase: [4, 8] },
     town: { blocksX: 16, blocksY: 16, producersPerGood: [4, 5], consumersPerGood: [7, 11], extraDepotSites: [18, 27] },
     auctions: { openingBid },
   });
@@ -237,7 +232,6 @@ if (which === 'final') {
   const cfg = (openingBid: number): GameConfigOverrides => ({
     trucks: { speed: 0.35 },
     depots: { truckPrice: 15, capacity: 3 },
-    cycles: { produceBase: 6, demandBase: [4, 8] },
     town: { blocksX: 16, blocksY: 16, producersPerGood: [4, 5], consumersPerGood: [7, 11], extraDepotSites: [18, 27] },
     auctions: { openingBid },
     money: { finalBonus: 'assets', finalAssetShare: 0.1 },

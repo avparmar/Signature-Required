@@ -3,7 +3,7 @@ import type { Town } from './town.js';
 /**
  * Text picture of a town, for eyeballing generated maps in a terminal.
  * Producers are the good's initial in capitals (M = milk producer), consumers in lower case
- * (m = milk consumer), # = empty depot site, digits = each company's starting depot.
+ * (m = milk consumer), # = empty depot site, . = empty lot, digits = each company's starting depot.
  */
 export function renderTown(town: Town): string {
   const SX = 4;
@@ -36,9 +36,9 @@ export function renderTown(town: Town): string {
   }
   for (const n of nodes) if (Number.isInteger(n.x) && Number.isInteger(n.y)) put(n.x, n.y, '+');
   for (const l of town.locations) {
-    let ch = '#';
+    let ch = l.kind === 'lot' ? '.' : '#';
     if (l.startCompany !== null) ch = String(l.startCompany);
-    else if (l.kind !== 'depot') {
+    else if (l.kind === 'producer' || l.kind === 'consumer') {
       const initial = town.cfg.goods[l.good!][0];
       ch = l.kind === 'producer' ? initial.toUpperCase() : initial.toLowerCase();
     }

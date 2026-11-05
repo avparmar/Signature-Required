@@ -270,6 +270,29 @@ export class TruckSystem {
     } else this.departForStop(truck, now, true);
   }
 
+  /**
+   * A producer or consumer closed: drop it from every truck's orders. Trucks queued there, or
+   * driving there, re-plan (and go idle if nothing useful is left).
+   */
+  locationClosed(location: number, now: number) {
+    this.queues.delete(location);
+    for (const truck of this.trucks) {
+      const had = truck.orders.length;
+      truck.orders = truck.orders.filter((s) => s.location !== location);
+      if (truck.pendingOrders) truck.pendingOrders = truck.pendingOrders.filter((s) => s.location !== location);
+      const affected = truck.at === location || (truck.state === 'driving' && truck.orders.length !== had);
+      if (truck.at === location) truck.at = null;
+      if (truck.orders.length !== had || affected) {
+        if (truck.state === 'servicing' && truck.at !== null) continue; // finishing a pallet elsewhere
+        truck.orderIndex = Math.min(truck.orderIndex, Math.max(0, truck.orders.length - 1));
+        truck.state = 'driving';
+        truck.route = [];
+        truck.progress = 0;
+        this.departForStop(truck, now, false);
+      }
+    }
+  }
+
   /** Where a truck is right now, for drawing. */
   position(truck: Truck): { x: number; y: number } {
     const a = this.graph.nodes[truck.node];
