@@ -10,5 +10,5 @@
     "types": ["node"],
     "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
-  "include": ["core/src", "core/test", "sim/src", "client/src", "client/vite.config.ts"]
+  "include": ["core/src", "core/test", "sim/src", "sim/test", "client/src", "client/vite.config.ts"]
 }

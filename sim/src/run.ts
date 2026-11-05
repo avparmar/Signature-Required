@@ -4,7 +4,9 @@
  *   npm run sim -- towns [count]         fairness stats over many seeds
  *   npm run sim -- game [seed]           run one (empty, for now) 15-minute game headless
  *   npm run sim -- trucks [seed] [n]     each company runs n trucks on its nearest route (demo)
+ *   npm run sim -- bots [games] [seed]   full games with 4 bots, summarised
  */
+import { runBatch } from './runner.js';
 import { distancesFrom, generateTown, makeTownConfig, newGame, renderTown } from '@sr/core';
 
 const [cmd = 'town', arg] = process.argv.slice(2);
@@ -83,6 +85,12 @@ if (cmd === 'town') {
     ),
   );
   console.log(`  locations grown: ${grown}, shrunk: ${shrunk}, unchanged: ${g.locations.length - grown - shrunk}`);
+} else if (cmd === 'bots') {
+  const games = Number(arg ?? 20);
+  const seed = Number(process.argv[4] ?? 1);
+  const t0 = performance.now();
+  runBatch('4 balanced bots, default rules', games, {}, [], seed);
+  console.log(`(${((performance.now() - t0) / games).toFixed(0)} ms per game)`);
 } else {
-  console.log('usage: npm run sim -- town [seed] | towns [count] | game [seed] | trucks [seed] [n]');
+  console.log('usage: npm run sim -- town [seed] | towns [count] | game [seed] | trucks [seed] [n] | bots [games] [seed]');
 }
