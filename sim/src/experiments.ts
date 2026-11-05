@@ -317,41 +317,57 @@ if (which === 'final') {
   runWorld('Start 2, open 2, 2-min grace', games, base(2, 2, 120));
   runWorld('Start 2, open 1, 2-min grace', games, base(2, 1, 120));
   runWorld('Start 1, open 1, 2-min grace', games, base(1, 1, 120));
-} else if (which === 'fairness') {
+} else if (which === 'fairness' || which === 'rivers') {
   // Looser fairness: how unequal do starts get, and what does that do to auctions and returns?
-  console.log(`\nfairness experiment (${games} games per variant)\n`);
-  console.log('| Fairness (weakest start ≥ x × strongest) | Start score: weakest ÷ strongest | Opening price: dearest / cheapest company | Companies opening at $0 | Best / worst paid per share | Trucks per co. (best start / worst start) | Shares sold |');
-  console.log('|---|---|---|---|---|---|---|');
-  for (const [label, ratio] of [['60% (today)', 0.6], ['30%', 0.3], ['Off', 0]] as const) {
-    const ratios: number[] = [];
-    const dear: number[] = [];
-    const cheap: number[] = [];
-    const zero: number[] = [];
-    const best: number[] = [];
-    const worst: number[] = [];
-    const bestTrucks: number[] = [];
-    const worstTrucks: number[] = [];
-    const sold: number[] = [];
-    for (let i = 0; i < games; i++) {
-      const cfg = makeGameConfig({ seed: 1 + i, town: { fairMinRatio: ratio } });
-      const town = generateTown(cfg.town);
-      const scores = town.fairness.map((f) => f.score);
-      ratios.push(Math.min(...scores) / Math.max(...scores));
-      const r = runGame({ seed: 1 + i, town: { fairMinRatio: ratio } });
-      const opening = r.auctions.filter((a) => a.opening);
-      const prices = r.companies.map((_, c) => opening.find((a) => a.company === c)?.amount ?? 0);
-      dear.push(Math.max(...prices));
-      cheap.push(Math.min(...prices));
-      zero.push(prices.filter((p) => p === 0).length);
-      best.push(Math.max(...r.companies.map((c) => c.paidPerShare)));
-      worst.push(Math.min(...r.companies.filter((c) => c.sharesSold > 0).map((c) => c.paidPerShare)));
-      const order = town.fairness.slice().sort((a, b) => b.score - a.score);
-      bestTrucks.push(r.companies[order[0].company].trucks);
-      worstTrucks.push(r.companies[order[order.length - 1].company].trucks);
-      sold.push(r.companies.reduce((s, c) => s + c.sharesSold, 0));
+  // "rivers" runs the same comparison with and without a river through the town.
+  // An optional third argument picks the river counts, e.g. `rivers 24 0,1,2`.
+  const riverCounts = which === 'rivers' ? (process.argv[4] ?? '0,1,2').split(',').map(Number) : [0];
+  console.log(`\n${which} experiment (${games} games per variant)\n`);
+  console.log('| Town | Fairness (weakest start ≥ x × strongest) | Start score: weakest ÷ strongest | Opening price: dearest / cheapest company | Companies opening at $0 | Best / worst paid per share | Trucks per co. (best start / worst start) | Shares sold | Contested locations | Handovers per location-minute | Depot→producer distance (blocks) | Closures |');
+  console.log('|---|---|---|---|---|---|---|---|---|---|---|---|');
+  for (const rivers of riverCounts)
+    for (const [label, ratio] of [['60% (today)', 0.6], ['30%', 0.3], ['Off', 0]] as const) {
+      const ratios: number[] = [];
+      const dear: number[] = [];
+      const cheap: number[] = [];
+      const zero: number[] = [];
+      const best: number[] = [];
+      const worst: number[] = [];
+      const bestTrucks: number[] = [];
+      const worstTrucks: number[] = [];
+      const sold: number[] = [];
+      const contested: number[] = [];
+      const handover: number[] = [];
+      const reach: number[] = [];
+      const closed: number[] = [];
+      for (let i = 0; i < games; i++) {
+        const town = { fairMinRatio: ratio, rivers };
+        const cfg = makeGameConfig({ seed: 1 + i, town });
+        const t = generateTown(cfg.town);
+        const scores = t.fairness.map((f) => f.score);
+        ratios.push(Math.min(...scores) / Math.max(...scores));
+        const r = runGame({ seed: 1 + i, town });
+        const opening = r.auctions.filter((a) => a.opening);
+        const prices = r.companies.map((_, c) => opening.find((a) => a.company === c)?.amount ?? 0);
+        dear.push(Math.max(...prices));
+        cheap.push(Math.min(...prices));
+        zero.push(prices.filter((p) => p === 0).length);
+        best.push(Math.max(...r.companies.map((c) => c.paidPerShare)));
+        worst.push(Math.min(...r.companies.filter((c) => c.sharesSold > 0).map((c) => c.paidPerShare)));
+        const order = t.fairness.slice().sort((a, b) => b.score - a.score);
+        bestTrucks.push(r.companies[order[0].company].trucks);
+        worstTrucks.push(r.companies[order[order.length - 1].company].trucks);
+        sold.push(r.companies.reduce((s, c) => s + c.sharesSold, 0));
+        contested.push(r.territory.contestedShare);
+        handover.push(r.territory.handoverRate);
+        reach.push(r.territory.avgReach);
+        closed.push(r.closed);
+      }
+      const pct = (x: number) => `${(100 * x).toFixed(0)}%`;
+      console.log(
+        `| ${rivers === 0 ? 'No river' : rivers === 1 ? '1 river' : `${rivers} rivers`} | ${label} | ${avg(ratios).toFixed(2)} | $${avg(dear).toFixed(0)} / $${avg(cheap).toFixed(0)} | ${avg(zero).toFixed(1)} | $${avg(best).toFixed(0)} / $${avg(worst).toFixed(0)} | ${avg(bestTrucks).toFixed(1)} / ${avg(worstTrucks).toFixed(1)} | ${avg(sold).toFixed(1)} | ${pct(avg(contested))} | ${(100 * avg(handover)).toFixed(1)}% | ${avg(reach).toFixed(1)} | ${avg(closed).toFixed(0)} |`,
+      );
     }
-    console.log(`| ${label} | ${avg(ratios).toFixed(2)} | $${avg(dear).toFixed(0)} / $${avg(cheap).toFixed(0)} | ${avg(zero).toFixed(1)} | $${avg(best).toFixed(0)} / $${avg(worst).toFixed(0)} | ${avg(bestTrucks).toFixed(1)} / ${avg(worstTrucks).toFixed(1)} | ${avg(sold).toFixed(1)} |`);
-  }
 } else {
-  console.log('usage: npm run experiments -- final|income|shortlist|scale|map|split|sar|depots|speculator|world|bays|invest|grace|fairness [games]');
+  console.log('usage: npm run experiments -- final|income|shortlist|scale|map|split|sar|depots|speculator|world|bays|invest|grace|fairness|rivers [games]');
 }

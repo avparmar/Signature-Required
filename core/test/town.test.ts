@@ -86,3 +86,98 @@ describe('distancesFrom', () => {
     for (const n of g.nodes) expect(d[n.id]).toBeGreaterThanOrEqual(Math.hypot(n.x - g.nodes[0].x, n.y - g.nodes[0].y) - 1e-9);
   });
 });
+
+describe('rivers', () => {
+  it('are off by default', () => {
+    const t = town(3);
+    expect(t.river).toEqual([]);
+    expect(t.bridges).toEqual([]);
+  });
+
+  it(
+    'cut every street across the water except the bridges, and the town stays connected',
+    () => {
+      for (const [seed, rivers] of [[1, 1], [2, 1], [3, 1], [4, 1], [5, 2], [6, 2], [7, 2]]) {
+        const t = town(seed, { rivers });
+        const W = t.cfg.blocksX;
+        expect(t.river.length).toBeGreaterThanOrEqual(t.cfg.blocksY);
+        expect(t.bridges.length).toBeGreaterThanOrEqual(rivers * t.cfg.bridgesPerRiver[0] - (rivers - 1));
+        expect(t.bridges.length).toBeLessThanOrEqual(rivers * t.cfg.bridgesPerRiver[1]);
+        const wet = new Set(t.river.map((b) => `${b.i},${b.j}`));
+        const key = (a: number, b: number) => `${Math.min(a, b)}-${Math.max(a, b)}`;
+        const bridges = new Set(t.bridges.map(([a, b]) => key(a, b)));
+        const { nodes, edges } = t.graph;
+        let crossings = 0;
+        for (const e of edges) {
+          const a = nodes[e.a];
+          const b = nodes[e.b];
+          const water =
+            a.y === b.y && Number.isInteger(a.y)
+              ? wet.has(`${Math.floor(Math.min(a.x, b.x))},${a.y - 1}`) && wet.has(`${Math.floor(Math.min(a.x, b.x))},${a.y}`)
+              : a.x === b.x && Number.isInteger(a.x)
+                ? wet.has(`${a.x - 1},${Math.floor(Math.min(a.y, b.y))}`) && wet.has(`${a.x},${Math.floor(Math.min(a.y, b.y))}`)
+                : wet.has(`${Math.floor(Math.min(a.x, b.x))},${Math.floor(Math.min(a.y, b.y))}`); // diagonal inside a block
+          if (!water) continue;
+          crossings++;
+          // Only an unsplit bridge street may cross water.
+          expect(bridges.has(key(e.a, e.b))).toBe(true);
+          expect(e.a < (W + 1) * (t.cfg.blocksY + 1) && e.b < (W + 1) * (t.cfg.blocksY + 1)).toBe(true);
+        }
+        expect(crossings).toBe(t.bridges.length);
+        expect(isConnected(nodes.length, edges.map((e) => [e.a, e.b]))).toBe(true);
+        expect(renderTown(t)).toContain('~');
+      }
+    },
+    SLOW,
+  );
+});
+
+describe('suburb layout', () => {
+  it(
+    'keeps the town connected, with dead ends, and works with rivers',
+    () => {
+      for (const [seed, rivers] of [[1, 0], [2, 1], [3, 2]]) {
+        const t = town(seed, { layout: 'suburb', rivers });
+        const { nodes, edges } = t.graph;
+        expect(isConnected(nodes.length, edges.map((e) => [e.a, e.b]))).toBe(true);
+        const degree = new Array(nodes.length).fill(0);
+        for (const e of edges) {
+          degree[e.a]++;
+          degree[e.b]++;
+        }
+        // Dead ends at grid intersections (lot nodes always have degree 2).
+        const deadEnds = degree.filter((d, n) => d === 1 && Number.isInteger(nodes[n].x) && Number.isInteger(nodes[n].y)).length;
+        expect(deadEnds).toBeGreaterThan(10);
+      }
+    },
+    SLOW,
+  );
+});
+
+describe('snowflake layout', () => {
+  it(
+    'is connected, has no ring roads, and keeps every street on the grid or a diagonal',
+    () => {
+      for (const seed of [1, 2, 3]) {
+        const t = town(seed, { layout: 'snowflake' });
+        const { nodes, edges } = t.graph;
+        expect(isConnected(nodes.length, edges.map((e) => [e.a, e.b]))).toBe(true);
+        for (const e of edges) {
+          const dx = Math.abs(nodes[e.a].x - nodes[e.b].x);
+          const dy = Math.abs(nodes[e.a].y - nodes[e.b].y);
+          expect(dx === 0 || dy === 0 || Math.abs(dx - dy) < 1e-9).toBe(true);
+        }
+        // Outside the city, neighbourhoods only meet via the avenues: removing the city cuts the
+        // outskirts into several separate pieces.
+        const c = t.cfg.blocksX / 2;
+        const outside = (n: number) => Math.hypot(nodes[n].x - c, nodes[n].y - c) > t.cfg.cityRadius + 0.5;
+        const ids = new Map<number, number>();
+        nodes.forEach((_, n) => outside(n) && ids.set(n, ids.size));
+        const outer = edges.filter((e) => outside(e.a) && outside(e.b)).map((e) => [ids.get(e.a)!, ids.get(e.b)!] as [number, number]);
+        expect(isConnected(ids.size, outer)).toBe(false);
+        expect(t.locations.length).toBeGreaterThan(40);
+      }
+    },
+    SLOW,
+  );
+});
