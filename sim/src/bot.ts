@@ -321,12 +321,12 @@ export class Bot {
     // Depots full: buy the cheapest free site if affordable (with a truck to put in it). With
     // subsidy pricing that's the site in the area the company serves most; ties go to the nearest.
     if (spare === undefined && worthIt) {
-      const ownNodes = myDepots.map((s) => this.town.locations[s].node);
       let cheapest: { site: number; price: number; dist: number } | null = null;
       for (const [siteId, prices] of Object.entries(obs.depotPrices)) {
         const l = this.town.locations[Number(siteId)];
         const price = prices[company];
-        const dist = distanceToNetwork(this.town.graph, l.node, ownNodes);
+        // Straight-line distance to the nearest own depot: a cheap tiebreak.
+        const dist = Math.min(...myDepots.map((s) => Math.hypot(this.town.locations[s].x - l.x, this.town.locations[s].y - l.y)));
         if (!cheapest || price < cheapest.price || (price === cheapest.price && dist < cheapest.dist)) cheapest = { site: l.id, price, dist };
       }
       if (cheapest && c.treasury >= cheapest.price + cfg.truckPrice) {

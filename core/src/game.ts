@@ -5,7 +5,7 @@
  */
 import { makeGameConfig, type GameConfig, type GameConfigOverrides } from './config.js';
 import { minimumBid, type Auction, type AuctionEvent, type AuctionRequest } from './auctions.js';
-import { depotPrice, distanceToNetwork, subsidisedPrice } from './depots.js';
+import { depotPrice, subsidisedPrice } from './depots.js';
 import { assignPrices, investCost, payPerShare } from './money.js';
 import { chooseOpening } from './openings.js';
 import { initLocations, newLocationState, raiseLevel, updateCycles, type CycleEvent, type LocationState } from './economy.js';
@@ -621,9 +621,11 @@ export class Game {
   /** What a depot site would cost this company now. */
   depotPriceFor(company: number, site: number): number {
     if (this.cfg.depots.pricing === 'subsidy') return subsidisedPrice(this.cfg.depots, this.districtShare(company, site));
+    // Distance pricing, using the site's cached distances (roads are undirected).
+    const d = this.siteDistances.get(site) ?? distancesFrom(this.town.graph, this.town.locations[site].node);
+    this.siteDistances.set(site, d);
     const own = this.depotsOf(company).map((s) => this.town.locations[s].node);
-    const d = distanceToNetwork(this.town.graph, this.town.locations[site].node, own);
-    return depotPrice(this.cfg.depots, d);
+    return depotPrice(this.cfg.depots, own.length ? Math.min(...own.map((n) => d[n])) : Infinity);
   }
 
   /** Dynamic state of a producer or consumer, by its town location id. */
