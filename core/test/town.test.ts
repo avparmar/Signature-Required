@@ -86,3 +86,48 @@ describe('distancesFrom', () => {
     for (const n of g.nodes) expect(d[n.id]).toBeGreaterThanOrEqual(Math.hypot(n.x - g.nodes[0].x, n.y - g.nodes[0].y) - 1e-9);
   });
 });
+
+describe('rivers', () => {
+  it('are off by default', () => {
+    const t = town(3);
+    expect(t.river).toEqual([]);
+    expect(t.bridges).toEqual([]);
+  });
+
+  it(
+    'cut every street across the water except the bridges, and the town stays connected',
+    () => {
+      for (const seed of [1, 2, 3, 4, 5, 6]) {
+        const t = town(seed, { rivers: 1 });
+        const W = t.cfg.blocksX;
+        expect(t.river.length).toBeGreaterThanOrEqual(t.cfg.blocksY);
+        expect(t.bridges.length).toBeGreaterThanOrEqual(t.cfg.bridgesPerRiver[0]);
+        expect(t.bridges.length).toBeLessThanOrEqual(t.cfg.bridgesPerRiver[1]);
+        const wet = new Set(t.river.map((b) => `${b.i},${b.j}`));
+        const key = (a: number, b: number) => `${Math.min(a, b)}-${Math.max(a, b)}`;
+        const bridges = new Set(t.bridges.map(([a, b]) => key(a, b)));
+        const { nodes, edges } = t.graph;
+        let crossings = 0;
+        for (const e of edges) {
+          const a = nodes[e.a];
+          const b = nodes[e.b];
+          const water =
+            a.y === b.y && Number.isInteger(a.y)
+              ? wet.has(`${Math.floor(Math.min(a.x, b.x))},${a.y - 1}`) && wet.has(`${Math.floor(Math.min(a.x, b.x))},${a.y}`)
+              : a.x === b.x && Number.isInteger(a.x)
+                ? wet.has(`${a.x - 1},${Math.floor(Math.min(a.y, b.y))}`) && wet.has(`${a.x},${Math.floor(Math.min(a.y, b.y))}`)
+                : wet.has(`${Math.floor(Math.min(a.x, b.x))},${Math.floor(Math.min(a.y, b.y))}`); // diagonal inside a block
+          if (!water) continue;
+          crossings++;
+          // Only an unsplit bridge street may cross water.
+          expect(bridges.has(key(e.a, e.b))).toBe(true);
+          expect(e.a < (W + 1) * (t.cfg.blocksY + 1) && e.b < (W + 1) * (t.cfg.blocksY + 1)).toBe(true);
+        }
+        expect(crossings).toBe(t.bridges.length);
+        expect(isConnected(nodes.length, edges.map((e) => [e.a, e.b]))).toBe(true);
+        expect(renderTown(t)).toContain('~');
+      }
+    },
+    SLOW,
+  );
+});

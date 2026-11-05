@@ -3,7 +3,8 @@ import type { Town } from './town.js';
 /**
  * Text picture of a town, for eyeballing generated maps in a terminal.
  * Producers are the good's initial in capitals (M = milk producer), consumers in lower case
- * (m = milk consumer), # = empty depot site, . = empty lot, digits = each company's starting depot.
+ * (m = milk consumer), # = empty depot site, . = empty lot, digits = each company's starting depot,
+ * ~ = river, = = bridge.
  */
 export function renderTown(town: Town): string {
   const SX = 4;
@@ -18,6 +19,15 @@ export function renderTown(town: Town): string {
     if (r >= 0 && r < rows && c >= 0 && c < cols) grid[r][c] = ch;
   };
 
+  // River blocks first, so streets and bridges draw over them.
+  for (const { i, j } of town.river)
+    for (let r = j * SY; r <= (j + 1) * SY; r++)
+      for (let c = i * SX; c <= (i + 1) * SX; c++) {
+        const corner = r % SY === 0 && c % SX === 0;
+        if (!corner && r < rows && c < cols) grid[r][c] = '~';
+      }
+  const bridgeKey = new Set(town.river.length ? town.bridges.map(([a, b]) => `${Math.min(a, b)}-${Math.max(a, b)}`) : []);
+
   const { nodes, edges } = town.graph;
   for (const e of edges) {
     const a = nodes[e.a];
@@ -30,7 +40,7 @@ export function renderTown(town: Town): string {
       for (let s = 1; s < rowsCrossed; s++) put(a.x + (dx * s) / rowsCrossed, a.y + (dy * s) / rowsCrossed, dx * dy > 0 ? '\\' : '/');
       continue;
     }
-    const ch = dy === 0 ? '-' : '|';
+    const ch = bridgeKey.has(`${Math.min(e.a, e.b)}-${Math.max(e.a, e.b)}`) ? '=' : dy === 0 ? '-' : '|';
     const steps = Math.max(Math.abs(dx) * SX, Math.abs(dy) * SY);
     for (let s = 1; s < steps; s++) put(a.x + (dx * s) / steps, a.y + (dy * s) / steps, ch);
   }

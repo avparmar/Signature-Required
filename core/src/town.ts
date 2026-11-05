@@ -42,6 +42,10 @@ export interface TownConfig {
   extraDepotSites: [number, number];
   /** Empty lots where locations can open during the game. */
   emptyLots: [number, number];
+  /** Rivers across the town (0 = none). Streets crossing a river are removed except for a few bridges. */
+  rivers: number;
+  /** Bridges per river. */
+  bridgesPerRiver: [number, number];
   /** Minimum straight-line distance between any two locations, in blocks. */
   minSpacing: number;
   /** Drive distance (blocks) that counts as "near" a starting depot for the fairness check. */
@@ -64,6 +68,8 @@ export const DEFAULT_TOWN: TownConfig = {
   companies: 5,
   extraDepotSites: [18, 27],
   emptyLots: [20, 30],
+  rivers: 0,
+  bridgesPerRiver: [2, 3],
   minSpacing: 1.2,
   fairRadius: 6,
   fairMinRatio: 0.6,
@@ -86,6 +92,10 @@ export interface StartFairness {
 export interface Town {
   cfg: TownConfig;
   graph: RoadGraph;
+  /** Blocks a river runs through (block i, j spans x i..i+1, y j..j+1), for drawing. */
+  river: { i: number; j: number }[];
+  /** Streets that are bridges over a river (pairs of node ids). */
+  bridges: [number, number][];
   locations: Location[];
   fairness: StartFairness[];
   /** Attempts the generator needed (1 = first try). */
@@ -125,10 +135,78 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
       if (i < W) edges.push([id(i, j), id(i + 1, j)]);
       if (j < H) edges.push([id(i, j), id(i, j + 1)]);
     }
+  // Rivers: a meandering band of blocks across the town. Streets crossing it are cut, except a
+  // few bridges, which are protected from the random removals below.
+  const riverBlocks = new Set<string>();
+  const bridges: [number, number][] = [];
+  const protectedEdges = new Set<string>();
+  const ekey = (a: number, b: number) => (a < b ? `${a}-${b}` : `${b}-${a}`);
+  for (let r = 0; r < cfg.rivers; r++) {
+    const vertical = rng.next() < 0.5;
+    const len = vertical ? H : W; // blocks along the river's course
+    const across = vertical ? W : H;
+    const block = (k: number, c: number) => (vertical ? `${c},${k}` : `${k},${c}`);
+    // Course: one step along per block, drifting at most one block sideways (and never straight
+    // back), so the river reads as one band. A sideways step floods both blocks in that column.
+    let pos = rng.int(Math.floor(across * 0.3), Math.ceil(across * 0.7) - 1);
+    let lastDrift = 0;
+    for (let k = 0; k < len; k++) {
+      riverBlocks.add(block(k, pos));
+      const roll = rng.next();
+      let drift = roll < 0.2 ? -1 : roll > 0.8 ? 1 : 0;
+      if (drift === -lastDrift || pos + drift < 2 || pos + drift > across - 3) drift = 0;
+      if (drift !== 0 && k < len - 1) {
+        pos += drift;
+        riverBlocks.add(block(k, pos));
+      }
+      if (drift !== 0) lastDrift = drift;
+    }
+  }
+  // Every street with water on both sides crosses a river. Keep a few per river as bridges,
+  // spread out along it; cut the rest.
+  const blockAt = (i: number, j: number) => i >= 0 && j >= 0 && i < W && j < H && riverBlocks.has(`${i},${j}`);
+  const crossings: { e: [number, number] }[] = [];
+  for (const e of edges) {
+    const [a, b] = e;
+    const ai = a % (W + 1), aj = Math.floor(a / (W + 1));
+    const bi = b % (W + 1), bj = Math.floor(b / (W + 1));
+    const wet =
+      aj === bj
+        ? blockAt(Math.min(ai, bi), aj - 1) && blockAt(Math.min(ai, bi), aj)
+        : blockAt(ai - 1, Math.min(aj, bj)) && blockAt(ai, Math.min(aj, bj));
+    if (wet) crossings.push({ e });
+  }
+  if (crossings.length > 0) {
+    // Order along the dominant direction of the crossings and pick evenly spaced bridges.
+    const xs = crossings.map((c) => c.e[0] % (W + 1));
+    const spreadX = Math.max(...xs) - Math.min(...xs);
+    const ys = crossings.map((c) => Math.floor(c.e[0] / (W + 1)));
+    const spreadY = Math.max(...ys) - Math.min(...ys);
+    crossings.sort((p, q) =>
+      spreadX >= spreadY ? p.e[0] % (W + 1) - q.e[0] % (W + 1) : Math.floor(p.e[0] / (W + 1)) - Math.floor(q.e[0] / (W + 1)),
+    );
+    const nb = cfg.rivers * rng.int(...cfg.bridgesPerRiver);
+    const keep = new Set<number>();
+    for (let q = 0; q < nb; q++) keep.add(Math.min(crossings.length - 1, Math.floor(((q + 0.5) / nb) * crossings.length)));
+    const cut = new Set<string>();
+    crossings.forEach(({ e: [a, b] }, idx) => {
+      if (keep.has(idx)) {
+        bridges.push([a, b]);
+        protectedEdges.add(ekey(a, b));
+      } else cut.add(ekey(a, b));
+    });
+    edges = edges.filter(([a, b]) => !cut.has(ekey(a, b)));
+  }
+  if (!isConnected(nodes.length, edges)) {
+    // A river with too few bridges can split the town; reroll this attempt.
+    return { cfg, graph: buildGraph([], []), river: [], bridges: [], locations: [], fairness: [], attempts: attempt, fair: false };
+  }
+
   const target = Math.round(edges.length * cfg.removeFrac);
   let removed = 0;
   for (const e of rng.shuffle([...edges])) {
     if (removed >= target) break;
+    if (protectedEdges.has(ekey(e[0], e[1]))) continue;
     const without = edges.filter((x) => x !== e);
     if (isConnected(nodes.length, without)) {
       edges = without;
@@ -141,11 +219,13 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
   for (let j = 0; j < H; j++)
     for (let i = 0; i < W; i++) {
       if (rng.next() >= cfg.diagonalFrac) continue;
+      if (riverBlocks.has(`${i},${j}`)) continue; // no diagonals across a river
       diagonals.push(rng.next() < 0.5 ? [id(i, j), id(i + 1, j + 1)] : [id(i + 1, j), id(i, j + 1)]);
     }
 
   // Lots sit at the middle of a straight street segment; placing one splits the segment.
-  const streets = edges.map(([a, b]) => ({ a, b, used: false }));
+  // Bridges never carry a lot, so they stay a single street end to end.
+  const streets = edges.map(([a, b]) => ({ a, b, used: false, bridge: protectedEdges.has(ekey(a, b)) }));
   const locations: Omit<Location, 'node'>[] = [];
   const lotOf: number[] = []; // location index -> street index
 
@@ -155,7 +235,7 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
     y: (nodes[s.a].y + nodes[s.b].y) / 2,
   });
   const place = (loc: Omit<Location, 'node' | 'x' | 'y' | 'id'>, near?: Vec): boolean => {
-    let candidates = streets.map((s, i) => ({ s, i })).filter(({ s }) => !s.used && free(mid(s)));
+    let candidates = streets.map((s, i) => ({ s, i })).filter(({ s }) => !s.used && !s.bridge && free(mid(s)));
     if (candidates.length === 0) return false;
     let pick;
     if (near) {
@@ -211,7 +291,11 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
   const scores = fairness.map((f) => f.score);
   const fair =
     fairness.every((f) => f.pairs >= 1) && Math.min(...scores) >= cfg.fairMinRatio * Math.max(...scores);
-  return { cfg, graph, locations: locs, fairness, attempts: attempt, fair };
+  const river = [...riverBlocks].map((k) => {
+    const [i, j] = k.split(',').map(Number);
+    return { i, j };
+  });
+  return { cfg, graph, river, bridges, locations: locs, fairness, attempts: attempt, fair };
 }
 
 /**
