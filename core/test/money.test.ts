@@ -44,7 +44,7 @@ describe('payPerShare', () => {
 });
 
 describe('deliveries and dividends', () => {
-  it('each delivery pays the treasury and the pot the same amount', () => {
+  it('each delivery pays the treasury its full price and the pot half of it', () => {
     const { g, home, producer, consumer } = setup();
     g.companies[0].shares = [0, null, null, null, null];
     g.addTruck(0);
@@ -54,8 +54,9 @@ describe('deliveries and dividends', () => {
     expect(deliveries.length).toBeGreaterThan(0);
     const price = g.location(consumer.id)!.price;
     expect(g.companies[0].treasury).toBeCloseTo(deliveries.length * price);
-    expect(g.companies[0].pot).toBeCloseTo(deliveries.length * price);
-    expect(g.observe(0).companies[0].dividendPerShare).toBeCloseTo((deliveries.length * price) / 5);
+    expect(g.companies[0].pot).toBeCloseTo(deliveries.length * price * g.cfg.money.deliveryToPot);
+    expect(g.cfg.money.deliveryToPot).toBe(0.5);
+    expect(g.observe(0).companies[0].dividendPerShare).toBeCloseTo((deliveries.length * price * 0.5) / 5);
   });
 
   it('pays out every 3 minutes, per share, and resets the pot', () => {
