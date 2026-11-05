@@ -66,9 +66,12 @@ export function assignPrices(consumerIds: number[], cfg: MoneyConfig, rng: Rng):
   return prices;
 }
 
-/** Cost to raise a location from `level` to `level + 1`. Whole dollars. */
-export function investCost(cfg: MoneyConfig, level: number): number {
-  return Math.round(cfg.investBase * Math.pow(cfg.investGrowth, level - 1));
+/**
+ * Cost to raise a location from `level` to `level + 1`. The base price buys the first level above
+ * the start level; levels below that (a shrunken location) are cheaper. Whole dollars.
+ */
+export function investCost(cfg: MoneyConfig, level: number, startLevel = 1): number {
+  return Math.round(cfg.investBase * Math.pow(cfg.investGrowth, level - startLevel));
 }
 
 /**

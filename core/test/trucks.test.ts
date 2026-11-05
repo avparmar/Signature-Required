@@ -108,7 +108,7 @@ describe('trucks', () => {
   });
 
   it('queues at a building: two bays, first come first served, waiting trucks keep their place', () => {
-    const { g, producer } = setup({ cycles: { produceBase: 1, cycleSec: [60, 60] } });
+    const { g, producer } = setup({ cycles: { producePerLevel: 1, startLevel: 1, cycleSec: [60, 60] } });
     const trucks = [g.addTruck(0), g.addTruck(0), g.addTruck(0), g.addTruck(0)];
     // Stagger departures so arrival order is known.
     for (const t of trucks) {
@@ -125,7 +125,7 @@ describe('trucks', () => {
   });
 
   it('never has more trucks loading than the building has bays', () => {
-    const { g, producer } = setup({ cycles: { produceBase: 6 }, trucks: { serviceSec: 20 } });
+    const { g, producer } = setup({ trucks: { serviceSec: 20 } });
     for (let i = 0; i < 5; i++) {
       const t = g.addTruck(0);
       g.act(0, { type: 'setOrders', truck: t.id, stops: [{ location: producer.id, action: 'load' }] });
@@ -193,7 +193,7 @@ describe('trucks', () => {
       g.act(0, { type: 'setOrders', truck: t.id, stops: [{ location: producer.id, action: 'load' }, { location: consumer.id, action: 'unload' }] });
     }
     runFor(g, 600);
-    expect(g.location(producer.id)!.growth).toBeGreaterThan(g.cfg.cycles.growthRange[0]);
+    expect(g.location(producer.id)!.level).toBeGreaterThanOrEqual(g.cfg.cycles.startLevel);
   });
 
   it('stays deterministic with trucks running', () => {

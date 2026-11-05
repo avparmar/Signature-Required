@@ -7,10 +7,11 @@ import { makeGameConfig, type GameConfig, type GameConfigOverrides } from './con
 import { minimumBid, type Auction, type AuctionEvent, type AuctionRequest } from './auctions.js';
 import { depotPrice, distanceToNetwork } from './depots.js';
 import { assignPrices, investCost, payPerShare } from './money.js';
-import { initLocations, updateCycles, type CycleEvent, type LocationState } from './economy.js';
+import { chooseOpening } from './openings.js';
+import { initLocations, newLocationState, raiseLevel, updateCycles, type CycleEvent, type LocationState } from './economy.js';
 import { Rng } from './rng.js';
 import { TruckSystem, validateOrders, type Stop, type Truck, type TruckEvent } from './trucks.js';
-import { generateTown, type Town } from './town.js';
+import { clearToLot, generateTown, openOnLot, type Town } from './town.js';
 
 // ------------------------------------------------------------------ state
 
@@ -73,6 +74,7 @@ export type GameEvent =
   | { type: 'boughtTruck'; t: number; company: number; truck: number; depot: number; price: number }
   | { type: 'boughtDepot'; t: number; company: number; site: number; price: number }
   | { type: 'invested'; t: number; player: number; location: number; level: number; price: number }
+  | { type: 'opened'; t: number; location: number; kind: 'producer' | 'consumer'; good: number }
   | {
       type: 'payout';
       t: number;
@@ -141,7 +143,8 @@ export class Game {
   readonly players: Player[];
   readonly companies: Company[];
   /** Dynamic state of every producer and consumer (depot sites aren't included). */
-  readonly locations: LocationState[];
+  /** Live producers and consumers. Closed ones are removed; opened ones are added. */
+  locations: LocationState[];
   readonly trucks: TruckSystem;
   /** Which company owns each depot site (site location id -> company). */
   readonly depotOwner = new Map<number, number>();
@@ -230,7 +233,11 @@ export class Game {
     this.updateAuctions();
     if (this.phase === 'opening') return; // the town waits until the opening round is over
 
-    for (const e of updateCycles(this.locations, this.t, this.cfg.cycles, this.rng)) this.emit('all', e);
+    for (const e of updateCycles(this.locations, this.t, this.cfg.cycles, this.rng)) {
+      this.emit('all', e);
+      if (e.type === 'closed') this.removeLocation(e.location);
+    }
+    this.maybeOpen();
     this.trucks.update(this.t, this.cfg.tickSec, (id) => this.town.locations[id].bays);
     // (Issues #6–#7 add depots and money here.)
 
@@ -296,11 +303,12 @@ export class Game {
       case 'invest': {
         const l = this.locById.get(action.location);
         if (!l) return reject(`no producer or consumer ${action.location}`);
-        const price = investCost(this.cfg.money, l.level);
+        const price = investCost(this.cfg.money, l.level, this.cfg.cycles.startLevel);
         const p = this.players[player];
         if (p.cash - p.held < price) return reject(`you have $${(p.cash - p.held).toFixed(2)} to spend; this costs $${price}`);
+        if (l.level >= this.cfg.cycles.maxLevel) return reject(`${l.kind} ${l.id} is already at the top level`);
         p.cash -= price;
-        l.level++;
+        raiseLevel(l, this.cfg.cycles);
         this.emit('all', { type: 'invested', t: this.t, player, location: l.id, level: l.level, price });
         break;
       }
@@ -467,6 +475,34 @@ export class Game {
       });
       c.pot = 0;
     }
+  }
+
+  /** A closed location becomes an empty lot again; trucks heading there go idle. */
+  private removeLocation(id: number) {
+    this.locations = this.locations.filter((l) => l.id !== id);
+    this.locById.delete(id);
+    clearToLot(this.town, id);
+    this.trucks.locationClosed(id, this.t);
+  }
+
+  private nextOpeningAt = -1;
+
+  /** Open a new producer or consumer on an empty lot, about once a minute. */
+  private maybeOpen() {
+    const o = this.cfg.openings;
+    if (o.everySec <= 0) return;
+    if (this.nextOpeningAt < 0) this.nextOpeningAt = o.quietStartSec + this.rng.exp(o.everySec);
+    if (this.t < this.nextOpeningAt || this.t > this.cfg.durationSec - o.quietEndSec) return;
+    this.nextOpeningAt = this.t + this.rng.exp(o.everySec);
+    const live = this.locations.map((s) => this.town.locations[s.id]);
+    const choice = chooseOpening(this.town, live, o, this.rng);
+    if (!choice) return;
+    const loc = openOnLot(this.town, choice.lot, choice.kind, choice.good);
+    const state = newLocationState(loc, this.cfg.cycles, this.rng, this.t);
+    if (state.kind === 'consumer') state.price = this.rng.next() < this.cfg.money.premiumShare ? this.cfg.money.premiumPrice : this.cfg.money.palletPrice;
+    this.locations.push(state);
+    this.locById.set(state.id, state);
+    this.emit('all', { type: 'opened', t: this.t, location: loc.id, kind: choice.kind, good: choice.good });
   }
 
   /** Trucks based at a depot site. */

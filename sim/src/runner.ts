@@ -30,6 +30,8 @@ export interface GameResult {
   soldOutAt: number | null;
   locationsGrown: number;
   locationsShrunk: number;
+  opened: number;
+  closed: number;
 }
 
 /**
@@ -48,6 +50,8 @@ export function runGame(overrides: GameConfigOverrides, personalities: BotPerson
   const bots = Array.from({ length: cfg.players }, (_, p) => new Bot(p, g.town, cfg, table[p] ?? PERSONALITIES.balanced));
   const deliveries = new Array(cfg.companies).fill(0);
   const paidPerShare = new Array(cfg.companies).fill(0);
+  let opened = 0;
+  let closed = 0;
   const bonusPerShare = new Array(cfg.companies).fill(0);
   const auctions: GameResult['auctions'] = [];
   const payouts: number[] = [];
@@ -58,6 +62,8 @@ export function runGame(overrides: GameConfigOverrides, personalities: BotPerson
   const record = (events: ReturnType<Game['drainEvents']>, phase: string) => {
     for (const e of events) {
       if (e.type === 'delivered') deliveries[e.company]++;
+      if (e.type === 'opened') opened++;
+      if (e.type === 'closed') closed++;
       if (e.type === 'auctionWon') auctions.push({ t: e.t, company: e.company, amount: e.amount, opening: phase === 'opening' });
       if (e.type === 'payout') {
         if (e.t !== lastPayoutT) {
@@ -118,8 +124,10 @@ export function runGame(overrides: GameConfigOverrides, personalities: BotPerson
     auctions,
     payouts,
     soldOutAt,
-    locationsGrown: g.locations.filter((l) => l.growth > 0).length,
-    locationsShrunk: g.locations.filter((l) => l.growth < 0).length,
+    locationsGrown: g.locations.filter((l) => l.level > cfg.cycles.startLevel).length,
+    locationsShrunk: g.locations.filter((l) => l.level < cfg.cycles.startLevel).length,
+    opened,
+    closed,
   };
 }
 
@@ -147,6 +155,8 @@ export function runBatch(label: string, games: number, overrides: GameConfigOver
   const depots = results.flatMap((r) => r.companies.map((c) => c.depots));
   const deliveries = results.flatMap((r) => r.companies.map((c) => c.deliveries));
   console.log(`per company: ${avg(fleets).toFixed(1)} trucks, ${avg(depots).toFixed(1)} depots, ${avg(deliveries).toFixed(0)} deliveries; max fleet ${Math.max(...fleets)}`);
-  console.log(`locations grown ${avg(results.map((r) => r.locationsGrown)).toFixed(1)}, shrunk ${avg(results.map((r) => r.locationsShrunk)).toFixed(1)}`);
+  console.log(
+    `locations: ${avg(results.map((r) => r.locationsGrown)).toFixed(1)} above start level, ${avg(results.map((r) => r.locationsShrunk)).toFixed(1)} below; ${avg(results.map((r) => r.opened)).toFixed(1)} opened, ${avg(results.map((r) => r.closed)).toFixed(1)} closed per game`,
+  );
   return results;
 }

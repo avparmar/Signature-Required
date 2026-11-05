@@ -1,11 +1,15 @@
 /**
- * Producer and consumer cycles, and growth.
+ * Producer and consumer cycles, and the level ladder.
  *
  * Producers make pallets every cycle; trucks take them first come, first served.
  * Consumers are "reverse producers": every cycle they want the same good again, in varying
  * quantities, and trucks fill that demand first come, first served.
- * Locations grow or shrink with how well they're served, judged on pallets that actually
- * reach a consumer (so dumping goods can't fake it).
+ *
+ * Every location is just a level. It makes or wants a fixed amount per level. Over a window of
+ * recent cycles, a location served below half its amount drops a level and one served three
+ * quarters or more gains one. A level-1 location that would drop closes instead (after a short
+ * "closing" warning). Served pallets are those that actually reach a consumer, so dumping goods
+ * can't fake it. Location investment buys a level.
  */
 import type { Rng } from './rng.js';
 import type { Location } from './town.js';
@@ -13,34 +17,37 @@ import type { Location } from './town.js';
 export interface CycleConfig {
   /** Cycle length range in seconds; each location gets its own length and a random phase. */
   cycleSec: [number, number];
-  /** Pallets a level-1 producer makes per cycle (before growth). */
-  produceBase: number;
-  /** Pallets a level-1 consumer wants per cycle (before growth): a random amount in this range. */
-  demandBase: [number, number];
-  /** Extra pallets per cycle for each level above 1 (location investment). */
-  levelStep: number;
+  /** Pallets a producer makes per cycle, per level. */
+  producePerLevel: number;
+  /** Pallets a consumer wants per cycle, per level: a random amount in this range. */
+  demandPerLevel: [number, number];
+  /** Level new and starting locations begin at. */
+  startLevel: number;
+  /** Highest level. */
+  maxLevel: number;
   /** Unsold stock / unfilled demand carries over, up to this many cycles' worth. */
   carryCycles: number;
-  /** How many recent cycles growth looks at. */
-  growthWindow: number;
-  /** Served share at or above this over the window: grow one step. */
+  /** How many recent cycles a level change looks at. */
+  window: number;
+  /** Served share at or above this over the window: up a level. */
   growAbove: number;
-  /** Served share at or below this over the window: shrink one step. */
+  /** Served share below this over the window: down a level (or close, at level 1). */
   shrinkBelow: number;
-  /** Growth steps allowed below / above the base. Each step is ±1 pallet per cycle. */
-  growthRange: [number, number];
+  /** A closing location stays open this many more cycles, marked as closing, before it goes. */
+  closingCycles: number;
 }
 
 export const DEFAULT_CYCLES: CycleConfig = {
   cycleSec: [45, 45],
-  produceBase: 6,
-  demandBase: [4, 8],
-  levelStep: 1,
+  producePerLevel: 2,
+  demandPerLevel: [1, 3],
+  startLevel: 3,
+  maxLevel: 5,
   carryCycles: 2,
-  growthWindow: 4,
+  window: 4,
   growAbove: 0.75,
-  shrinkBelow: 0.25,
-  growthRange: [-2, 3],
+  shrinkBelow: 0.5,
+  closingCycles: 1,
 };
 
 /** Dynamic state of a producer or consumer. */
@@ -49,8 +56,6 @@ export interface LocationState {
   kind: 'producer' | 'consumer';
   good: number;
   level: number;
-  /** Growth steps from the base (negative = shrunk). */
-  growth: number;
   cycleSec: number;
   /** Game time of the next cycle. */
   nextCycleAt: number;
@@ -66,53 +71,79 @@ export interface LocationState {
   history: number[];
   /** Consumers: what they pay per pallet (set by the money rules; 0 for producers). */
   price: number;
+  /** Cycles left before this location closes, or null if it isn't closing. */
+  closingIn: number | null;
+  /** True once it has closed; closed locations are removed from the live list. */
+  closed: boolean;
 }
 
 export type CycleEvent =
-  | { type: 'grew'; t: number; location: number; growth: number }
-  | { type: 'shrank'; t: number; location: number; growth: number };
+  | { type: 'levelUp'; t: number; location: number; level: number }
+  | { type: 'levelDown'; t: number; location: number; level: number }
+  | { type: 'closing'; t: number; location: number }
+  | { type: 'closed'; t: number; location: number };
 
-/** Pallets per cycle for a location at its current level and growth (never below 1). */
-export function cycleRate(s: Pick<LocationState, 'kind' | 'level' | 'growth'>, cfg: CycleConfig, rng?: Rng): number {
-  const base = s.kind === 'producer' ? cfg.produceBase : rng ? rng.int(...cfg.demandBase) : (cfg.demandBase[0] + cfg.demandBase[1]) / 2;
-  return Math.max(1, Math.round(base + (s.level - 1) * cfg.levelStep + s.growth));
+/** Pallets per cycle for a location at its level (never below 1). */
+export function cycleRate(s: Pick<LocationState, 'kind' | 'level'>, cfg: CycleConfig, rng?: Rng): number {
+  const perLevel =
+    s.kind === 'producer'
+      ? cfg.producePerLevel
+      : rng
+        ? rng.int(...cfg.demandPerLevel)
+        : (cfg.demandPerLevel[0] + cfg.demandPerLevel[1]) / 2;
+  return Math.max(1, Math.round(perLevel * s.level));
+}
+
+/** Fresh state for a producer or consumer (a town location, or one that just opened). */
+export function newLocationState(l: Location, cfg: CycleConfig, rng: Rng, now = 0): LocationState {
+  const cycleSec = cfg.cycleSec[0] + rng.next() * (cfg.cycleSec[1] - cfg.cycleSec[0]);
+  return {
+    id: l.id,
+    kind: l.kind as 'producer' | 'consumer',
+    good: l.good!,
+    level: cfg.startLevel,
+    cycleSec,
+    // Random phase so the whole town doesn't tick at once; first cycle within one cycle length.
+    nextCycleAt: now + rng.next() * cycleSec,
+    stock: 0,
+    demand: 0,
+    cycleAmount: 0,
+    served: 0,
+    history: [],
+    price: 0,
+    closingIn: null,
+    closed: false,
+  };
 }
 
 export function initLocations(locs: Location[], cfg: CycleConfig, rng: Rng): LocationState[] {
-  return locs
-    .filter((l) => l.kind !== 'depot')
-    .map((l) => {
-      const cycleSec = cfg.cycleSec[0] + rng.next() * (cfg.cycleSec[1] - cfg.cycleSec[0]);
-      return {
-        id: l.id,
-        kind: l.kind as 'producer' | 'consumer',
-        good: l.good!,
-        level: l.level,
-        growth: 0,
-        cycleSec,
-        // Random phase so the whole town doesn't tick at once; first cycle within one cycle length.
-        nextCycleAt: rng.next() * cycleSec,
-        stock: 0,
-        demand: 0,
-        cycleAmount: 0,
-        served: 0,
-        history: [],
-        price: 0,
-      };
-    });
+  return locs.filter((l) => l.kind === 'producer' || l.kind === 'consumer').map((l) => newLocationState(l, cfg, rng));
 }
 
-/** Run every cycle that's due at time t. Returns growth events. */
+/**
+ * Run every cycle that's due at time t. Returns level and closure events. Closed locations are
+ * marked `closed` (the game removes them from its live list).
+ */
 export function updateCycles(states: LocationState[], t: number, cfg: CycleConfig, rng: Rng): CycleEvent[] {
   const events: CycleEvent[] = [];
   for (const s of states) {
-    while (t >= s.nextCycleAt - 1e-9) {
+    if (s.closed) continue;
+    while (t >= s.nextCycleAt - 1e-9 && !s.closed) {
       const at = s.nextCycleAt;
-      // Close out the cycle that just ended (skip the very first, which had nothing on offer).
-      if (s.cycleAmount > 0) {
+      if (s.closingIn !== null) {
+        s.closingIn--;
+        if (s.closingIn <= 0) {
+          s.closed = true;
+          s.stock = 0;
+          s.demand = 0;
+          events.push({ type: 'closed', t: at, location: s.id });
+          break;
+        }
+      } else if (s.cycleAmount > 0) {
+        // Close out the cycle that just ended (skip the very first, which had nothing on offer).
         s.history.push(Math.min(1, s.served / s.cycleAmount));
-        if (s.history.length > cfg.growthWindow) s.history.shift();
-        const e = applyGrowth(s, at, cfg);
+        if (s.history.length > cfg.window) s.history.shift();
+        const e = applyLevel(s, at, cfg);
         if (e) events.push(e);
       }
       const amount = cycleRate(s, cfg, rng);
@@ -127,26 +158,38 @@ export function updateCycles(states: LocationState[], t: number, cfg: CycleConfi
   return events;
 }
 
-function applyGrowth(s: LocationState, t: number, cfg: CycleConfig): CycleEvent | null {
-  if (s.history.length < cfg.growthWindow) return null;
+function applyLevel(s: LocationState, t: number, cfg: CycleConfig): CycleEvent | null {
+  if (s.history.length < cfg.window) return null;
   const avg = s.history.reduce((a, b) => a + b, 0) / s.history.length;
-  const [lo, hi] = cfg.growthRange;
-  if (avg >= cfg.growAbove && s.growth < hi) {
-    s.growth++;
+  if (avg >= cfg.growAbove && s.level < cfg.maxLevel) {
+    s.level++;
     s.history = [];
-    return { type: 'grew', t, location: s.id, growth: s.growth };
+    return { type: 'levelUp', t, location: s.id, level: s.level };
   }
-  if (avg <= cfg.shrinkBelow && s.growth > lo) {
-    s.growth--;
+  if (avg < cfg.shrinkBelow) {
     s.history = [];
-    return { type: 'shrank', t, location: s.id, growth: s.growth };
+    if (s.level > 1) {
+      s.level--;
+      return { type: 'levelDown', t, location: s.id, level: s.level };
+    }
+    s.closingIn = cfg.closingCycles;
+    return { type: 'closing', t, location: s.id };
   }
   return null;
 }
 
+/** Location investment: up a level, and a closing location is saved. */
+export function raiseLevel(s: LocationState, cfg: CycleConfig): boolean {
+  if (s.closed || s.level >= cfg.maxLevel) return false;
+  s.level++;
+  s.closingIn = null;
+  s.history = [];
+  return true;
+}
+
 /** A truck picks up one pallet. False if the producer has none. */
 export function takePallet(producer: LocationState): boolean {
-  if (producer.kind !== 'producer' || producer.stock <= 0) return false;
+  if (producer.kind !== 'producer' || producer.closed || producer.stock <= 0) return false;
   producer.stock--;
   return true;
 }
@@ -156,7 +199,7 @@ export function takePallet(producer: LocationState): boolean {
  * want it right now. Credits both the consumer and the producer it came from.
  */
 export function deliverPallet(consumer: LocationState, origin: LocationState | null): boolean {
-  if (consumer.kind !== 'consumer' || consumer.demand <= 0) return false;
+  if (consumer.kind !== 'consumer' || consumer.closed || consumer.demand <= 0) return false;
   if (origin && origin.good !== consumer.good) return false;
   consumer.demand--;
   consumer.served++;

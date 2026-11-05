@@ -4,22 +4,22 @@ import {
   Rng,
   deliverPallet,
   newGame,
+  raiseLevel,
   takePallet,
   updateCycles,
   type CycleConfig,
   type LocationState,
 } from '../src/index.js';
 
-// These tests check the arithmetic, so they pin the original numbers (3 pallets made, 3 wanted).
-const cfg: CycleConfig = { ...DEFAULT_CYCLES, produceBase: 3, demandBase: [3, 3] };
+// Fixed demand so the arithmetic is exact: 2 pallets per level, level 3 = 6 per cycle.
+const cfg: CycleConfig = { ...DEFAULT_CYCLES, demandPerLevel: [2, 2] };
 
 function loc(kind: 'producer' | 'consumer', o: Partial<LocationState> = {}): LocationState {
   return {
     id: kind === 'producer' ? 1 : 2,
     kind,
     good: 0,
-    level: 1,
-    growth: 0,
+    level: cfg.startLevel,
     cycleSec: 45,
     nextCycleAt: 0,
     stock: 0,
@@ -28,6 +28,8 @@ function loc(kind: 'producer' | 'consumer', o: Partial<LocationState> = {}): Loc
     served: 0,
     history: [],
     price: 0,
+    closingIn: null,
+    closed: false,
     ...o,
   };
 }
@@ -37,37 +39,37 @@ describe('cycles', () => {
     const p = loc('producer');
     const rng = new Rng(1);
     updateCycles([p], 0, cfg, rng);
-    expect(p.stock).toBe(3);
+    expect(p.stock).toBe(6);
     expect(p.nextCycleAt).toBe(45);
     updateCycles([p], 44.9, cfg, rng);
-    expect(p.stock).toBe(3);
-    updateCycles([p], 45, cfg, rng);
     expect(p.stock).toBe(6);
+    updateCycles([p], 45, cfg, rng);
+    expect(p.stock).toBe(12);
     updateCycles([p], 90, cfg, rng);
-    expect(p.stock).toBe(6); // capped at 2 cycles' worth
+    expect(p.stock).toBe(12); // capped at 2 cycles' worth
   });
 
   it('consumers want pallets again every cycle (reverse producers)', () => {
     const c = loc('consumer');
     const rng = new Rng(1);
     updateCycles([c], 0, cfg, rng);
-    expect(c.demand).toBe(3);
-    for (let i = 0; i < 3; i++) expect(deliverPallet(c, null)).toBe(true);
+    expect(c.demand).toBe(6);
+    for (let i = 0; i < 6; i++) expect(deliverPallet(c, null)).toBe(true);
     expect(deliverPallet(c, null)).toBe(false); // satisfied: a truck would wait for the next cycle
     updateCycles([c], 45, cfg, rng);
-    expect(c.demand).toBe(3);
+    expect(c.demand).toBe(6);
   });
 
-  it('consumer demand varies within its range', () => {
+  it('consumer demand varies within its range, scaled by level', () => {
     const rng = new Rng(5);
-    const c = loc('consumer');
+    const c = loc('consumer', { level: 1 });
     const seen = new Set<number>();
     for (let i = 0; i < 40; i++) {
       c.demand = 0;
-      updateCycles([c], i * 45, { ...DEFAULT_CYCLES, demandBase: [2, 4], growthWindow: 1000 }, rng);
+      updateCycles([c], i * 45, { ...DEFAULT_CYCLES, window: 1000 }, rng);
       seen.add(c.cycleAmount);
     }
-    expect([...seen].sort()).toEqual([2, 3, 4]);
+    expect([...seen].sort()).toEqual([1, 2, 3]);
   });
 
   it('pallets are first come, first served at producers', () => {
@@ -87,69 +89,78 @@ describe('cycles', () => {
     expect(c.served).toBe(1);
   });
 
-  it('levels add pallets per cycle', () => {
-    const p = loc('producer', { level: 3 });
+  it('each level adds pallets per cycle', () => {
+    const p = loc('producer', { level: 5 });
     updateCycles([p], 0, cfg, new Rng(1));
-    expect(p.stock).toBe(5);
+    expect(p.stock).toBe(10);
   });
 });
 
-describe('growth', () => {
+describe('the level ladder', () => {
   /** Run n cycles, serving `share` of each cycle's amount. */
-  function run(s: LocationState, n: number, share: number) {
+  function run(s: LocationState, n: number, share: number, from = 0) {
     const rng = new Rng(2);
-    const p = s.kind === 'producer' ? s : null;
-    for (let i = 0; i <= n; i++) {
+    for (let i = from; i <= from + n; i++) {
       updateCycles([s], i * 45, cfg, rng);
+      if (s.closed) return;
       const serve = Math.round(s.cycleAmount * share);
       for (let k = 0; k < serve; k++) {
-        if (p) {
-          if (takePallet(p)) p.served++;
+        if (s.kind === 'producer') {
+          if (takePallet(s)) s.served++;
         } else deliverPallet(s, null);
       }
     }
   }
 
-  it('well-served producers grow', () => {
+  it('well-served locations go up a level, to a cap of 5', () => {
     const p = loc('producer');
     run(p, 4, 1);
-    expect(p.growth).toBe(1);
-    expect(p.cycleAmount).toBe(4); // the cycle that just started already uses the new rate
-    run(p, 8, 1);
-    expect(p.growth).toBeGreaterThanOrEqual(2);
+    expect(p.level).toBe(4);
+    expect(p.cycleAmount).toBe(8); // the cycle that just started uses the new level
+    run(p, 40, 1, 5);
+    expect(p.level).toBe(5);
   });
 
-  it('neglected locations shrink, but never below one pallet per cycle', () => {
+  it('locations served under half go down a level', () => {
     const c = loc('consumer');
-    run(c, 40, 0);
-    expect(c.growth).toBe(cfg.growthRange[0]);
-    updateCycles([c], 41 * 45, cfg, new Rng(3));
-    expect(c.cycleAmount).toBeGreaterThanOrEqual(1);
+    run(c, 4, 0.4);
+    expect(c.level).toBe(2);
   });
 
   it('half-served locations stay put', () => {
-    const c = loc('consumer', { growth: 0 });
-    const rng = new Rng(4);
-    for (let i = 0; i <= 12; i++) {
-      updateCycles([c], i * 45, { ...cfg, demandBase: [4, 4] }, rng);
-      deliverPallet(c, null);
-      deliverPallet(c, null);
-      c.demand = 0;
-    }
-    expect(c.growth).toBe(0);
+    const c = loc('consumer');
+    run(c, 12, 0.5);
+    expect(c.level).toBe(3);
   });
 
-  it('growth is capped', () => {
-    const p = loc('producer');
-    run(p, 200, 1);
-    expect(p.growth).toBe(cfg.growthRange[1]);
+  it('at level 1, going down means closing, after one more cycle as a warning', () => {
+    const c = loc('consumer', { level: 1 });
+    const rng = new Rng(3);
+    const events = [];
+    for (let i = 0; i <= 5; i++) {
+      events.push(...updateCycles([c], i * 45, cfg, rng));
+      if (c.closed) break;
+    }
+    expect(events.map((e) => e.type)).toEqual(['closing', 'closed']);
+    expect(c.closed).toBe(true);
+    expect(c.demand).toBe(0);
+    expect(deliverPallet(c, null)).toBe(false);
+  });
+
+  it('investing raises a level and saves a closing location', () => {
+    const c = loc('consumer', { level: 1, closingIn: 1 });
+    expect(raiseLevel(c, cfg)).toBe(true);
+    expect(c.level).toBe(2);
+    expect(c.closingIn).toBeNull();
+    const top = loc('producer', { level: cfg.maxLevel });
+    expect(raiseLevel(top, cfg)).toBe(false);
   });
 });
 
-describe('cycles in the game', () => {
+describe('the town over a game', () => {
   it('every producer and consumer gets state, cycles at different times, and the game stays deterministic', () => {
     const g = newGame({ seed: 4, auctions: { openingRound: false } });
-    const count = g.town.locations.filter((l) => l.kind !== 'depot').length;
+    const count = g.town.locations.filter((l) => l.kind === 'producer' || l.kind === 'consumer').length;
     expect(g.locations).toHaveLength(count);
     expect(new Set(g.locations.map((l) => l.nextCycleAt.toFixed(2))).size).toBeGreaterThan(count / 2);
     for (let i = 0; i < 600; i++) g.step(); // one minute
@@ -160,10 +171,38 @@ describe('cycles in the game', () => {
     expect(h.stateHash()).toEqual(g.stateHash());
   });
 
-  it('with nobody delivering, the town shrinks over a full game', () => {
+  it('with nobody delivering, the original town withers and closes, while new locations keep opening', () => {
     const g = newGame({ seed: 2, auctions: { openingRound: false } });
+    const original = new Set(g.locations.map((l) => l.id));
     g.runToEnd();
-    expect(g.locations.every((l) => l.growth === g.cfg.cycles.growthRange[0])).toBe(true);
-    expect(g.drainEvents(0).some((e) => e.type === 'shrank')).toBe(true);
+    const evs = g.drainEvents(0);
+    const closed = evs.filter((e) => e.type === 'closed').length;
+    const opened = evs.filter((e) => e.type === 'opened').length;
+    // Level 3 -> 2 -> 1 -> closing -> closed takes about 4 windows of 4 cycles: ~12 minutes.
+    expect(closed).toBeGreaterThan(original.size / 2);
+    expect(opened).toBeGreaterThanOrEqual(8); // roughly one a minute, minus the quiet start and end
+    // Closed locations are empty lots again; opened ones are live.
+    // Everything still live is on the map with the right kind; nothing closed is still live.
+    const closedIds = new Set(evs.filter((e) => e.type === 'closed').map((e) => (e as { location: number }).location));
+    for (const l of g.locations) {
+      expect(l.closed).toBe(false);
+      expect(g.town.locations[l.id].kind).toBe(l.kind);
+    }
+    const liveIds = new Set(g.locations.map((l) => l.id));
+    // A lot can close and later host a new opening, so only check the ones that stayed closed.
+    for (const id of closedIds) if (!liveIds.has(id)) expect(g.town.locations[id].kind).toBe('lot');
+  });
+
+  it('openings avoid lots right next to live locations', () => {
+    const g = newGame({ seed: 6, auctions: { openingRound: false }, openings: { everySec: 20, quietStartSec: 0 } });
+    for (let i = 0; i < 6000; i++) g.step();
+    const opened = g.drainEvents(0).filter((e) => e.type === 'opened');
+    expect(opened.length).toBeGreaterThan(5);
+  });
+
+  it('openings can be turned off', () => {
+    const g = newGame({ seed: 2, auctions: { openingRound: false }, openings: { everySec: 0 } });
+    g.runToEnd();
+    expect(g.drainEvents(0).some((e) => e.type === 'opened')).toBe(false);
   });
 });

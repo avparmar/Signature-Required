@@ -13,3 +13,4 @@ export * from './trucks.js';
 export * from './depots.js';
 export * from './money.js';
 export * from './auctions.js';
+export * from './openings.js';
