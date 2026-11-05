@@ -4,10 +4,49 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Signature Required</title>
+    <link rel="stylesheet" href="/src/style.css" />
   </head>
   <body>
-    <h1>Signature Required</h1>
-    <p id="status">Nothing to play yet.</p>
+    <div id="app">
+      <header id="topbar">
+        <div id="title">Signature Required</div>
+        <div id="clock">15:00</div>
+        <div id="phase"></div>
+        <div id="controls">
+          <button id="btn-pause" title="Pause (P)">⏸</button>
+          <select id="speed" title="Game speed">
+            <option value="0.5">0.5×</option>
+            <option value="1" selected>1×</option>
+            <option value="2">2×</option>
+            <option value="4">4×</option>
+          </select>
+          <button id="btn-new" title="New game">New game</button>
+        </div>
+      </header>
+      <aside id="left" class="side">
+        <section class="panel">
+          <h2>You</h2>
+          <div id="me"></div>
+        </section>
+        <section class="panel">
+          <h2>Companies</h2>
+          <div id="companies"></div>
+        </section>
+      </aside>
+      <main id="map-wrap">
+        <canvas id="map"></canvas>
+      </main>
+      <aside id="right" class="side">
+        <section class="panel">
+          <h2>Auction</h2>
+          <div id="auction"></div>
+        </section>
+        <section class="panel">
+          <h2>Log</h2>
+          <ol id="log"></ol>
+        </section>
+      </aside>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
