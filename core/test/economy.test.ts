@@ -12,7 +12,8 @@ import {
 } from '../src/index.js';
 
 // Fixed demand so the arithmetic is exact: 2 pallets per level, level 3 = 6 per cycle.
-const cfg: CycleConfig = { ...DEFAULT_CYCLES, demandPerLevel: [2, 2] };
+// Also pins the original 4-cycle window and no grace period, which these tests were written against.
+const cfg: CycleConfig = { ...DEFAULT_CYCLES, demandPerLevel: [2, 2], window: 4, graceSec: 0 };
 
 function loc(kind: 'producer' | 'consumer', o: Partial<LocationState> = {}): LocationState {
   return {

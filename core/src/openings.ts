@@ -30,7 +30,7 @@ export const DEFAULT_OPENINGS: OpeningConfig = {
   quietEndSec: 120,
   crowdRadius: 2,
   remoteRadius: 8,
-  openLevel: 3,
+  openLevel: 2,
 };
 
 export interface OpeningChoice {
