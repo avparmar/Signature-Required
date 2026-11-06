@@ -15,7 +15,7 @@ npm install
 npm test          # unit tests (Vitest)
 npm run typecheck # TypeScript, all packages
 npm run sim       # headless game runner
-npm run dev       # browser client (placeholder for now)
+npm run dev       # play in the browser against bots (open the URL it prints)
 ```
 
 ## Layout

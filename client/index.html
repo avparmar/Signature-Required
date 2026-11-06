@@ -13,7 +13,8 @@
         <div id="clock">15:00</div>
         <div id="phase"></div>
         <div id="controls">
-          <button id="btn-pause" title="Pause (P)">⏸</button>
+          <button id="btn-help" title="How to play">?</button>
+          <button id="btn-pause" title="Pause (P or Space)">⏸</button>
           <select id="speed" title="Game speed">
             <option value="0.5">0.5×</option>
             <option value="1" selected>1×</option>
@@ -29,17 +30,29 @@
           <div id="me"></div>
         </section>
         <section class="panel">
+          <h2>Other players</h2>
+          <div id="players"></div>
+        </section>
+        <section class="panel">
           <h2>Companies</h2>
           <div id="companies"></div>
         </section>
       </aside>
       <main id="map-wrap">
         <canvas id="map"></canvas>
+        <div id="hint"></div>
+        <div id="tooltip" hidden></div>
+        <div id="toasts"></div>
+        <div id="overlay" hidden></div>
       </main>
       <aside id="right" class="side">
-        <section class="panel">
+        <section class="panel" id="auction-panel">
           <h2>Auction</h2>
           <div id="auction"></div>
+        </section>
+        <section class="panel">
+          <h2>Your companies</h2>
+          <div id="mycos"></div>
         </section>
         <section class="panel">
           <h2>Log</h2>
