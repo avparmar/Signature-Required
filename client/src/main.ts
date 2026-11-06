@@ -566,7 +566,7 @@ function showHelp() {
   ov.innerHTML = `<div class="card help"><h1>How to play</h1>
   <p>You're an investor. Buy shares of trucking companies at auction; whoever holds the most shares of a company is its president and runs it. Every 3 minutes each company pays its dividend to its shareholders. After 15 minutes, the richest player wins.</p>
   <ul>
-  <li><b>Routes:</b> click a <b>producer</b> (round: forest, farm or oil well) and a <b>shop</b> (house) of the same good. A free truck picks up the raw material, takes it through your company's factory to be made into product, and delivers it to the shop. Click a route line to add a truck; right-click it to take one off.</li>
+  <li><b>Routes:</b> click a <b>producer</b> (round: sawmill, farm or oil well) and a <b>shop</b> (house) of the same good. A free truck picks up the raw material, takes it through your company's factory to be made into product, and delivers it to the shop. Click a route line to add a truck; right-click it to take one off.</li>
   <li><b>Factories:</b> every load goes through one, so where your factories are decides which routes pay. Each factory also adds ${session.cfg.depots.capacity} to your truck limit. A factory site is cheaper where your company already does business.</li>
   <li><b>Businesses</b> grow when served well (dots under each one show its level) and close if neglected (flashing red).</li>
   <li><b>Map:</b> drag to pan, scroll to zoom, double-click to fit. P or Space pauses.</li>

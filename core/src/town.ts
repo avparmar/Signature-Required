@@ -95,7 +95,7 @@ export const DEFAULT_TOWN: TownConfig = {
   diagonalFrac: 0.04,
   goods: ['furniture', 'bread', 'fuel'],
   raws: ['timber', 'wheat', 'crude oil'],
-  sources: ['forest', 'farm', 'oil well'],
+  sources: ['sawmill', 'farm', 'oil well'],
   shops: ['furniture store', 'bakery', 'gas station'],
   producersPerGood: [4, 5],
   consumersPerGood: [7, 11],
