@@ -22,12 +22,18 @@ export interface DepotConfig {
   pricing: 'subsidy' | 'distance';
   /** Full price of a depot site (subsidy pricing), or the price close to your network (distance pricing). */
   depotBase: number;
-  /** Subsidy pricing: discount for a company doing all the recent service in a site's district. */
+  /** Subsidy pricing: the full discount, for a company that reaches the service target in a site's district. */
   maxSubsidy: number;
   /** Subsidy pricing: a site's district is everything within this drive distance (blocks). */
   districtBlocks: number;
   /** Subsidy pricing: service counts towards the subsidy for this long (seconds). */
   subsidyWindowSec: number;
+  /** Subsidy pricing: a company earns no discount at a site until it has this many recent pickups and
+   *  deliveries in the district. */
+  subsidyMinPallets: number;
+  /** Subsidy pricing: recent pickups and deliveries in the district for the full discount. Each company
+   *  earns its own discount, so several can max out at once. */
+  subsidyTarget: number;
   /** Drive distance (blocks) from your nearest depot that still costs only the base price. */
   depotFreeBlocks: number;
   /** Extra price per block beyond that. */
@@ -42,6 +48,8 @@ export const DEFAULT_DEPOTS: DepotConfig = {
   maxSubsidy: 0.6,
   districtBlocks: 5,
   subsidyWindowSec: 180,
+  subsidyMinPallets: 6,
+  subsidyTarget: 60,
   depotFreeBlocks: 4,
   depotPerBlock: 10,
 };
@@ -68,6 +76,6 @@ export function depotSites(locations: Location[]): Location[] {
  * Subsidy pricing: the full price, less the local subsidy for a company that did `share` (0 to 1)
  * of the recent service in the site's district. Whole dollars.
  */
-export function subsidisedPrice(cfg: DepotConfig, share: number): number {
-  return Math.round(cfg.depotBase * (1 - cfg.maxSubsidy * Math.max(0, Math.min(1, share))));
+export function subsidisedPrice(cfg: DepotConfig, progress: number): number {
+  return Math.round(cfg.depotBase * (1 - cfg.maxSubsidy * Math.max(0, Math.min(1, progress))));
 }

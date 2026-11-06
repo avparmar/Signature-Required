@@ -20,7 +20,7 @@ export interface MoneyConfig {
   /** Share of consumers that are premium buyers. */
   premiumShare: number;
   /**
-   * Where each delivery's price goes, as multiples of the price. 1 and 1 = the company and its
+   * Where each delivery's price goes, as multiples of the price (default: half to each, nothing printed). 1 and 1 = the company and its
    * shareholders each get the full price (the bank prints the second copy). SAR-style is 0 and 1:
    * income goes only to dividends, so companies grow only from share auctions.
    */
@@ -47,7 +47,7 @@ export const DEFAULT_MONEY: MoneyConfig = {
   palletPrice: 2.4,
   premiumPrice: 3.6,
   premiumShare: 0.25,
-  deliveryToTreasury: 1,
+  deliveryToTreasury: 0.5,
   deliveryToPot: 0.5,
   payoutEverySec: 180,
   finalBonus: 'assets',

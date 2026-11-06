@@ -4,7 +4,7 @@
  * Same config + same actions at the same ticks = same game, every time.
  */
 import { makeGameConfig, type GameConfig, type GameConfigOverrides } from './config.js';
-import { minimumBid, type Auction, type AuctionEvent, type AuctionRequest } from './auctions.js';
+import { minimumBid, stillBidding, type Auction, type AuctionEvent, type AuctionRequest } from './auctions.js';
 import { depotPrice, subsidisedPrice } from './depots.js';
 import { assignPrices, investCost, payPerShare } from './money.js';
 import { chooseOpening } from './openings.js';
@@ -76,6 +76,8 @@ export type Action =
   | { type: 'invest'; location: number }
   /** Bid on the current auction (company must match, so a late bid can't land on the next one). */
   | { type: 'bid'; company: number; amount: number }
+  /** Done bidding on the current auction (until someone else bids). */
+  | { type: 'pass'; company: number }
   /**
    * Put a share up for auction: a bank-held share (presidents only), or, once all of a company's
    * shares are out, one of your own. Queues if another auction is running.
@@ -167,6 +169,8 @@ export class Game {
   auction: Auction | null = null;
   readonly auctionQueue: AuctionRequest[] = [];
   readonly auctionCooldownUntil: number[];
+  /** Whether a company's cooldown follows a sale (rather than an auction nobody bid in). */
+  private readonly lastAuctionSold: boolean[];
   /** Next company to auction in the opening round. */
   private openingNext = 0;
   readonly players: Player[];
@@ -231,6 +235,7 @@ export class Game {
     );
     this.events = Array.from({ length: cfg.players }, () => []);
     this.auctionCooldownUntil = this.companies.map(() => 0);
+    this.lastAuctionSold = this.companies.map(() => false);
     this.phase = cfg.auctions.openingRound ? 'opening' : 'running';
     this.emit('all', { type: 'start', t: 0 });
     if (this.phase === 'running') this.emit('all', { type: 'open', t: 0 });
@@ -390,8 +395,20 @@ export class Game {
         p.held += action.amount;
         a.highBid = action.amount;
         a.highBidder = player;
+        a.passed = []; // everyone else may answer the new bid
         if (a.timeLeft < this.cfg.auctions.softCloseSec) a.timeLeft = this.cfg.auctions.softCloseSec;
         this.emit('all', { type: 'bid', t: this.t, company: a.company, player, amount: action.amount, timeLeft: a.timeLeft });
+        break;
+      }
+      case 'pass': {
+        const a = this.auction;
+        if (!a || a.company !== action.company) return reject(`no auction for company ${action.company} right now`);
+        if (a.highBidder === player) return reject("you're the high bidder");
+        if (a.passed.includes(player)) return;
+        a.passed.push(player);
+        this.emit('all', { type: 'pass', t: this.t, company: a.company, player });
+        // Everyone who could still bid has passed: it ends now.
+        if (stillBidding(a, this.players.length).length === 0) a.timeLeft = 0;
         break;
       }
       case 'startAuction': {
@@ -405,7 +422,7 @@ export class Game {
         } else if (c.shares.includes(player)) seller = player;
         else return reject("all shares are out and you don't own any to sell");
         if (this.elapsed < this.auctionCooldownUntil[c.id] - 1e-9)
-          return reject(`no bids last time; try again in ${Math.ceil(this.auctionCooldownUntil[c.id] - this.elapsed)}s`);
+          return reject(`${this.lastAuctionSold[c.id] ? 'a share sold recently' : 'no bids last time'}; try again in ${Math.ceil(this.auctionCooldownUntil[c.id] - this.elapsed)}s`);
         if ((this.auction && this.auction.company === c.id) || this.auctionQueue.some((r) => r.company === c.id))
           return reject('this company already has an auction running or waiting');
         this.auctionQueue.push({ company: c.id, seller, startedBy: player });
@@ -474,6 +491,7 @@ export class Game {
       highBidder: null,
       timeLeft: opening ? cfg.openingClockSec : cfg.clockSec,
       opening,
+      passed: [],
     };
     this.emit('all', { type: 'auctionStart', t: this.t, company: next.company, seller: next.seller, opening, timeLeft: this.auction.timeLeft });
   }
@@ -484,6 +502,7 @@ export class Game {
     const c = this.companies[a.company];
     if (a.highBidder === null) {
       this.auctionCooldownUntil[c.id] = this.elapsed + this.cfg.auctions.noBidCooldownSec;
+      this.lastAuctionSold[c.id] = false;
       this.emit('all', { type: 'auctionNoBids', t: this.t, company: c.id });
       return;
     }
@@ -498,6 +517,10 @@ export class Game {
     winner.held -= a.highBid;
     winner.cash -= a.highBid;
     c.treasury += a.highBid; // the money always goes to the company, even when a player sells
+    if (!a.opening) {
+      this.auctionCooldownUntil[c.id] = this.elapsed + this.cfg.auctions.saleCooldownSec;
+      this.lastAuctionSold[c.id] = true;
+    }
     this.emit('all', { type: 'auctionWon', t: this.t, company: c.id, player: winner.id, amount: a.highBid, seller: a.seller });
   }
 
@@ -613,13 +636,14 @@ export class Game {
   }
 
   /**
-   * A company's share (0 to 1) of the pallets loaded and delivered in a site's district over the
-   * subsidy window. 0 if nobody served it.
+   * A company's progress (0 to 1) towards the full discount at a site: its pickups and deliveries in
+   * the site's district over the subsidy window, against the target. 0 below the minimum.
    */
   districtShare(company: number, site: number): number {
-    const counts = this.districtCounts(site);
-    const all = counts.reduce((a, b) => a + b, 0);
-    return all ? counts[company] / all : 0;
+    const n = this.districtCounts(site)[company];
+    const cfg = this.cfg.depots;
+    if (n < cfg.subsidyMinPallets) return 0;
+    return Math.min(1, n / cfg.subsidyTarget);
   }
 
   /** Pallets loaded and delivered per company in a site's district over the subsidy window (cached per tick). */

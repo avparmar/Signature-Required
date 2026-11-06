@@ -75,6 +75,9 @@ export interface TownConfig {
   minSpacing: number;
   /** A producer and a consumer of the same good are at least this many blocks apart (across + down). */
   pairGap: number;
+  /** Two producers (or two shops) of the same good are at least this many blocks apart (across +
+   *  down), where there's room, so they don't stack up side by side. */
+  sameGap: number;
   /** Drive distance (blocks) that counts as "near" a starting depot for the fairness check. */
   fairRadius: number;
   /** Weakest start's score must be at least this fraction of the strongest's. */
@@ -96,7 +99,7 @@ export const DEFAULT_TOWN: TownConfig = {
   goods: ['furniture', 'bread', 'fuel'],
   raws: ['timber', 'wheat', 'crude oil'],
   sources: ['sawmill', 'farm', 'oil well'],
-  shops: ['furniture store', 'bakery', 'gas station'],
+  shops: ['furniture store', 'grocery store', 'gas station'],
   producersPerGood: [4, 5],
   consumersPerGood: [7, 11],
   bays: 2,
@@ -107,6 +110,7 @@ export const DEFAULT_TOWN: TownConfig = {
   bridgesPerRiver: [2, 3],
   minSpacing: 1,
   pairGap: 3,
+  sameGap: 3,
   fairRadius: 6,
   fairMinRatio: 0.6,
   maxRerolls: 60,
@@ -313,6 +317,13 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
       .map((b, i) => ({ b, i }))
       .filter(({ b }) => !b.used && free(centre(b)) && pairOk(locations, loc.kind, loc.good, centre(b), cfg.pairGap));
     if (candidates.length === 0) return false;
+    if (loc.kind === 'producer' || loc.kind === 'consumer') {
+      const spread = candidates.filter(({ b }) => {
+        const c = centre(b);
+        return locations.every((l) => l.kind !== loc.kind || l.good !== loc.good || Math.abs(l.x - c.x) + Math.abs(l.y - c.y) >= cfg.sameGap);
+      });
+      if (spread.length > 0) candidates = spread;
+    }
     if (cfg.layout === 'snowflake') {
       const ends = candidates.filter(({ b }) => deadEnd(b));
       const through = candidates.filter(({ b }) => !deadEnd(b));

@@ -96,6 +96,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #mycos .co.active { box-shadow: inset 3px 0 0 var(--ink); padding-left: 8px; }
 .row.big { font-size: 15px; }
 .small { font-size: 12px; }
+.sub.fold { display: block; background: none; border: 0; padding: 0; cursor: pointer; font: inherit; font-size: 11px; text-align: left; }
+.sub.fold:hover { color: var(--ink, #222); }
 .sub { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 6px 0 2px; }
 .tag { font-size: 10px; background: var(--ink); color: #fff; border-radius: 4px; padding: 0 4px; margin-left: 4px; vertical-align: 1px; }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; border: 1px solid var(--ink); margin-right: 5px; vertical-align: middle; }
@@ -106,10 +108,48 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 .sites { display: flex; gap: 4px; flex-wrap: wrap; margin: 2px 0 4px; }
 .holding { display: inline-flex; align-items: center; margin-right: 6px; white-space: nowrap; }
 .holding .tag { margin-left: 3px; }
-#bid-custom { display: flex; align-items: center; gap: 4px; margin-top: 8px; font-size: 14px; }
+#bid-custom { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 8px; font-size: 14px; }
 #bid-custom[hidden] { display: none; }
 #bid-custom .amount { flex: 1; min-width: 52px; display: flex; align-items: center; gap: 2px; font-weight: 700; }
 #bid-custom input { flex: 1; min-width: 0; width: 100%; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; font-size: 14px; font-weight: 700; text-align: center; -moz-appearance: textfield; }
 #bid-custom input::-webkit-outer-spin-button, #bid-custom input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 #bid-custom button { padding: 5px 7px; font-size: 13px; font-weight: 600; }
 #bid-go { background: var(--ink) !important; color: #fff !important; border-color: var(--ink) !important; padding: 5px 16px !important; }
+.chips { display: flex; flex-wrap: wrap; gap: 3px; margin: 4px 0 2px; }
+.chip { font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 999px; background: #e8e2d4; color: var(--ink); border: 1.5px solid transparent; }
+.chip.you { background: var(--ink); color: #fff; }
+.chip.pres { border-color: #c99a1a; }
+.chip.bank { background: transparent; color: var(--muted); border: 1.5px dashed #cfc7b6; font-weight: 500; }
+#bid-go, #bid-pass { flex: 1 1 45%; }
+#bid-custom .amount { flex-basis: 30%; }
+
+/* A route row lights up while its route is hovered on the map (and vice versa). */
+.route-row { border-radius: 4px; margin: 0 -4px; padding: 0 4px; }
+.route-row:hover, .route-row.hot { background: #f1ecdf; }
+
+/* How to play: Basics / Walkthrough */
+.card.help.wide { max-width: 660px; }
+.help-tabs { display: flex; gap: 6px; margin: -4px 0 12px; }
+.card .help-tabs button { background: #f0ebe0; color: var(--ink); padding: 5px 12px; font-size: 13px; }
+.card .help-tabs button.on { background: var(--ink); color: #fff; }
+.guide-imgs { display: flex; gap: 10px; align-items: flex-start; justify-content: center; background: #f7f4ec; border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+.guide-imgs img { max-width: 100%; max-height: 300px; min-width: 0; flex: 0 1 auto; border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.12); }
+.guide-step h2 { font-size: 17px; margin: 14px 0 4px; }
+.guide-nav { display: flex; align-items: center; justify-content: space-between; margin: 8px 0 14px; }
+.card .guide-nav button { background: #f0ebe0; color: var(--ink); padding: 6px 12px; }
+.card .guide-nav button:disabled { opacity: 0.4; cursor: default; }
+.guide-nav .dots { display: flex; gap: 6px; }
+.guide-nav .dots span { width: 8px; height: 8px; border-radius: 50%; background: var(--line); cursor: pointer; }
+.guide-nav .dots span.on { background: var(--ink); }
+.card.help { max-height: calc(100vh - 80px); overflow-y: auto; }
+.card.help a { color: var(--ink); font-weight: 600; }
+.guide-list { margin: 4px 0 4px; padding-left: 22px; }
+.guide-list li { font-size: 14px; line-height: 1.6; }
+.gicons, .gchain { display: flex; align-items: center; justify-content: center; gap: 18px; margin: 12px 0 0; }
+.gicons figure, .gchain figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.gicons figcaption, .gchain figcaption { font-size: 12px; color: var(--muted); }
+.gcol { display: flex; flex-direction: column; gap: 4px; }
+.garrow { font-size: 26px; color: var(--muted); }
+.card .guide-nav button.go { background: var(--ink); color: #fff; }
+.card button.link { background: none; color: var(--muted); padding: 0; font-size: 13px; text-decoration: underline; }
+.guide-step .hl { background: linear-gradient(transparent 55%, #f6dd8a 55%); padding: 0 2px; font-weight: 600; }
