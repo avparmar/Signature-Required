@@ -32,6 +32,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #clock { font: 700 22px ui-monospace, monospace; min-width: 70px; }
 #phase { flex: 1; color: #d9d2c3; }
 #controls { display: flex; gap: 6px; }
+/* A fixed-size pause button, so ⏸ and ▶ don't change the bar's height. */
+#btn-pause { width: 34px; height: 28px; line-height: 1; padding: 0 !important; }
 #controls button, #controls select {
   background: #3a352d; color: #fff; border: 0; border-radius: 6px; padding: 4px 10px; font-size: 14px; cursor: pointer;
 }
@@ -96,9 +98,10 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 .toast { background: var(--ink); color: #fff; padding: 7px 14px; border-radius: 8px; font-size: 14px; transition: opacity 0.5s; box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
 .toast.error { background: #b23b2c; }
 .toast.fade { opacity: 0; }
-#overlay { position: absolute; inset: 0; background: rgba(244, 241, 234, 0.82); display: flex; align-items: center; justify-content: center; z-index: 10; }
+/* Cards (walkthrough, settings, end of game) cover the whole screen, not just the map, which is short now. */
+#overlay { position: fixed; inset: 0; background: rgba(244, 241, 234, 0.82); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 16px; }
 #overlay[hidden] { display: none; }
-.card { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 22px 26px; max-width: 520px; box-shadow: 0 6px 24px rgba(0,0,0,0.12); }
+.card { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 22px 26px; max-width: 520px; box-shadow: 0 6px 24px rgba(0,0,0,0.12); max-height: calc(100vh - 32px); overflow-y: auto; }
 .card h1 { margin: 0 0 12px; font-size: 22px; }
 .card p, .card li { font-size: 14px; line-height: 1.5; }
 .card ul { padding-left: 18px; }
@@ -150,7 +153,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 .card .help-tabs button { background: #f0ebe0; color: var(--ink); padding: 5px 12px; font-size: 13px; }
 .card .help-tabs button.on { background: var(--ink); color: #fff; }
 .guide-imgs { display: flex; gap: 10px; align-items: flex-start; justify-content: center; background: #f7f4ec; border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
-.guide-imgs img { max-width: 100%; max-height: 300px; min-width: 0; flex: 0 1 auto; border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.12); }
+.guide-imgs img { max-width: 100%; max-height: min(300px, 38vh); min-width: 0; flex: 0 1 auto; border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.12); }
 .guide-step h2 { font-size: 17px; margin: 14px 0 4px; }
 .guide-nav { display: flex; align-items: center; justify-content: space-between; margin: 8px 0 14px; }
 .card .guide-nav button { background: #f0ebe0; color: var(--ink); padding: 6px 12px; }

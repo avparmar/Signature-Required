@@ -324,7 +324,15 @@ canvas.addEventListener('dblclick', () => {
 });
 /** Whether you've panned or zoomed (then a change in the map's size keeps your view). */
 let viewMoved = false;
-new ResizeObserver(() => renderer.resize(!viewMoved)).observe($('map-wrap'));
+// Resizing a canvas wipes it, so only when the size really changed, and draw again at once (no blank frame).
+new ResizeObserver(() => {
+  const box = $('map-wrap').getBoundingClientRect();
+  if (Math.abs(box.width - renderer.w) < 0.5 && Math.abs(box.height - renderer.h) < 0.5) return;
+  renderer.resize(!viewMoved);
+  redraw?.();
+}).observe($('map-wrap'));
+/** Draws the last frame again (after a resize). */
+let redraw: (() => void) | null = null;
 
 // ------------------------------------------------------------------ tooltip
 
@@ -1123,7 +1131,7 @@ const GUIDE: { img?: string[]; icons?: GuideIcons; title: string; text: string }
   {
     img: ['auction'],
     title: 'Take control of a company!',
-    text: `<p>The game opens with a <b>sale</b> of one share of each company: bid in its card, and the best bid gets it. Whoever holds the most shares of a company <span class="hl">controls it</span>: they're its president and run its trucks. You're an investor, not the company, so spread your bets across several if you like.</p>
+    text: `<p>The game opens with a <b>sale</b> of one share of each company: <span class="hl">bid in its card</span> along the bottom, and the highest bid gets it. Whoever holds the most shares of a company <span class="hl">controls it</span>: they're its president and run its trucks. You're an investor, not the company, so spread your bets across several if you like.</p>
       <p>Your bid goes <b>straight into the company</b>. That's how companies pay for trucks and factories, so a share won for next to nothing leaves your company with nothing to build with. Bid like you mean it!</p>`,
   },
   {
@@ -1152,7 +1160,7 @@ const GUIDE: { img?: string[]; icons?: GuideIcons; title: string; text: string }
   {
     img: ['factory'],
     title: 'Unclaimed factories!',
-    text: `<p>The white factories are <b>unclaimed</b>: any company can buy one, at full price $${session.cfg.depots.depotBase}. But a company that <span class="hl">serves the producers and shops nearby</span> gets a discount, up to ${Math.round(100 * session.cfg.depots.maxSubsidy)}% off.</p><p>Hover over a site, or over a company card, to see how close each company is. A <b>★</b> means the full discount. New sites turn up every few minutes in the parts of town no factory reaches.</p>`,
+    text: `<p>The white factories are <b>unclaimed</b>: any company can buy one, at full price $${session.cfg.depots.depotBase}. But a company that <span class="hl">serves the producers and shops nearby</span> gets a discount, up to ${Math.round(100 * session.cfg.depots.maxSubsidy)}% off.</p><p>Hover over a site, or over a company card, to see how close each company is. A <b>★</b> means the full discount.${session.cfg.depots.newSiteEverySec > 0 ? ' New sites turn up every few minutes in the parts of town no factory reaches.' : ''}</p>`,
   },
   {
     img: ['buy'],
@@ -1162,7 +1170,7 @@ const GUIDE: { img?: string[]; icons?: GuideIcons; title: string; text: string }
   {
     img: ['shares', 'company'],
     title: 'Get paid!',
-    text: "<p>Half of each delivery goes to the company and half to its <b>dividend pot</b>, which is <span class=\"hl\">paid to shareholders every 3 minutes</span>. Your shares and your next payout show at the top left. Shares trade in the company cards: bid, ask, or start a sale of the company's own shares to raise money. Late on, a company with cash buys shares back. After 15 minutes, the richest player wins. Good luck!</p>",
+    text: "<p>Half of each delivery goes to the company and half to its <b>dividend pot</b>, which is <span class=\"hl\">paid to shareholders every 3 minutes</span>. Your shares and your next payout show at the top right.</p><p>Shares trade in the <b>company cards</b>: <b>Sell for</b> and <b>Buy for</b> trade at once, and hovering a card lets you place your own price, or <b>start a sale</b> of the company's own shares to raise money. Late on, a company with cash <span class=\"hl\">buys shares back</span>. After 15 minutes, the richest player wins. Good luck!</p>",
   },
 ];
 
@@ -1273,12 +1281,9 @@ function frame(now: number) {
   tooltip(obs);
   hl.spotlight = obs.sales.length ? obs.sales[0].company : null;
   hl.meterFor = obs.companies.map((c) => c.id); // public: everyone sees every company's progress
-  renderer.draw(
-    obs,
-    [...targets.keys()].map((id) => ({ id, ...shown.get(id)! })),
-    hl,
-    now / 1000,
-  );
+  const trucksNow = [...targets.keys()].map((id) => ({ id, ...shown.get(id)! }));
+  redraw = () => renderer.draw(obs, trucksNow, hl, now / 1000);
+  redraw();
   if (now - lastUi > 250) {
     lastUi = now;
     refreshPanels(obs);

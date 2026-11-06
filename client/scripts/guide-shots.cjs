@@ -7,11 +7,13 @@ const { chromium } = require('playwright');
 const out = process.argv[3];
 (async () => {
   const b = await chromium.launch();
-  const p = await b.newPage({ viewport: { width: 1440, height: 860 }, deviceScaleFactor: 2 });
+  const p = await b.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2 });
   const errs = []; p.on('pageerror', (e) => errs.push(String(e)));
   await p.goto(process.argv[2]);
   await p.waitForTimeout(400);
   await p.click('#btn-skip');
+  // No pop-up messages in the pictures (e.g. "your bid was outbid" from the opening round).
+  await p.addStyleTag({ content: '#toasts { display: none !important; }' });
   const tick = (sec = 0.05) => p.evaluate((sec) => { const s = window.sr.session; s.paused = false; for (let t = 0; t < sec; t += 0.1) s.update(Math.min(0.1, sec - t)); s.paused = true; }, sec);
   const shot = async (name, clip) => p.screenshot({ path: `${out}/${name}.png`, clip });
   const el = async (name, sel) => {
@@ -19,26 +21,26 @@ const out = process.argv[3];
     for (let k = 0; k < 6; k++) { try { await p.locator(sel).first().screenshot({ path: `${out}/${name}.png`, timeout: 2000 }); return; } catch (e) { if (k === 5) throw e; await p.waitForTimeout(150); } }
   };
 
-  // 1. Opening auction: bid once on the first company.
+  // 1. Opening sale: bid once on the first company, in its card along the bottom.
   await p.evaluate(() => {
     const s = window.sr.session; s.paused = false;
-    for (let i = 0; i < 200 && !s.obs().auction; i++) s.update(0.1);
+    for (let i = 0; i < 200 && !s.obs().sales.length; i++) s.update(0.1);
     s.update(3);
     s.act({ type: 'bid', company: 0, amount: 8 }); s.update(0.1);
-    const a = s.obs().auction; if (a && a.highBidder === s.obs().me) { s.paused = true; }
+    s.paused = true;
   });
   await p.mouse.move(5, 5);
   await p.waitForTimeout(400);
-  await el('auction', '#auction-panel');
+  await el('auction', '#companies .co.pinned');
 
-  // Win companies 0 and 1, pass on the rest.
+  // Win companies 0 and 1, let the rest go.
   await p.evaluate(() => {
     const s = window.sr.session; s.paused = false;
     for (let i = 0; i < 4000 && s.obs().phase !== 'running'; i++) {
-      const o = s.obs(); const a = o.auction;
-      if (a && a.highBidder !== o.me && !a.passed.includes(o.me)) {
-        if (a.company <= 1 && a.highBid + 2 <= 48) s.act({ type: 'bid', company: a.company, amount: Math.max(40, a.highBid + 2) });
-        else s.act({ type: 'pass', company: a.company });
+      const o = s.obs(); const sale = o.sales[0];
+      if (sale && sale.company <= 1) {
+        const bid = o.books[sale.company].bid;
+        if (!bid || (bid.player !== o.me && bid.price + 2 <= 48)) s.act({ type: 'bid', company: sale.company, amount: Math.max(40, (bid?.price ?? 0) + 2) });
       }
       s.update(0.1);
     }
@@ -150,7 +152,10 @@ const out = process.argv[3];
 
   // 7. Shares: your holdings and a company card.
   await el('shares', '#me');
+  // A company card, open (hovered), with its market.
+  await p.locator('#companies .co').first().hover(); await tick(); await p.waitForTimeout(300);
   await el('company', '#companies .co');
+  await p.mouse.move(5, 5);
   // 8. The whole town, for the welcome page.
   await p.evaluate(() => window.sr.renderer.fit()); await p.mouse.move(5, 5); await tick(); await p.waitForTimeout(300);
   await shot('overview', { x: box.x, y: box.y, width: box.width, height: hintBox.y - 8 - box.y });

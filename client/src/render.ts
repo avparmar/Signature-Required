@@ -86,8 +86,8 @@ export class Renderer {
   /** Screen position (CSS px) of town coordinate (0, 0). */
   ox = 20;
   oy = 20;
-  private w = 0;
-  private h = 0;
+  w = 0;
+  h = 0;
 
   constructor(
     readonly canvas: HTMLCanvasElement,
