@@ -33,6 +33,7 @@ export const SETTINGS: Setting[] = [
   { group: 'Money', label: 'Premium pallet price', section: 'money', key: 'premiumPrice', unit: '$', min: 0.5, max: 15, step: 0.1 },
   { group: 'Money', label: 'Final bonus (share of assets)', section: 'money', key: 'finalAssetShare', scale: 100, unit: '%', min: 0, max: 100, step: 5 },
   { group: 'Trucks', label: 'Truck price', section: 'depots', key: 'truckPrice', unit: '$', min: 1, max: 100, step: 1 },
+  { group: 'Trucks', label: 'Each truck costs more than the last by', section: 'depots', key: 'truckPriceStep', unit: '$', min: 0, max: 20, step: 0.5 },
   { group: 'Trucks', label: 'Trucks per factory', section: 'depots', key: 'capacity', min: 1, max: 30, step: 1 },
   { group: 'Trucks', label: 'Speed', section: 'trucks', key: 'speed', unit: 'blocks/s', min: 0.1, max: 2, step: 0.05 },
   { group: 'Factories', label: 'Full price', section: 'depots', key: 'depotBase', unit: '$', min: 10, max: 1000, step: 10 },

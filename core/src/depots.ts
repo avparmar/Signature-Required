@@ -36,6 +36,8 @@ export interface DepotConfig {
   subsidyTarget: number;
   /** A new unclaimed factory site appears this often (seconds; 0 for never), from that long in until the last two minutes. */
   newSiteEverySec: number;
+  /** Each truck costs this much more than the company's previous one (0: every truck costs truckPrice). */
+  truckPriceStep: number;
   /** Drive distance (blocks) from your nearest depot that still costs only the base price. */
   depotFreeBlocks: number;
   /** Extra price per block beyond that. */
@@ -53,6 +55,7 @@ export const DEFAULT_DEPOTS: DepotConfig = {
   subsidyMinPallets: 6,
   subsidyTarget: 60,
   newSiteEverySec: 0,
+  truckPriceStep: 0,
   depotFreeBlocks: 4,
   depotPerBlock: 10,
 };
@@ -79,6 +82,11 @@ export function depotSites(locations: Location[]): Location[] {
  * Subsidy pricing: the full price, less the local subsidy for a company that did `share` (0 to 1)
  * of the recent service in the site's district. Whole dollars.
  */
+/** What a company's next truck costs, given how many it already has. */
+export function truckPriceFor(cfg: DepotConfig, owned: number): number {
+  return cfg.truckPrice + cfg.truckPriceStep * owned;
+}
+
 export function subsidisedPrice(cfg: DepotConfig, progress: number): number {
   return Math.round(cfg.depotBase * (1 - cfg.maxSubsidy * Math.max(0, Math.min(1, progress))));
 }
