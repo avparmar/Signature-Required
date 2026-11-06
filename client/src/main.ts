@@ -23,7 +23,23 @@ const names = (good: number) => {
   const t = session.cfg.town;
   return { raw: t.raws[good], product: t.goods[good], source: t.sources[good], shop: t.shops[good] };
 };
-const coName = (c: number) => `Company ${c + 1}`;
+/**
+ * Company names, one per colour (so a colour always means the same company), each with a
+ * three-letter ticker for tight spots like a player's holdings.
+ */
+const COMPANY_NAMES: [string, string][] = [
+  ['Red Rocket Haulage', 'RRH'],
+  ['Bluebird Express', 'BBX'],
+  ['Greenway Freight', 'GWF'],
+  ['Purple Pony Transport', 'PPT'],
+  ['Orange Owl Logistics', 'OOL'],
+  ['Tealwater Trucking', 'TWT'],
+];
+const coName = (c: number) => COMPANY_NAMES[c % COMPANY_NAMES.length][0];
+const coTicker = (c: number) => COMPANY_NAMES[c % COMPANY_NAMES.length][1];
+/** A holding as a chip in the company's colour: ticker, shares, and a crown for its president. */
+const holdingChip = (c: number, n: number, pres: boolean) =>
+  `<span class="chip co-chip${pres ? ' pres' : ''}" style="background:${companyColor(c)}" title="${coName(c)}: ${n} share${n === 1 ? '' : 's'}${pres ? ', president' : ''}">${pres ? '♔ ' : ''}${coTicker(c)} ×${n}</span>`;
 const playerName = (p: number, me: number) => (p === me ? 'you' : `player ${p + 1}`);
 const fmtClock = (sec: number) => {
   const s = Math.max(0, Math.ceil(sec));
@@ -409,10 +425,10 @@ function refreshPanels(obs: Observation) {
       const shares = held
         .map((c) => {
           const n = c.shares.filter((s) => s === p.id).length;
-          return `<span class="holding">${sw(c.id)}${c.id + 1}×${n}${c.presidents.includes(p.id) ? '<span class="tag">P</span>' : ''}</span>`;
+          return holdingChip(c.id, n, c.presidents.includes(p.id));
         })
-        .join(' ');
-      return `<div class="co"><div class="row"><span><b>Player ${p.id + 1}</b></span><span>${money(p.cash)}</span></div><div class="small">${shares || '<span class="muted">No shares</span>'}</div></div>`;
+        .join('');
+      return `<div class="co"><div class="row"><span><b>Player ${p.id + 1}</b></span><span>${money(p.cash)}</span></div><div class="chips">${shares || '<span class="muted small">No shares</span>'}</div></div>`;
     })
     .join('');
 

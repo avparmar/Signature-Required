@@ -192,3 +192,5 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 .set-def { color: var(--muted); font-size: 12px; text-align: right; }
 .set-buttons { display: flex; gap: 8px; margin-top: 18px; }
 .card .set-buttons button.plain { background: #f0ebe0; color: var(--ink); }
+.chip.co-chip { color: #fff; text-shadow: 0 1px 1px rgba(0,0,0,0.25); }
+.chip.co-chip.pres { border-color: #23201b; }
