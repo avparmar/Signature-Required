@@ -10,7 +10,7 @@
  * - Auction panel (#35): bid on the running auction; presidents can put bank-held shares up.
  */
 import { distancesFrom, makeGameConfig, minimumBid, stillBidding, type GameConfig, type GameConfigOverrides, type GameEvent, type Location, type Observation } from '@sr/core';
-import { Renderer, ringParam, ringPoint, type Spot, companyColor, companySlot, coordOf, drawBusiness, drawFactory, goodColor, pickCompanySlots, type Highlights } from './render.js';
+import { Renderer, type Spot, companyColor, companySlot, coordOf, drawBusiness, drawFactory, goodColor, pickCompanySlots, type Highlights } from './render.js';
 import { Session } from './session.js';
 import type { Match } from './match.js';
 import { GuestLobby, HostLobby, normalizeCode } from './net.js';
@@ -938,6 +938,10 @@ function handleEvents(evs: GameEvent[]) {
     } else if (e.type === 'closing') {
       text = `[${at(e.location)}] A ${bizName(e.location)} is about to close: serve it to save it`;
       cls = 'bad';
+    } else if (e.type === 'siteOpened') {
+      text = `[${at(e.site)}] A new factory site is up for grabs`;
+      const site = g.town.locations[e.site];
+      renderer.puff(site.x, site.y);
     } else if (e.type === 'boughtDepot') {
       text = `[${at(e.site)}] ${coName(e.company)} bought a factory for ${money(e.price)}`;
       const site = g.town.locations[e.site];
@@ -1041,7 +1045,7 @@ const GUIDE: { img?: string[]; icons?: GuideIcons; title: string; text: string }
   {
     img: ['factory'],
     title: 'Unclaimed factories!',
-    text: `<p>The white factories are <b>unclaimed</b>: any company can buy one, at full price $${session.cfg.depots.depotBase}. But a company that <span class="hl">serves the producers and shops nearby</span> gets a discount, up to ${Math.round(100 * session.cfg.depots.maxSubsidy)}% off.</p><p>Hover over a site, or over a company card, to see how close each company is. A <b>★</b> means the full discount.</p>`,
+    text: `<p>The white factories are <b>unclaimed</b>: any company can buy one, at full price $${session.cfg.depots.depotBase}. But a company that <span class="hl">serves the producers and shops nearby</span> gets a discount, up to ${Math.round(100 * session.cfg.depots.maxSubsidy)}% off.</p><p>Hover over a site, or over a company card, to see how close each company is. A <b>★</b> means the full discount. New sites turn up every few minutes in the parts of town no factory reaches.</p>`,
   },
   {
     img: ['buy'],
@@ -1134,36 +1138,31 @@ function frame(now: number) {
   // Ease drawn truck positions towards where they are (smooth between ticks, and into queues).
   const targets = renderer.truckTargets(obs);
   const k = 1 - Math.exp(-dt * 14);
-  // Parking and pulling out follow the kerb round the block, at about a truck's driving speed.
-  const kerbStep = Math.max(0.02, session.cfg.trucks.speed * 2.5 * dt * (session.paused ? 0 : session.speed));
+  // Pulling into (or up) a line at a building, or out of one: straight there at the truck's own speed.
+  const parkStep = session.cfg.trucks.speed * dt * (session.paused ? 0 : session.speed);
   for (const [id, t] of targets) {
     const s = shown.get(id);
-    if (!s || Math.hypot(s.x - t.x, s.y - t.y) > 3) {
+    const gap = s ? Math.hypot(s.x - t.x, s.y - t.y) : Infinity;
+    if (!s || gap > 3) {
       shown.set(id, { ...t });
       continue;
     }
-    const ring = t.ring ?? s.ring;
-    if (ring) {
-      // Drive round the loop towards the spot (or, pulling out, towards where the road picks up).
-      const L = 8 * ring.h;
-      const from = ringParam(ring, s.x, s.y);
-      const to = ringParam(ring, t.x, t.y);
-      let d = to - from;
-      if (d > L / 2) d -= L;
-      if (d < -L / 2) d += L;
-      const offRing = Math.hypot(ringPoint(ring, from).x - s.x, ringPoint(ring, from).y - s.y);
-      if (Math.abs(d) > kerbStep && offRing < 0.2) {
-        const p = ringPoint(ring, from + Math.sign(d) * kerbStep);
-        shown.set(id, { x: p.x, y: p.y, dx: p.dx * Math.sign(d), dy: p.dy * Math.sign(d), ring });
-        continue;
+    if (t.parked || s.parked) {
+      // Pulling out, it catches up with where it really is on the road (which is moving away).
+      const step = t.parked ? parkStep : parkStep * 1.5;
+      if (gap <= step) shown.set(id, { ...t, parked: t.parked });
+      else {
+        const f = step / gap;
+        // Lined up along its street the whole way, rather than turning to face the next spot.
+        // (Pulling out, it already faces the way it'll drive.)
+        const along = { dx: t.dx, dy: t.dy };
+        shown.set(id, { x: s.x + (t.x - s.x) * f, y: s.y + (t.y - s.y) * f, ...along, parked: true });
       }
-      // Round the corner: settle into the spot, or (pulling out) leave the loop for the road.
-      const near = { x: s.x + (t.x - s.x) * k, y: s.y + (t.y - s.y) * k, dx: t.dx, dy: t.dy };
-      shown.set(id, t.ring ? { ...near, ring } : Math.hypot(t.x - s.x, t.y - s.y) < 0.05 ? near : { ...near, ring: offRing < 0.2 && Math.abs(d) > kerbStep ? ring : undefined });
       continue;
     }
     shown.set(id, { x: s.x + (t.x - s.x) * k, y: s.y + (t.y - s.y) * k, dx: t.dx, dy: t.dy });
   }
+
   tooltip(obs);
   hl.spotlight = obs.auction ? obs.auction.company : null;
   hl.meterFor = obs.companies.map((c) => c.id); // public: everyone sees every company's progress
