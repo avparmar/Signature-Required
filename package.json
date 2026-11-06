@@ -16,7 +16,8 @@
     "sim": "tsx sim/src/run.ts",
     "dev": "npm run dev -w client",
     "build": "npm run build -w client",
-    "experiments": "tsx sim/src/experiments.ts"
+    "experiments": "tsx sim/src/experiments.ts",
+    "treasury": "tsx sim/src/treasury.ts"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

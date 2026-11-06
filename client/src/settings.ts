@@ -44,6 +44,8 @@ export const SETTINGS: Setting[] = [
   { group: 'Businesses', label: 'Cycle length', section: 'cycles', key: 'cycleSec', unit: 's', min: 10, max: 180, step: 5 },
   { group: 'Businesses', label: 'Grace period', section: 'cycles', key: 'graceSec', unit: 's', min: 0, max: 300, step: 15, hint: 'Before a new or just-changed business can be judged again.' },
   { group: 'Auctions', label: 'Auction clock', section: 'auctions', key: 'clockSec', unit: 's', min: 10, max: 120, step: 5 },
+  { group: 'Auctions', label: "Opening bid to put up a share of a company you don't lead", section: 'auctions', key: 'rivalOpeningBid', unit: '$', min: 0, max: 100, step: 1 },
+  { group: 'Auctions', label: 'Longest an auction can run', section: 'auctions', key: 'maxSec', unit: 's', min: 10, max: 300, step: 5, hint: 'Late bids add time, but never past this.' },
   { group: 'Auctions', label: 'Wait after a share sells', section: 'auctions', key: 'saleCooldownSec', unit: 's', min: 0, max: 300, step: 15 },
 ];
 

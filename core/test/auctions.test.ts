@@ -111,6 +111,27 @@ describe('bidding', () => {
     expect(g.companies[0].shares[0]).toBe(1);
   });
 
+  it('late bids add time, but an auction never runs past 60s in all', () => {
+    const g = newGame({ seed: 3, auctions: { openingBid: 20 } });
+    g.step();
+    let amount = 20;
+    let bidder = 1;
+    // Keep bidding in the last couple of seconds, forever.
+    let steps = 0;
+    for (; steps < 2000 && g.auction?.company === 0; steps++) {
+      if (g.auction.timeLeft < 2) {
+        g.act(bidder, { type: 'bid', company: 0, amount });
+        amount += 2;
+        bidder = 3 - bidder;
+      }
+      g.step();
+    }
+    expect(g.auction?.company).toBe(1);
+    expect(steps * g.cfg.tickSec).toBeGreaterThan(40); // the bids did extend it past its 30s clock
+    expect(steps * g.cfg.tickSec).toBeLessThanOrEqual(60 + g.cfg.tickSec);
+    expect(g.drainEvents(0).some((e) => e.type === 'auctionWon' && e.company === 0)).toBe(true);
+  });
+
   it('rejects bids for a company that is not being auctioned', () => {
     const g = newGame({ seed: 3, auctions: { openingBid: 20 } });
     g.step();
@@ -121,7 +142,7 @@ describe('bidding', () => {
 });
 
 describe('in-game auctions', () => {
-  it('a president can auction a bank-held share; others cannot', () => {
+  it('a president can auction a bank-held share; others need to open the bidding', () => {
     const g = running();
     g.act(1, { type: 'startAuction', company: 0 });
     g.act(0, { type: 'startAuction', company: 0 });
@@ -132,6 +153,49 @@ describe('in-game auctions', () => {
     stepFor(g, 31);
     expect(g.companies[0].shares).toEqual([0, 0, null, null, null]);
     expect(g.companies[0].treasury).toBe(30);
+  });
+
+  it('anyone can put up a bank share by opening the bidding; the president can outbid them', () => {
+    const g = running();
+    g.act(1, { type: 'startAuction', company: 0, bid: 10 }); // below the opening bid ($20 here)
+    g.act(1, { type: 'startAuction', company: 0, bid: 25 });
+    g.step();
+    expect(of(g.drainEvents(1), 'rejected')).toHaveLength(1);
+    expect(g.auction).toMatchObject({ company: 0, seller: null, startedBy: 1, highBid: 25, highBidder: 1 });
+    expect(g.players[1].held).toBe(25);
+    g.act(0, { type: 'bid', company: 0, amount: 27 });
+    stepFor(g, 31);
+    expect(g.companies[0].shares).toEqual([0, 0, null, null, null]);
+    expect(g.companies[0].treasury).toBe(27);
+    expect(g.players[1].held).toBe(0);
+  });
+
+  it("a rival's opening bid wins if nobody beats it", () => {
+    const g = running();
+    g.act(1, { type: 'startAuction', company: 0, bid: 20 });
+    stepFor(g, 31);
+    expect(g.companies[0].shares).toEqual([0, 1, null, null, null]);
+    expect(g.presidents(0)).toEqual([0, 1]); // tied: co-presidents
+  });
+
+  it("a rival can't open with more than they have, and loses their place if they spend it while queued", () => {
+    const g = running();
+    for (const c of [2, 3, 4]) g.companies[c].shares = [3, 3, 3, 3, 3]; // nothing else for the bank to offer
+    g.act(1, { type: 'startAuction', company: 0, bid: g.players[1].cash + 1 });
+    g.step();
+    expect(of(g.drainEvents(1), 'rejected')).toHaveLength(1);
+    // Company 1 is being auctioned; player 1 queues an offer for company 0, then bids its cash away.
+    g.companies[1].shares = [2, null, null, null, null];
+    g.act(2, { type: 'startAuction', company: 1 });
+    g.step();
+    g.act(1, { type: 'startAuction', company: 0, bid: 20 });
+    g.act(1, { type: 'bid', company: 1, amount: g.players[1].cash });
+    stepFor(g, 31);
+    expect(g.auction).toBeNull();
+    const evs = g.drainEvents(1);
+    expect(of(evs, 'rejected').length).toBeGreaterThanOrEqual(1);
+    expect(of(evs, 'auctionStart').some((e) => e.type === 'auctionStart' && e.company === 0)).toBe(false);
+    expect(g.elapsed).toBeGreaterThanOrEqual(g.auctionCooldownUntil[0]); // no cooldown for company 0
   });
 
   it('runs one auction at a time; requests wait in line, one per company', () => {

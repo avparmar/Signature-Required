@@ -100,6 +100,7 @@ interface Route {
 export class Bot {
   private lastThink = -Infinity;
   private lastInvest = -Infinity;
+  private lastBuyIn = -Infinity;
   /** Deliveries per company in the last few minutes (from events). */
   private recent: { t: number; company: number; price: number }[] = [];
 
@@ -139,6 +140,8 @@ export class Bot {
     this.lastThink = obs.elapsed;
     if (obs.phase === 'running') {
       for (const c of obs.companies) if (c.presidents.includes(this.me)) out.push(...this.runCompany(obs, c.id));
+      const buyIn = this.buyIn(obs);
+      if (buyIn) out.push(buyIn);
       const inv = this.invest(obs);
       if (inv) out.push(inv);
     }
@@ -325,6 +328,10 @@ export class Bot {
     const wouldControl = myShares + 1 >= top;
     let value = this.shareValue(obs, a.company, min);
     if (wouldControl && !c.presidents.includes(this.me)) value *= 1 + this.personality.controlBonus;
+    // Defending its company: a rival winning this bank share would catch up with it.
+    const rival = a.highBidder;
+    if (c.presidents.includes(this.me) && a.seller === null && rival !== null && rival !== this.me && (counts.get(rival) ?? 0) + 1 >= myShares)
+      value *= 1 + this.personality.controlBonus;
     if (min > value * this.personality.greed) return null;
     return { type: 'bid', company: a.company, amount: min };
   }
@@ -492,6 +499,37 @@ export class Bot {
       }
     }
     return out;
+  }
+
+  // ---------------------------------------------------------------- buying in
+
+  /**
+   * Buying into a company it doesn't lead: when one still has bank shares that look worth more
+   * than they'd cost, put one up itself by opening the bidding (rivals have to, presidents don't).
+   * It opens low, at about 60% of what it would pay, and bids on from there like anyone else.
+   */
+  private buyIn(obs: Observation): Action | null {
+    if (obs.elapsed - this.lastBuyIn < 20 || obs.auction?.highBidder === this.me) return null;
+    const cfg = this.cfg.auctions;
+    const rivalMin = Math.max(cfg.openingBid, cfg.rivalOpeningBid);
+    const me = obs.players[this.me];
+    const available = (me.cash - me.held) * this.personality.maxCashPerBid;
+    if (available < rivalMin) return null;
+    const factor = this.personality.speculator ? this.personality.speculator.discount : this.personality.greed;
+    let best: { company: number; bid: number; gain: number } | null = null;
+    for (const c of obs.companies) {
+      if (c.presidents.length === 0 || c.presidents.includes(this.me) || !c.shares.includes(null)) continue;
+      if (obs.auction?.company === c.id || obs.auctionQueue.some((r) => r.company === c.id)) continue;
+      if (obs.elapsed < obs.auctionCooldownUntil[c.id]) continue;
+      const pay = this.shareValue(obs, c.id, rivalMin) * factor;
+      const bid = Math.max(rivalMin, Math.floor(0.6 * pay));
+      if (pay < rivalMin || bid > available) continue;
+      const gain = pay / bid;
+      if (!best || gain > best.gain) best = { company: c.id, bid, gain };
+    }
+    if (!best) return null;
+    this.lastBuyIn = obs.elapsed;
+    return { type: 'startAuction', company: best.company, bid: best.bid };
   }
 
   // ---------------------------------------------------------------- location investment

@@ -497,6 +497,8 @@ function refreshAuction(obs: Observation) {
     // What a share paid last time: about the least to expect from the next payout.
     html += `<div class="row small"><span>Last dividend</span><b>${lastDividend.has(c.id) ? `${money(lastDividend.get(c.id)!)}/share` : 'none yet'}</b></div>`;
     if (leading) html += '<div class="good small">You’re the high bidder.</div>';
+    if (a.age + a.timeLeft >= g.cfg.auctions.maxSec - 0.05 && a.timeLeft < g.cfg.auctions.softCloseSec)
+      html += `<div class="muted small">Final seconds: bids no longer add time (${g.cfg.auctions.maxSec}s limit).</div>`;
     // Who's still in: it ends early once everyone but the high bidder has passed.
     const still = stillBidding(a, obs.players.length);
     const passed = a.passed.map((p) => (p === obs.me ? 'you' : `P${p + 1}`));
@@ -512,6 +514,18 @@ function refreshAuction(obs: Observation) {
       const cooldown = obs.auctionCooldownUntil[id] - obs.elapsed;
       if (bank && !queued)
         html += `<div class="row small"><span>${sw(id)}${coName(id)}: ${bank} bank share${bank === 1 ? '' : 's'}</span><button data-auction="${id}" ${cooldown > 0 ? 'disabled' : ''}>${cooldown > 0 ? `wait ${Math.ceil(cooldown)}s` : 'Auction one'}</button></div>`;
+    }
+    // Anyone can force a bank share of another company onto the market by opening the bidding.
+    const rivalMin = Math.max(g.cfg.auctions.openingBid, g.cfg.auctions.rivalOpeningBid);
+    const others = watching ? [] : obs.companies.filter((c) => c.presidents.length && !c.presidents.includes(obs.me) && c.shares.includes(null));
+    if (others.length) html += `<div class="muted small" title="Open the bidding on one of its bank shares. Its president can outbid you to keep it; the money goes to the company either way.">Buy into a company you don't lead:</div>`;
+    for (const c of others) {
+      const bank = c.shares.filter((s) => s === null).length;
+      const queued = (a && a.company === c.id) || obs.auctionQueue.some((r) => r.company === c.id);
+      const cooldown = obs.auctionCooldownUntil[c.id] - obs.elapsed;
+      const broke = me.cash - me.held < rivalMin;
+      const label = a && a.company === c.id ? 'on now' : queued ? 'up next' : cooldown > 0 ? `wait ${Math.ceil(cooldown)}s` : `Offer ${money(rivalMin)}`;
+      html += `<div class="row small"><span title="${coName(c.id)}">${sw(c.id)}${COMPANY_NAMES[companySlot(c.id)][1]}: ${bank} in the bank</span><button data-offer="${c.id}" ${queued || cooldown > 0 || broke ? 'disabled' : ''}>${label}</button></div>`;
     }
   }
   if (box.dataset.html !== html) {
@@ -663,6 +677,9 @@ document.addEventListener('pointerdown', (e) => {
     const id = Number(b.dataset.auction);
     session.act({ type: 'startAuction', company: id });
     activeCompany = id;
+  } else if (b.dataset.offer) {
+    const rivalMin = Math.max(session.cfg.auctions.openingBid, session.cfg.auctions.rivalOpeningBid);
+    session.act({ type: 'startAuction', company: Number(b.dataset.offer), bid: rivalMin });
   } else if (b.dataset.truck) {
     const [c, s] = b.dataset.truck.split(':').map(Number);
     session.act({ type: 'buyTruck', company: c, depot: s });
