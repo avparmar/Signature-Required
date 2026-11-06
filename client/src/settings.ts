@@ -39,6 +39,7 @@ export const SETTINGS: Setting[] = [
   { group: 'Factories', label: 'Biggest discount', section: 'depots', key: 'maxSubsidy', scale: 100, unit: '%', min: 0, max: 100, step: 5 },
   { group: 'Factories', label: 'Pickups + deliveries for any discount', section: 'depots', key: 'subsidyMinPallets', min: 0, max: 100, step: 1 },
   { group: 'Factories', label: 'Pickups + deliveries for the full discount', section: 'depots', key: 'subsidyTarget', min: 1, max: 300, step: 5 },
+  { group: 'Factories', label: 'A new factory site every', section: 'depots', key: 'newSiteEverySec', unit: 's', min: 0, max: 600, step: 30, hint: '0 for never. From that long in, until the last two minutes.' },
   { group: 'Factories', label: 'Subsidy zone', section: 'depots', key: 'districtBlocks', unit: 'blocks', min: 1, max: 12, step: 1 },
   { group: 'Businesses', label: 'A new business every', section: 'openings', key: 'everySec', unit: 's', min: 10, max: 300, step: 5 },
   { group: 'Businesses', label: 'Cycle length', section: 'cycles', key: 'cycleSec', unit: 's', min: 10, max: 180, step: 5 },

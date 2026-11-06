@@ -1,8 +1,10 @@
-/** Treasury flow at each dividend, and who owns the shares, over bot games. Run: npm run treasury -- [games] */
+/** Treasury flow at each dividend, and who owns the shares, over bot games. Run: npm run treasury -- [games] [overrides JSON] */
 import { Game, makeGameConfig } from '@sr/core';
 import { runGame } from './runner.js';
 
 const games = Number(process.argv[2] ?? 20);
+/** Optional config overrides as JSON, e.g. '{"depots":{"newSiteEverySec":0}}'. */
+const extra = JSON.parse(process.argv[3] ?? '{}');
 const MARKS = 5;
 type Acc = Record<string, number[]>;
 const acc: Acc = {};
@@ -53,7 +55,7 @@ proto.emit = function (this: Game, to, e) {
 };
 
 for (let s = 0; s < games; s++) {
-  const cfg = makeGameConfig({ seed: 1000 + s });
+  const cfg = makeGameConfig({ ...extra, seed: 1000 + s });
   const n = cfg.companies;
   const z = () => new Array(n).fill(0);
   current = { income: z(), auction: z(), buyback: z(), trucks: z(), depots: z(), truckSpend: z(), depotSpend: z() };
@@ -95,7 +97,7 @@ for (let s = 0; s < games; s++) {
     for (const k of Object.keys(c0) as (keyof typeof c0)[]) c0[k] = z();
   };
   let last: Game | null = null;
-  runGame({ seed: 1000 + s }, [], (g) => {
+  runGame({ ...extra, seed: 1000 + s }, [], (g) => {
     last = g;
     if (g.phase !== 'running') return;
     for (const c of g.companies) if (fullAt[c.id] < 0 && c.shares.every((x) => x !== null)) fullAt[c.id] = g.elapsed / 60;
