@@ -460,18 +460,23 @@ const sw = (c: number) => `<span class="swatch" style="background:${companyColor
 interface Card {
   root: HTMLElement;
   info: HTMLElement;
-  form: HTMLFormElement;
-  input: HTMLInputElement;
-  bid: HTMLButtonElement;
-  ask: HTMLButtonElement;
-  /** What the amount was last set for (a sale starting resets it to that sale's minimum). */
+  /** The broker box: buy or sell at once, or place your own order at a price on the slider. */
+  form: HTMLElement;
+  quick: HTMLElement;
+  buyNow: HTMLButtonElement;
+  sellNow: HTMLButtonElement;
+  slider: HTMLInputElement;
+  price: HTMLElement;
+  lo: HTMLElement;
+  hi: HTMLElement;
+  placeBuy: HTMLButtonElement;
+  placeSell: HTMLButtonElement;
+  /** What the slider was last set for (a sale starting moves it to that sale's minimum). */
   key: string;
 }
 const cards = new Map<number, Card>();
-/** Companies whose trade box you've opened (it's always open while the company holds a sale). */
-const tradeOpen = new Set<number>();
 
-/** A company's card: the info part re-renders; the trade box is built once, so typing isn't interrupted. */
+/** A company's card: the info part re-renders; the broker box is built once, so dragging isn't interrupted. */
 function card(id: number): Card {
   let k = cards.get(id);
   if (k) return k;
@@ -479,34 +484,25 @@ function card(id: number): Card {
   root.className = 'co';
   root.dataset.cohover = String(id);
   const info = document.createElement('div');
-  const form = document.createElement('form');
-  form.className = 'trade';
-  form.innerHTML = `<button type="button" data-step="-5" title="Down to the previous $5">−5</button><button type="button" data-step="-1" title="$1 less">−1</button><span class="amount">$<input type="number" min="0" step="1" inputmode="numeric" /></span><button type="button" data-step="1" title="$1 more">+1</button><button type="button" data-step="5" title="Up to the next $5">+5</button><button type="submit" class="go" data-side="bid">Bid</button><button type="button" class="go2" data-side="ask">Ask</button>`;
+  const form = document.createElement('div');
+  form.className = 'broker';
+  form.innerHTML = `<div class="quick"><button type="button" class="buy-now"></button><button type="button" class="sell-now"></button></div><div class="slide"><span class="lo"></span><input type="range" min="1" max="2" step="1" aria-label="Price for your order" /><span class="hi"></span></div><div class="order"><b class="px"></b><button type="button" class="place-buy"></button><button type="button" class="place-sell"></button></div>`;
   root.append(info, form);
-  const input = form.querySelector('input')!;
-  k = { root, info, form, input, bid: form.querySelector('[data-side=bid]')!, ask: form.querySelector('[data-side=ask]')!, key: '' };
+  const q = <T extends HTMLElement>(sel: string) => form.querySelector<T>(sel)!;
+  k = { root, info, form, quick: q('.quick'), buyNow: q('.buy-now'), sellNow: q('.sell-now'), slider: q('input'), price: q('.px'), lo: q('.lo'), hi: q('.hi'), placeBuy: q('.place-buy'), placeSell: q('.place-sell'), key: '' };
   cards.set(id, k);
-  form.addEventListener('click', (e) => {
-    const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-step]');
-    if (!b) return;
-    const v = Math.floor(Number(input.value) || 0);
-    const step = Number(b.dataset.step);
-    // ±5 goes to round amounts ($33 -> $35 -> $40); ±1 goes a dollar.
-    input.value = String(Math.max(0, Math.abs(step) === 5 ? (step > 0 ? Math.floor(v / 5) * 5 + 5 : Math.ceil(v / 5) * 5 - 5) : v + step));
-    refreshCompanies(session.obs());
+  const kk = k;
+  kk.slider.addEventListener('input', () => refreshCompanies(session.obs()));
+  // Buttons act on press (the panel can re-render between press and release).
+  const press = (b: HTMLButtonElement, f: () => void) => b.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0 || b.disabled) return;
+    f();
+    refreshPanels(session.obs());
   });
-  const send = (side: 'bid' | 'ask') => {
-    const amount = Math.floor(Number(input.value));
-    if (!Number.isFinite(amount)) return;
-    if (side === 'bid') session.act({ type: 'bid', company: id, amount });
-    else session.act({ type: 'ask', company: id, price: amount });
-    input.blur();
-  };
-  form.addEventListener('submit', (e) => {
-    e.preventDefault();
-    send('bid');
-  });
-  k.ask.addEventListener('click', () => send('ask'));
+  press(kk.buyNow, () => session.act({ type: 'buy', company: id }));
+  press(kk.sellNow, () => session.act({ type: 'sell', company: id, to: (kk.sellNow.dataset.to as 'bid' | 'company') ?? 'bid' }));
+  press(kk.placeBuy, () => session.act({ type: 'bid', company: id, amount: Number(kk.slider.value) }));
+  press(kk.placeSell, () => session.act({ type: 'ask', company: id, price: Number(kk.slider.value) }));
   return k;
 }
 
@@ -548,7 +544,12 @@ function refreshCompanies(obs: Observation) {
     const book = obs.books[c.id];
     const who = (p: number) => (p === obs.me && !watching ? 'you' : seatShort(p));
     let html = `<div class="row"><span>${sw(c.id)}<b>${coName(c.id)}</b></span><span title="Treasury">${money(c.treasury)}</span></div>`;
-    html += `<div class="chips">${chips}</div>`;
+    let saleBtn = '';
+    if (acting && obs.phase === 'running' && own && !sale && c.presidents.length) {
+      const cooldown = obs.saleCooldownUntil[c.id] - obs.elapsed;
+      saleBtn = `<button class="mini" data-startsale="${c.id}" ${cooldown > 0 ? 'disabled' : ''} title="Put one of the company's own shares up for sale. The best bid at the end gets it, if it's at least ${money(obs.minPrice[c.id])}; the money goes to the company.">${cooldown > 0 ? `Sale in ${Math.ceil(cooldown)}s` : 'Start a sale'}</button>`;
+    }
+    html += `<div class="chips">${chips}${saleBtn}</div>`;
     html += `<div class="row muted small"><span>${trucks} trucks · ${depots} factor${depots === 1 ? 'y' : 'ies'} · ${routes} route${routes === 1 ? '' : 's'}</span></div>`;
     html += `<div class="row small"><span title="Trucks and factories at what they cost, plus cash">Worth <b>${money(obs.value[c.id])}</b></span><span class="muted" title="Dividend per share: the last one paid, and the next one so far">Dividend ${lastDividend.has(c.id) ? money(lastDividend.get(c.id)!) : '—'} → ${money(c.dividendPerShare)}</span></div>`;
     // A sale running: the share goes to the best bid at the end, if it's at least the minimum.
@@ -563,30 +564,17 @@ function refreshCompanies(obs: Observation) {
       if (last) html += `<div class="muted small">Final seconds: bids no longer add time.</div>`;
       html += `</div>`;
     }
-    // The market: standing orders, the company's buy-back price, and starting a sale.
+    // The market: standing orders (yours can be withdrawn), the company's buy-back price, and starting a sale.
     if (obs.phase === 'running') {
       const rows: string[] = [];
-      if (book.bid && !sale) {
-        const yours = book.bid.player === obs.me && !watching;
-        rows.push(`<div class="row small"><span>Bid ${money(book.bid.price)} (${who(book.bid.player)})</span>${!acting ? '' : yours ? `<button class="mini" data-cancel="${c.id}:bid">Withdraw</button>` : `<button class="mini" data-sell="${c.id}:bid" ${mine ? '' : 'disabled'} title="Sell one of your shares to them">Sell</button>`}</div>`);
-      }
-      if (book.ask) {
-        const yours = book.ask.player === obs.me && !watching;
-        rows.push(`<div class="row small"><span>Ask ${money(book.ask.price)} (${who(book.ask.player)})</span>${!acting ? '' : yours ? `<button class="mini" data-cancel="${c.id}:ask">Withdraw</button>` : `<button class="mini" data-buy="${c.id}" ${free >= book.ask.price ? '' : 'disabled'}>Buy</button>`}</div>`);
-      }
+      const order = (side: 'bid' | 'ask', o: { player: number; price: number }) => {
+        const yours = o.player === obs.me && !watching;
+        return `<div class="row small"><span>${side === 'bid' ? 'Buying' : 'Selling'}: ${money(o.price)} (${who(o.player)})</span>${acting && yours ? `<button class="mini" data-cancel="${c.id}:${side}">Withdraw</button>` : ''}</div>`;
+      };
+      if (book.bid && !sale) rows.push(order('bid', book.bid));
+      if (book.ask) rows.push(order('ask', book.ask));
       const cb = obs.companyBid[c.id];
-      if (cb !== null)
-        rows.push(`<div class="row small"><span title="Half its worth per share, while its cash covers that">Company buys back at ${money(cb)}</span>${acting ? `<button class="mini" data-sell="${c.id}:company" ${mine ? '' : 'disabled'}>Sell</button>` : ''}</div>`);
-      if (acting) {
-        const cooldown = obs.saleCooldownUntil[c.id] - obs.elapsed;
-        const saleBtn =
-          own && !sale && c.presidents.length
-            ? `<button class="mini" data-startsale="${c.id}" ${cooldown > 0 ? 'disabled' : ''} title="Put one of the company's own shares up for sale. The best bid at the end gets it, if it's at least ${money(obs.minPrice[c.id])}; the money goes to the company.">${cooldown > 0 ? `Sale in ${Math.ceil(cooldown)}s` : 'Start a sale'}</button>`
-            : '';
-        const open = tradeOpen.has(c.id);
-        const tradeBtn = sale ? '' : `<button class="mini${open ? ' on' : ''}" data-trade="${c.id}">${open ? 'Done' : 'Bid / ask…'}</button>`;
-        if (saleBtn || tradeBtn) rows.push(`<div class="row small actions">${saleBtn}${tradeBtn}</div>`);
-      }
+      if (cb !== null) rows.push(`<div class="row small"><span title="Half its worth per share, while its cash covers that">Company buys back at ${money(cb)}</span></div>`);
       html += rows.join('');
     }
     if (k.info.dataset.html !== html) {
@@ -594,24 +582,58 @@ function refreshCompanies(obs: Observation) {
       k.info.dataset.html = html;
     }
     k.root.classList.toggle('selling', !!sale);
-    // The trade box: open while the company holds a sale you could bid in, or when you've opened it.
-    const show = acting && ((sale && (!sale.opening || obs.sales[0]?.company === c.id)) || (obs.phase === 'running' && tradeOpen.has(c.id)));
+    // The broker box: always there once the market is open; in the opening round, only on the company being sold.
+    const show = acting && (obs.phase === 'running' || (sale !== undefined && obs.sales[0]?.company === c.id));
     k.form.hidden = !show;
-    if (!show) k.key = '';
-    if (show) {
-      const least = leastBid(obs, c.id);
-      // A new sale (or opening the box) starts the amount at the least bid that would count.
-      const key = sale ? `sale@${Math.round(obs.elapsed - sale.age)}` : 'open';
-      const fresh = key !== k.key;
-      k.key = key;
-      if (document.activeElement !== k.input && (fresh || (sale && !(Number(k.input.value) >= least)))) k.input.value = String(least);
-      const v = Math.floor(Number(k.input.value));
-      const yoursBid = book.bid?.player === obs.me;
-      k.bid.textContent = yoursBid ? 'Raise bid' : 'Bid';
-      k.bid.disabled = !(v >= least) || v - (yoursBid ? book.bid!.price : 0) > free;
-      k.ask.hidden = !!sale || !mine;
-      k.ask.disabled = !(v >= 1);
+    if (!show) {
+      k.key = '';
+      return;
     }
+    const cfg = session.cfg.auctions;
+    const myBid = book.bid?.player === obs.me ? book.bid.price : 0;
+    const otherBid = book.bid && book.bid.player !== obs.me ? book.bid.price : null;
+    const otherAsk = book.ask && book.ask.player !== obs.me ? book.ask.price : null;
+    const cb = obs.companyBid[c.id];
+    // Buy now (at the standing ask) and sell now (to the best of a player's bid and the company's).
+    k.quick.hidden = obs.phase !== 'running';
+    k.buyNow.innerHTML = otherAsk !== null ? `Buy now <b>${money(otherAsk)}</b>` : 'Buy now <b>—</b>';
+    k.buyNow.disabled = otherAsk === null || free < otherAsk;
+    k.buyNow.title = otherAsk === null ? 'Nobody is selling a share right now' : free < otherAsk ? 'Not enough cash' : `Buy ${who(book.ask!.player)}'s share`;
+    const toCompany = cb !== null && (otherBid === null || cb >= otherBid);
+    const sellAt = toCompany ? cb : otherBid;
+    k.sellNow.dataset.to = toCompany ? 'company' : 'bid';
+    k.sellNow.innerHTML = sellAt !== null ? `Sell now <b>${money(sellAt)}</b>` : 'Sell now <b>—</b>';
+    k.sellNow.disabled = sellAt === null || !mine;
+    k.sellNow.title = sellAt === null ? 'Nobody is buying right now' : !mine ? "You don't own a share" : toCompany ? 'Sell a share back to the company' : `Sell a share to ${who(book.bid!.player)}`;
+    // The slider runs from the least buy order that would stand to just below the standing ask
+    // (or, with nobody selling, well above the company's worth per share).
+    const low = leastBid(obs, c.id);
+    const perShare = Math.ceil(obs.value[c.id] / c.shares.length);
+    const high = Math.max(low, otherAsk !== null ? otherAsk - 1 : Math.max(low + 20, Math.ceil(perShare * 1.5)));
+    k.slider.min = String(low);
+    k.slider.max = String(high);
+    const key = sale ? `sale@${Math.round(obs.elapsed - sale.age)}` : 'market';
+    let v = Math.round(Number(k.slider.value));
+    // A fresh box starts halfway between the poles (a sale's starts at its minimum).
+    if (key !== k.key) v = sale ? low : Math.round((low + high) / 2);
+    k.key = key;
+    v = Math.min(high, Math.max(low, v));
+    if (Number(k.slider.value) !== v) k.slider.value = String(v);
+    k.slider.disabled = low >= high;
+    k.price.textContent = money(v);
+    k.lo.textContent = money(low);
+    k.lo.title = 'The least a buy order can be now';
+    k.hi.textContent = money(high);
+    k.hi.title = otherAsk !== null ? 'Just below the standing sell price' : 'Nobody is selling: well above its worth per share';
+    // Place a buy order at that price (in a sale, that's your bid), or a sell order for one of your shares.
+    k.placeBuy.textContent = myBid ? 'Raise buy' : sale ? 'Bid' : 'Place buy';
+    k.placeBuy.disabled = v < low || (otherAsk !== null && v >= otherAsk) || v - myBid > free;
+    k.placeBuy.title = v - myBid > free ? 'Not enough cash' : `Offer ${money(v)} for a share${sale ? ' in this sale' : ''}; it holds that cash until it's filled, beaten or withdrawn`;
+    k.placeSell.textContent = book.ask?.player === obs.me ? 'Lower sell' : 'Place sell';
+    k.placeSell.hidden = !!sale;
+    const sellOk = mine > 0 && v > (otherBid ?? 0) && v > (cb ?? 0) && (otherAsk === null || v <= otherAsk - cfg.minRaise) && (book.ask?.player !== obs.me || v < book.ask.price);
+    k.placeSell.disabled = !sellOk;
+    k.placeSell.title = !mine ? "You don't own a share" : sellOk ? `Offer one of your shares for ${money(v)}` : 'At this price, sell now instead (or undercut the standing price)';
   });
 }
 
@@ -686,10 +708,6 @@ document.addEventListener('pointerdown', (e) => {
   const obs = session.obs();
   if (b.dataset.startsale) {
     session.act({ type: 'startSale', company: Number(b.dataset.startsale) });
-  } else if (b.dataset.trade) {
-    const id = Number(b.dataset.trade);
-    if (tradeOpen.has(id)) tradeOpen.delete(id);
-    else tradeOpen.add(id);
   } else if (b.dataset.sell) {
     const [c, to] = b.dataset.sell.split(':');
     session.act({ type: 'sell', company: Number(c), to: to as 'bid' | 'company' });
