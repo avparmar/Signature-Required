@@ -469,7 +469,7 @@ function refreshPanels(obs: Observation) {
           })
           .join('') + (bank ? `<span class="chip bank" title="Still with the bank">bank ×${bank}</span>` : '');
       const routes = obs.routes.filter((r) => r.company === c.id).length;
-      return `<div class="co" data-cohover="${c.id}"><div class="row"><span>${sw(c.id)}<b>${coName(c.id)}</b></span><span>${money(c.treasury)}</span></div><div class="chips">${chips}</div><div class="row muted small"><span>${trucks} trucks · ${depots} factor${depots === 1 ? 'y' : 'ies'} · ${routes} route${routes === 1 ? '' : 's'}</span></div><div class="row muted small"><span>Dividend: last · next</span><span>${lastDividend.has(c.id) ? money(lastDividend.get(c.id)!) : '–'} · ${money(c.dividendPerShare)}/share</span></div></div>`;
+      return `<div class="co" data-cohover="${c.id}"><div class="row"><span>${sw(c.id)}<b>${coName(c.id)}</b></span><span>${money(c.treasury)}</span></div><div class="chips">${chips}</div><div class="row muted small"><span>${trucks} trucks · ${depots} factor${depots === 1 ? 'y' : 'ies'} · ${routes} route${routes === 1 ? '' : 's'}</span></div><div class="row muted small"><span>Last dividend</span><span>${lastDividend.has(c.id) ? `${money(lastDividend.get(c.id)!)} / share` : 'none yet'}</span></div><div class="row muted small"><span>Next dividend</span><span>${money(c.dividendPerShare)} / share</span></div></div>`;
     })
     .join('');
 
@@ -710,9 +710,13 @@ function showPayout(paid: { company: number; amount: number; final: boolean }[])
         .map((p) => `<span>${sw(p.company)}${coName(p.company)} ${money(p.amount)}</span>`)
         .join('')}</div>`
     : `<div class="pay-title">Dividends paid</div><div class="pay-rows"><span>${watching ? 'Player 1 holds' : 'You hold'} no shares that paid this time.</span></div>`;
+  banner.innerHTML += '<div class="pay-close">click to close</div>';
   banner.classList.remove('show');
   void banner.offsetWidth; // restart the animation
   banner.classList.add('show');
+  banner.onclick = () => banner.classList.remove('show');
+  // Once it has faded out, it mustn't catch clicks meant for the map.
+  banner.onanimationend = () => banner.classList.remove('show');
   if (!total) return;
   const me = $('me');
   me.classList.remove('paid');
@@ -926,15 +930,15 @@ function handleEvents(evs: GameEvent[]) {
     else if (e.type === 'payout' && e.paid[session.seat]) {
       text = `Dividend from ${coName(e.company)}: ${money(e.paid[session.seat])}${e.final ? ' (final)' : ''}`;
       cls = 'good';
-    } else if (e.type === 'opened') text = `A ${e.kind === 'producer' ? names(e.good).source : names(e.good).shop} opened at ${at(e.location)}`;
+    } else if (e.type === 'opened') text = `[${at(e.location)}] A ${e.kind === 'producer' ? names(e.good).source : names(e.good).shop} opened`;
     else if (e.type === 'closed') {
-      text = `A ${bizName(e.location)} closed at ${at(e.location)}`;
+      text = `[${at(e.location)}] A ${bizName(e.location)} closed`;
       cls = 'bad';
     } else if (e.type === 'closing') {
-      text = `The ${bizName(e.location)} at ${at(e.location)} is about to close: serve it to save it`;
+      text = `[${at(e.location)}] A ${bizName(e.location)} is about to close: serve it to save it`;
       cls = 'bad';
     } else if (e.type === 'boughtDepot') {
-      text = `${coName(e.company)} bought the factory at ${at(e.site)} for ${money(e.price)}`;
+      text = `[${at(e.site)}] ${coName(e.company)} bought a factory for ${money(e.price)}`;
       const site = g.town.locations[e.site];
       renderer.puff(site.x, site.y);
     }
