@@ -5,7 +5,7 @@
  */
 import { makeGameConfig, type GameConfig, type GameConfigOverrides } from './config.js';
 import { minimumBid, stillBidding, type Auction, type AuctionEvent, type AuctionRequest } from './auctions.js';
-import { depotPrice, subsidisedPrice } from './depots.js';
+import { depotPrice, subsidisedPrice, truckPriceFor } from './depots.js';
 import { assignPrices, investCost, payPerShare } from './money.js';
 import { chooseOpening } from './openings.js';
 import { initLocations, newLocationState, raiseLevel, updateCycles, type CycleEvent, type LocationState } from './economy.js';
@@ -350,8 +350,8 @@ export class Game {
         if (this.depotOwner.get(action.depot) !== c.id) return reject('that depot belongs to someone else (or nobody)');
         if (this.trucksOf(c.id) >= this.truckLimit(c.id))
           return reject(`the fleet is full (${this.cfg.depots.capacity} trucks per factory): buy another factory`);
-        const price = this.cfg.depots.truckPrice;
-        if (c.treasury < price) return reject(`the treasury has $${c.treasury.toFixed(2)}; a truck costs $${price}`);
+        const price = truckPriceFor(this.cfg.depots, this.trucksOf(c.id));
+        if (c.treasury < price) return reject(`the treasury has $${c.treasury.toFixed(2)}; the next truck costs $${price.toFixed(2)}`);
         c.treasury -= price;
         c.assets += price;
         const truck = this.trucks.add(c.id, action.depot, this.town.locations[action.depot].node);

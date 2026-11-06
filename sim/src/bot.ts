@@ -12,6 +12,7 @@
  * - Spare cash: occasionally levels up the bottleneck location on a route its companies run.
  */
 import {
+  truckPriceFor,
   distanceToNetwork,
   distancesFrom,
   investCost,
@@ -190,11 +191,12 @@ export class Bot {
     const mins = Math.max(0, Math.round(this.minutesLeft(obs) - 1)); // the last stretch is discounted
     const buy = () => {
       for (;;) {
-        if (fleet < Math.min(cap, routeCap) && cash >= d.truckPrice) {
-          cash -= d.truckPrice;
-          assets += d.truckPrice;
+        const tp = truckPriceFor(d, fleet);
+        if (fleet < Math.min(cap, routeCap) && cash >= tp) {
+          cash -= tp;
+          assets += tp;
           fleet++;
-        } else if (this.personality.growth && fleet >= cap && cap !== Infinity && cash >= factoryPrice + d.truckPrice) {
+        } else if (this.personality.growth && fleet >= cap && cap !== Infinity && cash >= factoryPrice + tp) {
           cash -= factoryPrice;
           assets += factoryPrice;
           cap += d.capacity;
@@ -312,7 +314,9 @@ export class Bot {
     const floor = this.raiseFloor.get(a.company);
     const me0 = obs.players[this.me];
     const min0 = minimumBid(a, this.cfg.auctions);
-    if (floor !== undefined && min0 <= floor && min0 <= me0.cash - me0.held) return { type: 'bid', company: a.company, amount: min0 };
+    // It bids its floor straight away (not the minimum, which can be $0), so the share can't go for nothing.
+    if (floor !== undefined && min0 <= floor && min0 <= me0.cash - me0.held)
+      return { type: 'bid', company: a.company, amount: Math.max(min0, Math.min(floor, Math.floor(me0.cash - me0.held))) };
     // An auction it started to buy in: open with the bid it planned.
     const open = this.buyInBid.get(a.company);
     if (open !== undefined && a.highBidder === null && a.seller === null) {
@@ -450,15 +454,17 @@ export class Bot {
     const perDepot = (s: number) => obs.trucks.filter((t) => t.depot === s).length;
     const fleet = obs.trucks.filter((t) => t.company === company).length;
     const spare = fleet < myDepots.length * cfg.capacity ? [...myDepots].sort((a, b) => perDepot(a) - perDepot(b))[0] : undefined;
-    const worthIt = this.truckReturn(obs) >= 0.25 * cfg.truckPrice && this.pickRoute(obs, company, load) !== null;
-    if (spare !== undefined && c.treasury >= cfg.truckPrice && worthIt) {
+    // The next truck's price (it rises with the fleet when trucks cost more and more).
+    const nextTruck = truckPriceFor(cfg, fleet);
+    const worthIt = this.truckReturn(obs) >= 0.25 * nextTruck && this.pickRoute(obs, company, load) !== null;
+    if (spare !== undefined && c.treasury >= nextTruck && worthIt) {
       out.push({ type: 'buyTruck', company, depot: spare });
       return out;
     }
 
     // Depots full: buy the cheapest free site if affordable (with a truck to put in it). With
     // subsidy pricing that's the site in the area the company serves most; ties go to the nearest.
-    const factoryWorthIt = this.truckReturn(obs) >= cfg.truckPrice;
+    const factoryWorthIt = this.truckReturn(obs) >= nextTruck;
     if (spare === undefined && factoryWorthIt) {
       let cheapest: { site: number; price: number; dist: number } | null = null;
       for (const [siteId, prices] of Object.entries(obs.depotPrices)) {
@@ -471,7 +477,7 @@ export class Bot {
         if (!cheapest || price < cheapest.price || (price === cheapest.price && dist < cheapest.dist)) cheapest = { site: l.id, price, dist };
       }
       // A factory is worth it while a truck in it still pays for itself.
-      if (cheapest && c.treasury >= cheapest.price + cfg.truckPrice) {
+      if (cheapest && c.treasury >= cheapest.price + nextTruck) {
         out.push({ type: 'buyDepot', company, site: cheapest.site });
         return out;
       }
@@ -493,12 +499,12 @@ export class Bot {
       const room = Math.max(0, Math.min(myDepots.length * cfg.capacity, routes * this.perRoute) - fleet);
       const want =
         room > 0
-          ? Math.min(room, 4) * cfg.truckPrice
+          ? Array.from({ length: Math.min(room, 4) }, (_, i) => truckPriceFor(cfg, fleet + i)).reduce((a, b) => a + b, 0)
           : Number.isFinite(cheapestSite) && factoryWorthIt
-            ? cheapestSite + 2 * cfg.truckPrice
+            ? cheapestSite + nextTruck + truckPriceFor(cfg, fleet + 1)
             : 0;
       const need = want - c.treasury;
-      if (need >= cfg.truckPrice) {
+      if (need >= nextTruck) {
         const ask = Math.min(need, this.shareValue(obs, company, need) * this.personality.greed);
         const floor = Math.floor(0.75 * ask);
         const me = obs.players[this.me];
