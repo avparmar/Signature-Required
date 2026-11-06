@@ -9,7 +9,7 @@
  * - Trucks move smoothly between ticks, show the pallet they carry (empty = hollow), queue
  *   neatly beside a building, and show breakdowns and repairs.
  */
-import { routeVia, type Location, type Observation, type Route, type Town } from '@sr/core';
+import { distancesFrom, routeVia, type Location, type Observation, type Route, type Town } from '@sr/core';
 
 // Company colours stay clear of the goods' colours (wood brown, wheat gold, oil slate).
 export const COMPANY_COLORS = ['#d1452f', '#2a7ab0', '#3f9a54', '#8a5cc2', '#d24f93', '#1f9e9a'];
@@ -40,6 +40,8 @@ export interface Highlights {
   buyFor: number | null;
   /** Company being auctioned: its factories get a pulsing ring. */
   spotlight: number | null;
+  /** A free factory site's subsidy district (drive distance, blocks), shaded when it's hovered. */
+  district: number;
 }
 
 export class Renderer {
@@ -59,8 +61,16 @@ export class Renderer {
     this.ctx = canvas.getContext('2d')!;
   }
 
+  private districts = new Map<number, Float64Array>();
+  private districtOf(node: number): Float64Array {
+    const d = this.districts.get(node) ?? distancesFrom(this.town.graph, node);
+    this.districts.set(node, d);
+    return d;
+  }
+
   setTown(town: Town) {
     this.town = town;
+    this.districts.clear();
     this.paths.clear();
   }
 
@@ -225,6 +235,26 @@ export class Renderer {
         ctx.lineTo(this.X(b.x), this.Y(b.y));
       }
       ctx.stroke();
+    }
+
+    // A hovered free factory site: shade its district, where a company's pickups and deliveries
+    // earn it a subsidy on the site's price.
+    const site = hl.hover !== null ? town.locations[hl.hover] : null;
+    if (site && site.kind === 'depot' && obs.depots[site.id] === undefined) {
+      const d = this.districtOf(site.node);
+      ctx.strokeStyle = '#b08a1e';
+      ctx.globalAlpha = 0.28;
+      ctx.lineWidth = roadW * 2.4;
+      ctx.beginPath();
+      for (const e of town.graph.edges) {
+        if (d[e.a] > hl.district || d[e.b] > hl.district || term[e.a] || term[e.b]) continue;
+        const a = town.graph.nodes[e.a];
+        const b = town.graph.nodes[e.b];
+        ctx.moveTo(this.X(a.x), this.Y(a.y));
+        ctx.lineTo(this.X(b.x), this.Y(b.y));
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
     }
 
     // Routes, along the streets.

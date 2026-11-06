@@ -47,7 +47,7 @@ let lastUi = 0;
 
 // ------------------------------------------------------------------ selection and input state
 
-const hl: Highlights = { hover: null, picked: [], hoverRoute: null, buyFor: null, spotlight: null };
+const hl: Highlights = { hover: null, picked: [], hoverRoute: null, buyFor: null, spotlight: null, district: session.cfg.depots.districtBlocks };
 /** Company the player last acted for (route clicks default to it). */
 let activeCompany: number | null = null;
 /** Smoothed on-screen truck positions (town coordinates). */
@@ -286,7 +286,7 @@ function tooltip(obs: Observation) {
   } else if (l && l.kind === 'depot') {
     const owner = obs.depots[l.id];
     if (owner === undefined) {
-      html = `<b>Free factory site ${at(l.id)}</b>`;
+      html = `<b>Free factory site ${at(l.id)}</b><div class="muted">Shaded: within ${g.cfg.depots.districtBlocks} blocks. A company's pickups and deliveries here in the last ${Math.round(g.cfg.depots.subsidyWindowSec / 60)} minutes cut its price.</div>`;
       const prices = obs.depotPrices[l.id];
       for (const c of myCompanies(obs)) html += `<div>${coName(c)} would pay ${money(prices[c])}${prices[c] < g.cfg.depots.depotBase ? ' (local subsidy)' : ''}</div>`;
       if (!myCompanies(obs).length) html += `<div class="muted">Full price ${money(g.cfg.depots.depotBase)}, less a subsidy for companies serving the area.</div>`;
@@ -688,6 +688,7 @@ function newGame() {
   hl.buyFor = null;
   activeCompany = null;
   shownEnd = false;
+  hl.district = session.cfg.depots.districtBlocks;
 }
 
 $('btn-pause').onclick = togglePause;
