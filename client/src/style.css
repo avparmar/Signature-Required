@@ -180,3 +180,15 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #tooltip { max-width: 320px; }
 .route-row.saturated { background: #fbf0d6; }
 .route-row .wait { display: block; color: #a8690a; font-size: 11px; margin-left: 14px; font-weight: 600; cursor: help; }
+
+/* Settings card */
+.card.settings { max-width: 620px; max-height: calc(100vh - 80px); overflow-y: auto; }
+.card.settings h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 16px 0 4px; }
+.set-row { display: grid; grid-template-columns: 1fr 150px 90px; align-items: center; gap: 10px; padding: 4px 6px; border-radius: 6px; font-size: 14px; }
+.set-row.changed { background: #fbf0d6; }
+.set-in { display: flex; align-items: center; gap: 6px; }
+.set-in input { width: 80px; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; font: inherit; font-variant-numeric: tabular-nums; }
+.set-in em { font-style: normal; color: var(--muted); font-size: 12px; }
+.set-def { color: var(--muted); font-size: 12px; text-align: right; }
+.set-buttons { display: flex; gap: 8px; margin-top: 18px; }
+.card .set-buttons button.plain { background: #f0ebe0; color: var(--ink); }

@@ -9,9 +9,10 @@
  *   depots (affordable sites light up on the map with your price).
  * - Auction panel (#35): bid on the running auction; presidents can put bank-held shares up.
  */
-import { distancesFrom, minimumBid, stillBidding, type GameConfigOverrides, type GameEvent, type Location, type Observation } from '@sr/core';
+import { distancesFrom, makeGameConfig, minimumBid, stillBidding, type GameConfig, type GameConfigOverrides, type GameEvent, type Location, type Observation } from '@sr/core';
 import { Renderer, companyColor, coordOf, drawBusiness, drawFactory, goodColor, type Highlights } from './render.js';
 import { Session } from './session.js';
+import { SETTINGS, loadSettings, mergeOverrides, overridesFrom, saveSettings, valueIn, type Setting } from './settings.js';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const money = (x: number) => `$${Math.floor(x + 1e-9)}`;
@@ -48,7 +49,7 @@ function overridesFromUrl(): GameConfigOverrides {
   return o;
 }
 
-let session = new Session({ overrides: overridesFromUrl() });
+let session = new Session({ overrides: mergeOverrides(loadSettings(), overridesFromUrl()) });
 const renderer = new Renderer($<HTMLCanvasElement>('map'), session.game.town);
 renderer.via = session.cfg.trucks.viaDepot;
 let last = performance.now();
@@ -996,7 +997,7 @@ function togglePause() {
 
 function newGame() {
   const { seed: _replay, ...fresh } = overridesFromUrl(); // a new game gets a new town
-  session = new Session({ overrides: fresh });
+  session = new Session({ overrides: mergeOverrides(loadSettings(), fresh) });
   routeLog.clear();
   waitLog.clear();
   lastWaitSample = -1;
@@ -1030,6 +1031,57 @@ document.addEventListener('pointermove', (e) => {
 $('btn-help').onclick = () => showHelp();
 $<HTMLSelectElement>('speed').onchange = (e) => (session.speed = Number((e.target as HTMLSelectElement).value));
 $('btn-new').onclick = newGame;
+$('btn-settings').onclick = () => showSettings();
+
+/** The ⚙ card: tune the game, then start a new one with those settings (kept in this browser). */
+function showSettings() {
+  const ov = $('overlay');
+  const defaults = makeGameConfig({});
+  const current = makeGameConfig(loadSettings());
+  const decimals = (st: Setting) => (String(st.step).split('.')[1] ?? '').length;
+  const shown = (cfg: GameConfig, st: Setting) => (valueIn(cfg, st) * (st.scale ?? 1)).toFixed(decimals(st));
+  const groups = [...new Set(SETTINGS.map((st) => st.group))];
+  ov.innerHTML = `<div class="card settings"><h1>Settings</h1><p class="muted small">These apply when you start a new game, and are kept in this browser.</p>
+    ${groups
+      .map(
+        (gname) => `<h2>${gname}</h2>${SETTINGS.map((st, i) => (st.group !== gname ? '' : `<label class="set-row" data-i="${i}" title="${st.hint ?? ''}"><span>${st.label}</span>
+          <span class="set-in"><input type="number" data-i="${i}" min="${st.min}" max="${st.max}" step="${st.step}" value="${shown(current, st)}">${st.unit ? `<em>${st.unit}</em>` : ''}</span>
+          <span class="set-def">default ${shown(defaults, st)}</span></label>`)).join('')}`,
+      )
+      .join('')}
+    <div class="set-buttons"><button id="set-start">Start a new game</button><button id="set-reset" class="plain">Reset to defaults</button><button id="set-close" class="plain">Close</button></div></div>`;
+  ov.hidden = false;
+  const wasPaused = session.paused;
+  session.paused = true;
+  const inputs = [...ov.querySelectorAll<HTMLInputElement>('input[data-i]')];
+  const mark = () =>
+    inputs.forEach((inp) => {
+      const st = SETTINGS[Number(inp.dataset.i)];
+      inp.closest('.set-row')!.classList.toggle('changed', inp.value !== shown(defaults, st));
+    });
+  inputs.forEach((inp) => inp.addEventListener('input', mark));
+  mark();
+  const close = () => {
+    ov.hidden = true;
+    session.paused = wasPaused;
+  };
+  $('set-close').onclick = close;
+  $('set-reset').onclick = () => {
+    for (const inp of inputs) inp.value = shown(defaults, SETTINGS[Number(inp.dataset.i)]);
+    mark();
+  };
+  $('set-start').onclick = () => {
+    const values = new Map<Setting, number>();
+    for (const inp of inputs) {
+      const st = SETTINGS[Number(inp.dataset.i)];
+      const v = Number(inp.value);
+      if (Number.isFinite(v)) values.set(st, Math.min(st.max, Math.max(st.min, v)));
+    }
+    saveSettings(overridesFrom(values));
+    ov.hidden = true;
+    newGame();
+  };
+}
 window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement) return;
   if (e.key === 'p' || e.key === 'P' || e.key === ' ') {
