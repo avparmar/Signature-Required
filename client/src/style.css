@@ -143,3 +143,12 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 .guide-nav .dots span.on { background: var(--ink); }
 .card.help { max-height: calc(100vh - 80px); overflow-y: auto; }
 .card.help a { color: var(--ink); font-weight: 600; }
+.guide-list { margin: 4px 0 4px; padding-left: 22px; }
+.guide-list li { font-size: 14px; line-height: 1.6; }
+.gicons, .gchain { display: flex; align-items: center; justify-content: center; gap: 18px; margin: 12px 0 0; }
+.gicons figure, .gchain figure { margin: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.gicons figcaption, .gchain figcaption { font-size: 12px; color: var(--muted); }
+.gcol { display: flex; flex-direction: column; gap: 4px; }
+.garrow { font-size: 26px; color: var(--muted); }
+.card .guide-nav button.go { background: var(--ink); color: #fff; }
+.card button.link { background: none; color: var(--muted); padding: 0; font-size: 13px; text-decoration: underline; }

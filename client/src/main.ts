@@ -10,7 +10,7 @@
  * - Auction panel (#35): bid on the running auction; presidents can put bank-held shares up.
  */
 import { distancesFrom, minimumBid, stillBidding, type GameConfigOverrides, type GameEvent, type Location, type Observation } from '@sr/core';
-import { Renderer, companyColor, coordOf, goodColor, type Highlights } from './render.js';
+import { Renderer, companyColor, coordOf, drawBusiness, drawFactory, goodColor, type Highlights } from './render.js';
 import { Session } from './session.js';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -219,7 +219,7 @@ function click(sx: number, sy: number, right: boolean) {
   }
   if (l.kind === 'depot') {
     const owner = obs.depots[l.id];
-    if (owner === undefined) return toast('A free factory site. Buy it from the company panel.', 'info');
+    if (owner === undefined) return toast('An unclaimed factory site. Buy it from your company\'s card (Pick on map…).', 'info');
     if (!obs.companies[owner].presidents.includes(obs.me)) return toast(`That factory belongs to ${coName(owner)}.`, 'error');
     hl.picked = hl.picked.filter((id) => g.town.locations[id].kind !== 'depot');
   } else hl.picked = hl.picked.filter((id) => g.town.locations[id].kind !== l.kind);
@@ -307,7 +307,7 @@ function tooltip(obs: Observation) {
   } else if (l && l.kind === 'depot') {
     const owner = obs.depots[l.id];
     if (owner === undefined) {
-      html = `<b>Free factory site ${at(l.id)}</b><div><b>Gold = subsidy zone only.</b> A company's pickups and deliveries inside it over the last ${Math.round(g.cfg.depots.subsidyWindowSec / 60)} minutes cut its price for this site.</div><div class="muted">It isn't a range: a factory here can run routes anywhere.</div>`;
+      html = `<b>Unclaimed factory site ${at(l.id)}</b><div>Serving the producers and shops in the <b>gold zone</b> cuts a company's price here.</div><div class="muted">The zone is only for the discount: a factory here can run routes anywhere.</div>`;
       const prices = obs.depotPrices[l.id];
       const dc = g.cfg.depots;
       const mine = new Set(myCompanies(obs));
@@ -316,7 +316,7 @@ function tooltip(obs: Observation) {
         const full = prices[c] <= Math.round(dc.depotBase * (1 - dc.maxSubsidy));
         html += `<div>${full ? '★ ' : ''}${coName(c)}${mine.has(c) ? ' (yours)' : ''} would pay ${money(prices[c])}${full ? ', full discount' : ''}</div>`;
       }
-      html += `<div class="muted">Full price ${money(dc.depotBase)}. Each company earns its own discount: it starts after ${dc.subsidyMinPallets} pickups and deliveries in the zone, and reaches ${Math.round(100 * dc.maxSubsidy)}% off at ${dc.subsidyTarget}, counting the last ${Math.round(dc.subsidyWindowSec / 60)} minutes.</div>`;
+      html += `<div class="muted">Full price ${money(dc.depotBase)}, up to ${Math.round(100 * dc.maxSubsidy)}% off. Each company's discount starts after ${dc.subsidyMinPallets} pickups and deliveries in the zone and is full at ${dc.subsidyTarget} (over the last ${Math.round(dc.subsidyWindowSec / 60)} minutes).</div>`;
     } else {
       const routes = obs.routes.filter((r) => r.depot === l.id);
       const n = routes.reduce((a, r) => a + r.trucks, 0);
@@ -562,7 +562,7 @@ function refreshMyCompanies(obs: Observation) {
         html += `<button data-buysite="${id}:${site}" ${c.treasury < price ? 'disabled' : ''} title="${Math.round(dist(site))} blocks away${price < g.cfg.depots.depotBase ? ', local subsidy' : ''}">${at(site)} ${money(price)}</button>`;
       }
       html += '</div>';
-    } else html += '<div class="row small muted"><span>No free factory sites left</span></div>';
+    } else html += '<div class="row small muted"><span>No unclaimed factory sites left</span></div>';
     const routes = obs.routes
       .filter((r) => r.company === id)
       .sort((a, b) => g.town.locations[a.producer].good! - g.town.locations[b.producer].good! || a.key.localeCompare(b.key));
@@ -701,77 +701,117 @@ function endScreen(obs: Observation) {
 }
 const ordinal = (n: number) => `${n}${['th', 'st', 'nd', 'rd'][n % 10 > 3 || Math.floor(n / 10) === 1 ? 0 : n % 10]}`;
 
-/** The walkthrough's steps: a picture from the game and what to do. */
-const GUIDE: { img: string[]; title: string; text: string }[] = [
+/**
+ * How to play: a short walkthrough. Each page has pictures from the game (`img`, in public/guide)
+ * and/or a row of building icons drawn like the map draws them (`icons`), then what to do.
+ */
+type GuideIcons = 'producers' | 'shops' | 'chain';
+const GUIDE: { img?: string[]; icons?: GuideIcons; title: string; text: string }[] = [
+  {
+    img: ['overview'],
+    title: 'Welcome to Signature Required',
+    text: `<p>You're an <b>investor</b>. Trucking companies move goods around town, and you buy shares in them. Their deliveries pay dividends to whoever holds the shares. After 15 minutes, the richest player wins.</p>
+      <p>The next pages show you how to:</p>
+      <ol class="guide-list"><li>take control of a company</li><li>set up a route: producer, factory, shop</li><li>run your routes from the sidebar</li><li>buy more factories</li><li>get paid</li></ol>`,
+  },
   {
     img: ['auction'],
-    title: 'Win a company',
-    text: 'The game opens with an auction for one share of each company. Bid in the Auction panel (the buttons step the bid by $1 or $5); Pass when you\'re done. Whoever holds the most shares of a company is its president and runs it.',
+    title: 'Take control of a company',
+    text: `<p>The game starts with an auction for one share of each company. Whoever holds the most shares of a company <b>controls</b> it (its president) and runs its trucks. You're an investor, not the company: you can hold shares in several.</p>
+      <p>The money you bid goes to the company. That's how companies pay for their trucks and factories, so winning a share for next to nothing leaves your company with nothing to build with.</p>`,
   },
   {
     img: ['route-1'],
+    icons: 'producers',
     title: 'Pick a producer',
-    text: 'Click a producer: a sawmill, farm or oil well (the round buildings). It gets a ring, and the hint at the bottom says what to pick next.',
+    text: '<p>Click a producer: the round buildings that make raw materials. It gets a ring, and the hint at the bottom of the map says what to pick next.</p>',
   },
   {
     img: ['route-2'],
-    title: 'Then a shop of the same good',
-    text: 'Click a shop that sells what it makes: a furniture store for timber, a grocery store for wheat, a gas station for crude oil. A free truck drives to the producer, takes the load through your factory, and delivers it. The number on the route is how many trucks run it.',
+    icons: 'shops',
+    title: 'Then a shop that buys the final product',
+    text: "<p>Click a shop that sells what your producer's material is made into: timber becomes furniture, wheat becomes bread, crude oil becomes fuel.</p>",
   },
   {
-    img: ['sidebar', 'route-3'],
-    title: 'Manage it from the sidebar',
-    text: 'Your companies panel lists each company\'s routes. + sends another truck, − takes one off, and hovering a row lights up its route on the map (and the other way round). When no truck is free, Buy truck. You can also click a route line to add a truck, or right-click it to take one off.',
+    img: ['route-3'],
+    icons: 'chain',
+    title: 'The route is now in',
+    text: "<p>A free truck picks up the raw material, takes it through your company's factory to be made into the product, delivers it to the shop, and goes round again. The number on the route is how many trucks run it.</p>",
+  },
+  {
+    img: ['sidebar'],
+    title: 'Run your routes from the sidebar',
+    text: "<p>Your companies panel lists each company's routes. <b>+</b> puts another truck on a route and <b>−</b> takes one off. Hover over a row to light up its route on the map. If no truck is free, use <b>Buy truck</b>.</p><p>On the map, you can also click a route to add a truck, or right-click it to take one off.</p>",
   },
   {
     img: ['factory'],
-    title: 'Grow: another factory',
-    text: 'Every factory adds to your truck limit and opens up routes near it. Free factory sites get cheaper for each company that keeps busy nearby. Hover a site (or a company card) to see each company\'s progress; a star means the full discount.',
+    title: 'Unclaimed factories',
+    text: `<p>The white factories are <b>unclaimed</b>: any company can buy one, at full price $${session.cfg.depots.depotBase}. A company gets a discount on a site by serving the producers and shops near it, up to ${Math.round(100 * session.cfg.depots.maxSubsidy)}% off.</p><p>Hover over a site, or over a company card, to see each company's progress. A star means the full discount.</p>`,
   },
   {
     img: ['buy'],
-    title: 'Buy it',
-    text: 'In your company\'s card, Pick on map… lights up the sites you can buy, with your price. Click one, then send trucks from it like before.',
+    title: 'Buy another factory',
+    text: `<p>Each factory lets your company run ${session.cfg.depots.capacity} more trucks, and opens up routes near it. When your company is at its truck limit, or you want routes in another part of town, buy one: in your company's card, click <b>Pick on map…</b>. The sites you can afford light up with your price. Click one, and new trucks can start from it.</p>`,
   },
   {
     img: ['shares', 'company'],
     title: 'Get paid',
-    text: 'Half of each delivery goes to the company, half to its dividend pot, paid to shareholders every 3 minutes. Your shares and the next payout show at the top left. Need money? A president can auction one of the bank\'s shares. After 15 minutes, the richest player wins.',
+    text: "<p>Half of each delivery goes to the company, half to its dividend pot, paid to shareholders every 3 minutes. Your shares and the next payout show at the top left. Need money? A president can auction one of the bank's shares. After 15 minutes, the richest player wins.</p>",
   },
 ];
 
-function showHelp(tab: 'basics' | 'walk' = 'basics', step = 0) {
+/** A row of building icons for a walkthrough page. */
+function guideIcons(kind: GuideIcons): string {
+  const goods = session.cfg.town.goods.map((_, g) => g);
+  const icon = (k: 'producer' | 'consumer' | 'factory', g = 0, label = '') =>
+    `<figure><canvas class="gicon" data-k="${k}" data-g="${g}"></canvas>${label ? `<figcaption>${label}</figcaption>` : ''}</figure>`;
+  if (kind === 'producers') return `<div class="gicons">${goods.map((g) => icon('producer', g, cap(names(g).source))).join('')}</div>`;
+  if (kind === 'shops') return `<div class="gicons">${goods.map((g) => icon('consumer', g, cap(names(g).shop))).join('')}</div>`;
+  const col = (k: 'producer' | 'consumer') => `<div class="gcol">${goods.map((g) => icon(k, g)).join('')}</div>`;
+  return `<div class="gchain">${col('producer')}<span class="garrow">→</span>${icon('factory', 0, 'Factory')}<span class="garrow">→</span>${col('consumer')}</div>`;
+}
+
+/** Draw the icon canvases in the help card, the way the map draws those buildings. */
+function paintGuideIcons(root: HTMLElement) {
+  const dpr = window.devicePixelRatio || 1;
+  root.querySelectorAll<HTMLCanvasElement>('canvas.gicon').forEach((cv) => {
+    const size = cv.dataset.k === 'factory' ? 64 : 50;
+    cv.width = size * dpr;
+    cv.height = size * dpr;
+    cv.style.width = `${size}px`;
+    cv.style.height = `${size}px`;
+    const ctx = cv.getContext('2d')!;
+    ctx.scale(dpr, dpr);
+    const k = cv.dataset.k!;
+    if (k === 'factory') drawFactory(ctx, size / 2, size / 2, size * 0.38, companyColor(0));
+    else drawBusiness(ctx, k as 'producer' | 'consumer', Number(cv.dataset.g), size / 2, size / 2 + 2, size * 0.34);
+  });
+}
+
+function showHelp(step = 0) {
   const ov = $('overlay');
   const base = import.meta.env.BASE_URL;
-  const tabs = `<div class="help-tabs"><button data-tab="basics" class="${tab === 'basics' ? 'on' : ''}">Basics</button><button data-tab="walk" class="${tab === 'walk' ? 'on' : ''}">Walkthrough</button></div>`;
-  let body: string;
-  if (tab === 'basics') {
-    body = `<p>You're an investor. Buy shares of trucking companies at auction; whoever holds the most shares of a company is its president and runs it. Every 3 minutes each company pays its dividend to its shareholders. After 15 minutes, the richest player wins.</p>
-  <ul>
-  <li><b>Routes:</b> click a <b>producer</b> (round: sawmill, farm or oil well) and a <b>shop</b> (house) of the same good. A free truck picks up the raw material, takes it through your company's factory to be made into product, and delivers it to the shop. Click a route line to add a truck; right-click it to take one off.</li>
-  <li><b>Factories:</b> every load goes through one, so where your factories are decides which routes pay. Each factory also adds ${session.cfg.depots.capacity} to your truck limit. A free site gets cheaper for each company that keeps busy near it (up to ${Math.round(100 * session.cfg.depots.maxSubsidy)}% off; hover a site or a company card to see each company's progress, ★ means full discount).</li>
-  <li><b>Money:</b> each delivery's price is split: ${Math.round(100 * session.cfg.money.deliveryToTreasury)}% to the company's treasury (for trucks and factories) and ${Math.round(100 * session.cfg.money.deliveryToPot)}% to its dividend pot, paid to shareholders every 3 minutes. Auction money goes to the company. A president can auction one of the bank's shares to raise money, then waits ${session.cfg.auctions.saleCooldownSec}s before the next. At the end each company also pays out ${Math.round(100 * session.cfg.money.finalAssetShare)}% of what it owns.</li>
-  <li><b>Businesses</b> grow when served well (dots under each one show its level) and close if neglected (flashing red).</li>
-  <li><b>Map:</b> drag to pan, scroll to zoom, double-click to fit. P or Space pauses.</li>
-  </ul><p class="muted small">New here? The <a href="#" data-tab="walk">walkthrough</a> shows how to set up your first route.</p>`;
-  } else {
-    const st = GUIDE[step];
-    body = `<div class="guide-step"><div class="guide-imgs">${st.img.map((i) => `<img src="${base}guide/${i}.webp" alt="">`).join('')}</div>
-      <h2>${step + 1}. ${st.title}</h2><p>${st.text}</p>
-      <div class="guide-nav"><button data-step="${step - 1}" ${step === 0 ? 'disabled' : ''}>← Back</button><span class="dots">${GUIDE.map((_, k) => `<span class="${k === step ? 'on' : ''}" data-step="${k}"></span>`).join('')}</span><button data-step="${step + 1}" ${step === GUIDE.length - 1 ? 'disabled' : ''}>Next →</button></div></div>`;
-  }
-  ov.innerHTML = `<div class="card help${tab === 'walk' ? ' wide' : ''}"><h1>How to play</h1>${tabs}${body}<button id="btn-close">Got it</button></div>`;
+  const st = GUIDE[step];
+  const last = step === GUIDE.length - 1;
+  ov.innerHTML = `<div class="card help wide"><div class="guide-step">
+    ${st.img ? `<div class="guide-imgs">${st.img.map((i) => `<img src="${base}guide/${i}.webp" alt="">`).join('')}</div>` : ''}
+    ${st.icons ? guideIcons(st.icons) : ''}
+    <h2>${step > 0 ? `${step}. ` : ''}${st.title}</h2>${st.text}
+    <div class="guide-nav"><button data-step="${step - 1}" ${step === 0 ? 'disabled' : ''}>← Back</button><span class="dots">${GUIDE.map((_, k) => `<span class="${k === step ? 'on' : ''}" data-step="${k}"></span>`).join('')}</span>${last ? '<button id="btn-close" class="go">Start playing</button>' : `<button data-step="${step + 1}" class="go">Next →</button>`}</div>
+    ${last ? '' : '<button id="btn-skip" class="link">Skip</button>'}</div></div>`;
   ov.hidden = false;
+  paintGuideIcons(ov);
   const wasPaused = helpWasPaused ?? session.paused;
   helpWasPaused = wasPaused;
   session.paused = true;
-  ov.querySelectorAll<HTMLElement>('[data-tab]').forEach((b) => (b.onclick = (e) => { e.preventDefault(); showHelp(b.dataset.tab as 'basics' | 'walk', 0); }));
-  ov.querySelectorAll<HTMLElement>('[data-step]').forEach((b) => (b.onclick = () => showHelp('walk', Number(b.dataset.step))));
-  $('btn-close').onclick = () => {
+  ov.querySelectorAll<HTMLElement>('[data-step]').forEach((b) => (b.onclick = () => showHelp(Number(b.dataset.step))));
+  const close = () => {
     ov.hidden = true;
     session.paused = wasPaused;
     helpWasPaused = null;
   };
+  ov.querySelector<HTMLElement>('#btn-close')?.addEventListener('click', close);
+  ov.querySelector<HTMLElement>('#btn-skip')?.addEventListener('click', close);
 }
 /** Whether the game was paused before the help card opened (kept while flipping its pages). */
 let helpWasPaused: boolean | null = null;
@@ -868,4 +908,5 @@ showHelp();
     return session;
   },
   renderer,
+  hl,
 };

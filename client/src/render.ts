@@ -355,10 +355,18 @@ export class Renderer {
       const pts = lines[i];
       // Hovering a route, or the factory it runs through, highlights it.
       const hot = hl.hoverRoute === r.key || hl.listRoute === r.key || hl.hover === r.depot;
-      ctx.strokeStyle = companyColor(r.company);
-      ctx.globalAlpha = hot ? 0.95 : 0.6;
-      ctx.lineWidth = hot ? 3.5 : 2;
       ctx.lineJoin = 'round';
+      if (hot) {
+        // A soft band under a highlighted route, so it stands out from the rest.
+        ctx.strokeStyle = hexAlpha(companyColor(r.company), 0.28);
+        ctx.lineWidth = Math.max(8, this.roadWidth * 0.8);
+        ctx.beginPath();
+        pts.forEach((p, k) => (k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+        ctx.stroke();
+      }
+      ctx.strokeStyle = companyColor(r.company);
+      ctx.globalAlpha = hot ? 1 : 0.6;
+      ctx.lineWidth = hot ? 4 : 2;
       ctx.setLineDash([6, 5]);
       ctx.beginPath();
       pts.forEach((p, k) => (k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
@@ -466,22 +474,7 @@ export class Renderer {
             });
           }
         } else {
-          ctx.fillStyle = companyColor(owner);
-          ctx.strokeStyle = INK;
-          roundRect(ctx, x - s, y - s, 2 * s, 2 * s, 3);
-          ctx.fill();
-          ctx.stroke();
-          // Garage door.
-          ctx.fillStyle = 'rgba(255,255,255,0.85)';
-          ctx.fillRect(x - s * 0.55, y - s * 0.1, s * 1.1, s * 0.85);
-          ctx.strokeStyle = 'rgba(0,0,0,0.25)';
-          ctx.lineWidth = 1;
-          for (let k = 1; k < 3; k++) {
-            ctx.beginPath();
-            ctx.moveTo(x - s * 0.55, y - s * 0.1 + (k * s * 0.85) / 3);
-            ctx.lineTo(x + s * 0.55, y - s * 0.1 + (k * s * 0.85) / 3);
-            ctx.stroke();
-          }
+          drawFactory(ctx, x, y, s, companyColor(owner));
         }
         if (picked || hovered) ring(ctx, x, y, s * 1.5, picked ? INK : '#8a8273');
         if (owner !== undefined && owner === hl.spotlight) {
@@ -492,37 +485,7 @@ export class Renderer {
       }
       const st = byId.get(l.id);
       const closing = st?.closingIn !== null && st?.closingIn !== undefined;
-      ctx.fillStyle = goodColor(l.good!);
-      ctx.strokeStyle = INK;
-      ctx.lineWidth = 1.6;
-      if (l.kind === 'producer') {
-        ctx.beginPath();
-        ctx.arc(x, y, r, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-        // Chimney-ish notch so producers read as factories.
-        ctx.fillStyle = INK;
-        ctx.fillRect(x + r * 0.25, y - r * 1.25, r * 0.28, r * 0.5);
-      } else {
-        // A house: square body with a roof.
-        ctx.beginPath();
-        ctx.moveTo(x - r * 0.85, y - r * 0.15);
-        ctx.lineTo(x, y - r * 1.0);
-        ctx.lineTo(x + r * 0.85, y - r * 0.15);
-        ctx.lineTo(x + r * 0.85, y + r * 0.8);
-        ctx.lineTo(x - r * 0.85, y + r * 0.8);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-      }
-      if (detail) {
-        // An icon for what it makes (raw material) or sells (product).
-        ctx.font = `${Math.round(r * 1.05)}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        const icon = (l.kind === 'producer' ? RAW_ICONS : PRODUCT_ICONS)[l.good! % RAW_ICONS.length];
-        ctx.fillText(icon, x, y + (l.kind === 'consumer' ? r * 0.22 : 0));
-      }
+      drawBusiness(ctx, l.kind as 'producer' | 'consumer', l.good!, x, y, r, detail);
       // Level: pips when zoomed in, a ring tint when zoomed out.
       if (st) {
         if (detail) {
@@ -721,6 +684,62 @@ export class Renderer {
       park(n.x, n.y, ids);
     }
     return out;
+  }
+}
+
+/** A producer (round, with a chimney) or a shop (a house), in its good's colour with its icon. */
+export function drawBusiness(ctx: CanvasRenderingContext2D, kind: 'producer' | 'consumer', good: number, x: number, y: number, r: number, icon = true) {
+  ctx.fillStyle = goodColor(good);
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = 1.6;
+  if (kind === 'producer') {
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    // Chimney-ish notch so producers read as factories.
+    ctx.fillStyle = INK;
+    ctx.fillRect(x + r * 0.25, y - r * 1.25, r * 0.28, r * 0.5);
+  } else {
+    // A house: square body with a roof.
+    ctx.beginPath();
+    ctx.moveTo(x - r * 0.85, y - r * 0.15);
+    ctx.lineTo(x, y - r * 1.0);
+    ctx.lineTo(x + r * 0.85, y - r * 0.15);
+    ctx.lineTo(x + r * 0.85, y + r * 0.8);
+    ctx.lineTo(x - r * 0.85, y + r * 0.8);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+  if (icon) {
+    // An icon for what it makes (raw material) or sells (product).
+    ctx.font = `${Math.round(r * 1.05)}px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const glyph = (kind === 'producer' ? RAW_ICONS : PRODUCT_ICONS)[good % RAW_ICONS.length];
+    ctx.fillText(glyph, x, y + (kind === 'consumer' ? r * 0.22 : 0));
+  }
+}
+
+/** A factory: a square in its company's colour with a garage door. */
+export function drawFactory(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, color: string) {
+  ctx.fillStyle = color;
+  ctx.strokeStyle = INK;
+  ctx.lineWidth = 1.5;
+  roundRect(ctx, x - s, y - s, 2 * s, 2 * s, 3);
+  ctx.fill();
+  ctx.stroke();
+  // Garage door.
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.fillRect(x - s * 0.55, y - s * 0.1, s * 1.1, s * 0.85);
+  ctx.strokeStyle = 'rgba(0,0,0,0.25)';
+  ctx.lineWidth = 1;
+  for (let k = 1; k < 3; k++) {
+    ctx.beginPath();
+    ctx.moveTo(x - s * 0.55, y - s * 0.1 + (k * s * 0.85) / 3);
+    ctx.lineTo(x + s * 0.55, y - s * 0.1 + (k * s * 0.85) / 3);
+    ctx.stroke();
   }
 }
 

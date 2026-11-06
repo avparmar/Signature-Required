@@ -11,7 +11,7 @@ const out = process.argv[3];
   const errs = []; p.on('pageerror', (e) => errs.push(String(e)));
   await p.goto(process.argv[2]);
   await p.waitForTimeout(400);
-  await p.click('#btn-close');
+  await p.click('#btn-skip');
   const tick = (sec = 0.05) => p.evaluate((sec) => { const s = window.sr.session; s.paused = false; for (let t = 0; t < sec; t += 0.1) s.update(Math.min(0.1, sec - t)); s.paused = true; }, sec);
   const shot = async (name, clip) => p.screenshot({ path: `${out}/${name}.png`, clip });
   const el = async (name, sel) => {
@@ -72,7 +72,7 @@ const out = process.argv[3];
         if (dd(pr, c) >= 3 && (!best || score < best.score)) best = { pr, c, score };
       }
     const free = t.locations.filter((l) => l.kind === 'depot' && s.obs().depots[l.id] === undefined).sort((a, b) => dd(a, home) - dd(b, home))[0];
-    return { home: { x: home.x, y: home.y }, pr: { x: best.pr.x, y: best.pr.y }, c: { x: best.c.x, y: best.c.y }, free: { x: free.x, y: free.y } };
+    return { home: { x: home.x, y: home.y }, pr: { x: best.pr.x, y: best.pr.y }, c: { x: best.c.x, y: best.c.y, id: best.c.id }, free: { x: free.x, y: free.y } };
   });
   const toScreen = (w) => p.evaluate((w) => { const r = window.sr.renderer; const box = document.getElementById('map').getBoundingClientRect(); return { x: box.left + r.X(w.x), y: box.top + r.Y(w.y) }; }, w);
   const centre = { x: (pts.home.x + pts.pr.x + pts.c.x) / 3, y: (pts.home.y + pts.pr.y + pts.c.y) / 3 };
@@ -98,7 +98,10 @@ const out = process.argv[3];
   // 3. Then the shop: a truck sets off.
   await p.mouse.click(sc.x, sc.y); await p.mouse.move(5, 5);
   await tick(2.5); await p.waitForTimeout(400);
+  // The shop you just clicked, ringed like a pick.
+  await p.evaluate((id) => (window.sr.hl.picked = [id]), pts.c.id); await tick(); await p.waitForTimeout(300);
   await shot('route-2', routeClip);
+  await p.evaluate(() => (window.sr.hl.picked = [])); await tick();
   // 4. The sidebar: your company, hovering its new route's row.
   const row = await p.$('#mycos [data-routerow]');
   const rb = await row.boundingBox(); await p.mouse.move(rb.x + 40, rb.y + rb.height / 2); await tick(); await p.waitForTimeout(400);
@@ -138,6 +141,9 @@ const out = process.argv[3];
   // 7. Shares: your holdings and a company card.
   await el('shares', '#me');
   await el('company', '#companies .co');
+  // 8. The whole town, for the welcome page.
+  await p.evaluate(() => window.sr.renderer.fit()); await p.mouse.move(5, 5); await tick(); await p.waitForTimeout(300);
+  await shot('overview', { x: box.x, y: box.y, width: box.width, height: hintBox.y - 8 - box.y });
   console.log(JSON.stringify(errs));
   await b.close();
 })();
