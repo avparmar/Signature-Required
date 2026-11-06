@@ -621,7 +621,8 @@ function refreshCompanies(obs: Observation) {
     }
     const cfg = session.cfg.auctions;
     const myBid = book.bid?.player === obs.me ? book.bid.price : 0;
-    const otherBid = book.bid && book.bid.player !== obs.me ? book.bid.price : null;
+    // During the company's sale, its bids are for the company's share, not yours.
+    const otherBid = book.bid && book.bid.player !== obs.me && !sale ? book.bid.price : null;
     const otherAsk = book.ask && book.ask.player !== obs.me ? book.ask.price : null;
     const cb = obs.companyBid[c.id];
     // Buy now (at the standing ask) and sell now (to the best of a player's bid and the company's).

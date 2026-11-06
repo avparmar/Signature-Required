@@ -478,6 +478,8 @@ export class Game {
         } else {
           const bid = this.books[c.id].bid;
           if (!bid) return reject('nobody is bidding for a share of this company');
+          // During the company's own sale, its bids are for the company's share: the money goes to the company.
+          if (this.sales.some((x) => x.company === c.id)) return reject("the company is selling a share: its bids are for that one, so you can't sell yours to them now");
           if (bid.player === player) return reject("that's your own bid");
           this.books[c.id].bid = null;
           const buyer = this.players[bid.player];

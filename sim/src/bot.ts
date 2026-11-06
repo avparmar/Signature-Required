@@ -590,7 +590,8 @@ export class Bot {
         if (!keepControl) {
           const hold = this.holdValue(obs, c.id);
           const company = obs.companyBid[c.id];
-          const player = book.bid && book.bid.player !== this.me ? book.bid.price : null;
+          const selling = obs.sales.some((x) => x.company === c.id);
+          const player = book.bid && book.bid.player !== this.me && !selling ? book.bid.price : null;
           if (company !== null && company >= hold && (player === null || company >= player)) return { type: 'sell', company: c.id, to: 'company' };
           if (player !== null && player >= hold * 1.05) return { type: 'sell', company: c.id, to: 'bid' };
         }

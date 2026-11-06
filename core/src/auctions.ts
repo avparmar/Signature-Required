@@ -9,7 +9,8 @@
  *   replaces the order it beats, which is cancelled; an order can be withdrawn at any time. A
  *   bid holds the bidder's cash until it's filled, beaten or withdrawn.
  * - Taking an order: anyone can buy at the standing ask or sell one of their shares to the
- *   standing bid, at once.
+ *   standing bid, at once (but not to the bid while the company holds a sale: that bid is for
+ *   the company's share, and the money goes to the company).
  * - The company's bid: a company buys back a share from any player who wants to sell, at
  *   `buybackShare` of its value per share (trucks and factories at what they cost, plus cash,
  *   divided by the number of shares), but only while its cash covers that price. The share it

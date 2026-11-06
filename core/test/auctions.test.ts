@@ -227,6 +227,20 @@ describe('trading between players', () => {
     expect(of(g.drainEvents(3), 'rejected')).toHaveLength(1);
   });
 
+  it("during the company's own sale, nobody can sell their share to its bid", () => {
+    const g = running([0, 1, null, null, null]);
+    g.act(2, { type: 'startSale', company: 0 });
+    g.step();
+    g.act(2, { type: 'bid', company: 0, amount: 20 });
+    g.step();
+    g.act(1, { type: 'sell', company: 0, to: 'bid' });
+    g.step();
+    expect(of(g.drainEvents(1), 'rejected')).toHaveLength(1);
+    stepFor(g, 31);
+    expect(g.companies[0].shares).toEqual([0, 1, 2, null, null]); // the company's share went to the bidder
+    expect(g.companies[0].treasury).toBe(20);
+  });
+
   it("an ask goes when its owner has no share left to sell", () => {
     const g = running([0, 1, null, null, null]);
     g.act(1, { type: 'ask', company: 0, price: 30 });
