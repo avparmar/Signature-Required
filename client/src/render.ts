@@ -39,6 +39,8 @@ export interface Highlights {
   hoverRoute: string | null;
   /** The route whose row in the routes list the pointer is over. */
   listRoute: string | null;
+  /** Routes of your companies with more trucks than they can use (their trucks keep waiting). */
+  saturated: Set<string>;
   /** Free depot sites to highlight with this company's prices (buy-depot mode). */
   buyFor: number | null;
   /** Company being auctioned: its factories get a pulsing ring. */
@@ -377,6 +379,15 @@ export class Renderer {
       // Hovering a route, or the factory it runs through, highlights it.
       const hot = hl.hoverRoute === r.key || hl.listRoute === r.key || hl.hover === r.depot;
       ctx.lineJoin = 'round';
+      if (hl.saturated.has(r.key)) {
+        // More trucks than the route can use: an amber band that slowly pulses under it.
+        const pulse = 0.5 + 0.5 * Math.sin(now * 3.5);
+        ctx.strokeStyle = `rgba(240, 160, 32, ${0.25 + 0.45 * pulse})`;
+        ctx.lineWidth = Math.max(9, this.roadWidth * 0.9);
+        ctx.beginPath();
+        pts.forEach((p, k) => (k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+        ctx.stroke();
+      }
       if (hot) {
         // A soft band under a highlighted route, so it stands out from the rest.
         ctx.strokeStyle = hexAlpha(companyColor(r.company), 0.28);
@@ -526,7 +537,8 @@ export class Renderer {
           ctx.stroke();
         }
       }
-      if (closing && Math.floor(now * 2.5) % 2 === 0) ring(ctx, x, y, r * 1.6, '#d1342f', 2.5);
+      // Closing: a slow, soft pulse rather than a hard blink (it's news, not an alarm).
+      if (closing) ring(ctx, x, y, r * 1.6, `rgba(209, 52, 47, ${0.25 + 0.5 * (0.5 + 0.5 * Math.sin(now * 2.2))})`, 2.5);
       if (picked || hovered) ring(ctx, x, y, r * 1.6, picked ? INK : '#8a8273');
     }
 
@@ -544,7 +556,7 @@ export class Renderer {
       const a = pts.slice(0, split + 1);
       const b = pts.slice(split);
       const m = midpoint(pathLength(a) >= pathLength(b) ? a : b);
-      badge(ctx, `${rt.trucks}`, m.x, m.y, companyColor(rt.company));
+      badge(ctx, `${rt.trucks}`, m.x, m.y, hl.saturated.has(rt.key) ? '#d98a0b' : companyColor(rt.company));
     }
 
     // Grid coordinates along the top and left edges.

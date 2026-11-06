@@ -61,6 +61,7 @@ const hl: Highlights = {
   picked: [],
   hoverRoute: null,
   listRoute: null,
+  saturated: new Set(),
   buyFor: null,
   spotlight: null,
   district: session.cfg.depots.districtBlocks,
@@ -592,7 +593,7 @@ function refreshMyCompanies(obs: Observation) {
       }
       if (open) for (const r of routes) {
         const p = g.town.locations[r.producer];
-        html += `<div class="row small route-row${hl.hoverRoute === r.key ? ' hot' : ''}" data-routerow="${r.key}"><span><span class="dot" style="background:${goodColor(p.good!)}"></span>${cap(names(p.good!).product)} ${at(r.producer)} → ${at(r.depot)} → ${at(r.consumer)}<span class="rate" title="What this route earned per minute over the last ${RATE_WINDOW / 60} minutes">${routeRate(r.key, obs.t, r.trucks)}</span></span><span class="route-ctl"><button data-unroute="${r.key}">−</button> ${r.trucks} <button data-route="${r.key}" ${freeTrucks(obs, id) ? '' : 'disabled'}>+</button></span></div>`;
+        html += `<div class="row small route-row${hl.hoverRoute === r.key ? ' hot' : ''}${hl.saturated.has(r.key) ? ' saturated' : ''}" data-routerow="${r.key}"><span><span class="dot" style="background:${goodColor(p.good!)}"></span>${cap(names(p.good!).product)} ${at(r.producer)} → ${at(r.depot)} → ${at(r.consumer)}<span class="rate" title="What this route earned per minute over the last ${RATE_WINDOW / 60} minutes">${routeRate(r.key, obs.t, r.trucks)}</span>${saturatedNote(r.key, p.good!)}</span><span class="route-ctl"><button data-unroute="${r.key}">−</button> ${r.trucks} <button data-route="${r.key}" ${freeTrucks(obs, id) ? '' : 'disabled'}>+</button></span></div>`;
       }
     }
     html += '</div>';
@@ -682,6 +683,55 @@ function showPayout(paid: { company: number; amount: number; final: boolean }[])
   setTimeout(() => plus.remove(), 1800);
 }
 
+/**
+ * Saturation: how much of the last minute each of your routes' trucks spent queued (waiting for a
+ * load at the producer, for the shop to want more, or for a turn at the bay), sampled twice a
+ * second of game time. A route whose trucks wait more than SATURATED of the time has more trucks
+ * than it can use.
+ */
+const waitLog = new Map<string, { t: number; n: number; atProducer: number; atShop: number }[]>();
+const SATURATED = 0.2;
+let lastWaitSample = -1;
+
+function sampleWaiting(obs: Observation) {
+  if (obs.phase !== 'running' || obs.t - lastWaitSample < 0.5) return;
+  lastWaitSample = obs.t;
+  const mine = new Set(myCompanies(obs));
+  const where = new Map<number, number>();
+  for (const [loc, ids] of Object.entries(obs.queues)) for (const id of ids) where.set(id, Number(loc));
+  const now = new Map<string, { n: number; atProducer: number; atShop: number }>();
+  for (const t of obs.trucks) {
+    if (!t.route || !mine.has(t.company)) continue;
+    const x = now.get(t.route) ?? { n: 0, atProducer: 0, atShop: 0 };
+    x.n++;
+    if (t.state === 'queued') {
+      const l = where.get(t.id);
+      if (l !== undefined && session.game.town.locations[l].kind === 'producer') x.atProducer++;
+      else if (l !== undefined && session.game.town.locations[l].kind === 'consumer') x.atShop++;
+    }
+    now.set(t.route, x);
+  }
+  for (const [key, x] of now) {
+    const log = waitLog.get(key) ?? [];
+    log.push({ t: obs.t, ...x });
+    while (log.length && log[0].t < obs.t - 60) log.shift();
+    waitLog.set(key, log);
+  }
+  for (const key of [...waitLog.keys()]) if (!now.has(key)) waitLog.delete(key);
+  hl.saturated = new Set([...waitLog.keys()].filter((k) => waiting(k)?.saturated));
+}
+
+/** A route's waiting over the last minute (null until it has 20 seconds of samples). */
+function waiting(key: string): { share: number; saturated: boolean; where: 'producer' | 'shop' } | null {
+  const log = waitLog.get(key);
+  if (!log || log.length < 40) return null;
+  const n = log.reduce((a, x) => a + x.n, 0);
+  const p = log.reduce((a, x) => a + x.atProducer, 0);
+  const c = log.reduce((a, x) => a + x.atShop, 0);
+  const share = n ? (p + c) / n : 0;
+  return { share, saturated: share > SATURATED, where: p >= c ? 'producer' : 'shop' };
+}
+
 /** Deliveries per route (time, price), for its earnings per minute. */
 const routeLog = new Map<string, { since: number; hits: { t: number; price: number }[] }>();
 /** Seconds of history a route's earnings rate is taken over. */
@@ -700,6 +750,15 @@ function routeRate(key: string, now: number, trucks: number): string {
   const perMin = (log.hits.reduce((a, h) => a + h.price, 0) * 60) / span;
   const each = trucks ? perMin / trucks : 0;
   return `$${perMin.toFixed(1)}/min · $${each.toFixed(1)} per truck`;
+}
+
+/** The line under a saturated route's row: where its trucks are waiting, and what to do about it. */
+function saturatedNote(key: string, good: number): string {
+  const w = waiting(key);
+  if (!w || !w.saturated) return '';
+  const n = names(good);
+  const where = w.where === 'producer' ? `at the ${n.source}: it can't make ${n.raw} fast enough` : `at the ${n.shop}: it doesn't want more ${n.product} yet`;
+  return `<span class="wait" title="Its trucks spent ${Math.round(100 * w.share)}% of the last minute waiting. Another truck won't help; take one off, or put it on another route.">⏳ Trucks waiting ${where}</span>`;
 }
 
 function handleEvents(evs: GameEvent[]) {
@@ -903,6 +962,7 @@ function frame(now: number) {
   session.update(dt);
   const obs = session.obs();
   handleEvents(session.takeEvents());
+  sampleWaiting(obs);
   // Ease drawn truck positions towards where they are (smooth between ticks, and into queues).
   const targets = renderer.truckTargets(obs);
   const k = 1 - Math.exp(-dt * 14);
@@ -937,6 +997,9 @@ function newGame() {
   const { seed: _replay, ...fresh } = overridesFromUrl(); // a new game gets a new town
   session = new Session({ overrides: fresh });
   routeLog.clear();
+  waitLog.clear();
+  lastWaitSample = -1;
+  hl.saturated = new Set();
   session.speed = Number($<HTMLSelectElement>('speed').value);
   renderer.setTown(session.game.town);
   renderer.via = session.cfg.trucks.viaDepot;

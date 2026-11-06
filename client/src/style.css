@@ -178,3 +178,5 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #tooltip .tip-stats span { font-size: 10px; color: #c9c1b2; text-transform: uppercase; letter-spacing: 0.04em; }
 #tooltip .tip-stats b { font-size: 16px; font-variant-numeric: tabular-nums; }
 #tooltip { max-width: 320px; }
+.route-row.saturated { background: #fbf0d6; }
+.route-row .wait { display: block; color: #a8690a; font-size: 11px; margin-left: 14px; font-weight: 600; }
