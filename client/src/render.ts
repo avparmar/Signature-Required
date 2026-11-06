@@ -644,7 +644,8 @@ export class Renderer {
       const ang = Math.atan2(p.dy, p.dx);
       ctx.save();
       ctx.translate(x, y);
-      if (t.state === 'driving') ctx.rotate(Math.abs(p.dx) + Math.abs(p.dy) > 1e-6 ? ang : 0);
+      // Point the way it's heading (parked trucks: along their street, the way the lane goes).
+      if (Math.abs(p.dx) + Math.abs(p.dy) > 1e-6) ctx.rotate(ang);
       // A long truck in the company's colour: the trailer (with its load set inside a coloured rim)
       // and, in front, a cab with a pale windscreen.
       const col = companyColor(t.company);

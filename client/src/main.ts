@@ -1148,8 +1148,10 @@ function frame(now: number) {
       if (gap <= step) shown.set(id, { ...t, parked: t.parked });
       else {
         const f = step / gap;
-        // Face the way it's moving while it moves, then the way the lane goes once it's there.
-        shown.set(id, { x: s.x + (t.x - s.x) * f, y: s.y + (t.y - s.y) * f, dx: t.x - s.x, dy: t.y - s.y, parked: true });
+        // Lined up along its street the whole way, rather than turning to face the next spot.
+        // (Pulling out, it already faces the way it'll drive.)
+        const along = { dx: t.dx, dy: t.dy };
+        shown.set(id, { x: s.x + (t.x - s.x) * f, y: s.y + (t.y - s.y) * f, ...along, parked: true });
       }
       continue;
     }
