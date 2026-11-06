@@ -699,9 +699,10 @@ export class Renderer {
           // Three hops per job, building -> truck when loading, truck -> building when unloading.
           let f = (done * 3) % 1;
           if (!loading) f = 1 - f;
+          const hop = Math.min(this.scale * 0.25, Math.hypot(x - bx, y - by) * 0.35);
           const cx = bx + (x - bx) * f;
-          const cy = by + (y - by) * f - Math.sin(f * Math.PI) * this.scale * 0.25;
-          const cs = Math.max(3, tw * 0.22);
+          const cy = by + (y - by) * f - Math.sin(f * Math.PI) * hop;
+          const cs = Math.max(5, tw * 0.38);
           ctx.fillStyle = goodColor(l.good ?? 0);
           ctx.strokeStyle = INK;
           ctx.fillRect(cx - cs / 2, cy - cs / 2, cs, cs);

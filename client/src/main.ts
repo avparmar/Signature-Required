@@ -43,7 +43,8 @@ const coTicker = (c: number) => COMPANY_NAMES[companySlot(c)][1];
 /** A holding as a chip in the company's colour: ticker, shares, and a crown for its president. */
 const holdingChip = (c: number, n: number, pres: boolean) =>
   `<span class="chip co-chip${pres ? ' pres' : ''}" style="background:${companyColor(c)}" title="${coName(c)}: ${n} share${n === 1 ? '' : 's'}${pres ? ', president' : ''}">${pres ? '♔ ' : ''}${coTicker(c)} ×${n}</span>`;
-const playerName = (p: number, me: number) => (p === me ? 'you' : `player ${p + 1}`);
+// While watching the bots, Player 1 isn't you.
+const playerName = (p: number, me: number) => (p === me && !watching ? 'you' : `player ${p + 1}`);
 const fmtClock = (sec: number) => {
   const s = Math.max(0, Math.ceil(sec));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -456,7 +457,8 @@ function refreshPanels(obs: Observation) {
           .map((pl) => {
             const pres = c.presidents.includes(pl);
             const n = holders.get(pl)!;
-            return `<span class="chip${pl === obs.me ? ' you' : ''}${pres ? ' pres' : ''}" title="${pl === obs.me ? 'You' : `Player ${pl + 1}`}: ${n} share${n === 1 ? '' : 's'}${pres ? ', president' : ''}">${pres ? '♔ ' : ''}${pl === obs.me ? 'You' : `P${pl + 1}`} ×${n}</span>`;
+            const you = pl === obs.me && !watching;
+            return `<span class="chip${you ? ' you' : ''}${pres ? ' pres' : ''}" title="${you ? 'You' : `Player ${pl + 1}`}: ${n} share${n === 1 ? '' : 's'}${pres ? ', president' : ''}">${pres ? '♔ ' : ''}${you ? 'You' : `P${pl + 1}`} ×${n}</span>`;
           })
           .join('') + (bank ? `<span class="chip bank" title="Still with the bank">bank ×${bank}</span>` : '');
       const routes = obs.routes.filter((r) => r.company === c.id).length;
@@ -479,7 +481,7 @@ function refreshAuction(obs: Observation) {
   const box = $('auction');
   let html = '';
   if (a) {
-    const leading = a.highBidder === obs.me;
+    const leading = a.highBidder === obs.me && !watching;
     html += `<div class="row big"><span>${sw(a.company)}${coName(a.company)}</span><b>${Math.ceil(a.timeLeft)}s</b></div>`;
     html += `<div class="row muted small"><span>Selling</span><span>${a.seller === null ? 'a bank share' : `a share from ${playerName(a.seller, obs.me)}`}</span></div>`;
     html += `<div class="row"><span>High bid</span><span>${a.highBidder === null ? 'none yet' : `${money(a.highBid)} (${playerName(a.highBidder, obs.me)})`}</span></div>`;
@@ -700,7 +702,7 @@ function showPayout(paid: { company: number; amount: number; final: boolean }[])
         .sort((a, b) => b.amount - a.amount)
         .map((p) => `<span>${sw(p.company)}${coName(p.company)} ${money(p.amount)}</span>`)
         .join('')}</div>`
-    : `<div class="pay-title">Dividends paid</div><div class="pay-rows"><span>You hold no shares that paid this time.</span></div>`;
+    : `<div class="pay-title">Dividends paid</div><div class="pay-rows"><span>${watching ? 'Player 1 holds' : 'You hold'} no shares that paid this time.</span></div>`;
   banner.classList.remove('show');
   void banner.offsetWidth; // restart the animation
   banner.classList.add('show');
