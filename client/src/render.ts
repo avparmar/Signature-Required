@@ -299,9 +299,10 @@ export class Renderer {
     ctx.lineCap = 'round';
     // Centre lines, when zoomed in enough to see the lanes.
     if (this.scale >= 30) {
+      // Sized to the town, not the screen: they grow and shrink with the zoom like the roads.
       ctx.strokeStyle = 'rgba(255,255,255,0.75)';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([4, 5]);
+      ctx.lineWidth = Math.max(1, this.scale * 0.025);
+      ctx.setLineDash([this.scale * 0.11, this.scale * 0.14]);
       ctx.beginPath();
       for (const e of town.graph.edges) {
         if (term[e.a] || term[e.b]) continue;
@@ -419,8 +420,8 @@ export class Renderer {
       }
       ctx.strokeStyle = companyColor(r.company);
       ctx.globalAlpha = hot ? 1 : 0.6;
-      ctx.lineWidth = hot ? 4 : 2;
-      ctx.setLineDash([6, 5]);
+      ctx.lineWidth = Math.max(hot ? 2.5 : 1.5, this.scale * (hot ? 0.09 : 0.045));
+      ctx.setLineDash([this.scale * 0.16, this.scale * 0.13]);
       ctx.beginPath();
       pts.forEach((p, k) => (k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
       ctx.stroke();
@@ -441,8 +442,8 @@ export class Renderer {
         // An empty lot: a staked-out plot where a business may open (with a little sign).
         const s = r * 0.95;
         ctx.strokeStyle = '#c9c0ae';
-        ctx.lineWidth = 1.2;
-        ctx.setLineDash([2, 3]);
+        ctx.lineWidth = Math.max(1, this.scale * 0.03);
+        ctx.setLineDash([this.scale * 0.05, this.scale * 0.075]);
         ctx.strokeRect(x - s, y - s, 2 * s, 2 * s);
         ctx.setLineDash([]);
         if (detail) {

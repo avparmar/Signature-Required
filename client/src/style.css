@@ -56,7 +56,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #companies .co:not(:hover):not(:focus-within):not(.pinned) .chips { flex-wrap: nowrap; overflow: hidden; }
 #companies .chip { white-space: nowrap; flex: none; }
 #companies .co .row > span.value { flex: none; }
-#companies .co:is(:hover, :focus-within, .pinned) { z-index: 2; width: max(100%, 270px); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.16); }
+#companies .co:is(:hover, :focus-within, .pinned) { z-index: 2; width: 100%; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.16); }
 #companies .slot:nth-last-child(-n + 2) .co { left: auto; right: 0; }
 #companies .co .head > span { display: flex; align-items: center; gap: 6px; white-space: nowrap; min-width: 0; }
 #companies .co .head > span:first-child { overflow: hidden; text-overflow: ellipsis; }
@@ -283,3 +283,12 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 /* With no share to sell, the sell spot stays empty so Buy keeps its place on the right. */
 #companies .broker .quick .sell-now.empty { visibility: hidden; }
 #players .pl.me b { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }
+
+/* Narrower screens: slightly smaller card text, so open cards fit their slot. */
+@media (max-width: 1500px) {
+  #companies .row, #companies .broker .quick button, #companies .broker .order button { font-size: 12px; }
+  #companies .co { padding: 6px 8px; }
+  #companies .broker .quick button { padding: 4px 6px; }
+  #companies .broker .quick .from { padding-left: 3px; }
+  #companies .chip { font-size: 10.5px; padding: 0 5px; }
+}
