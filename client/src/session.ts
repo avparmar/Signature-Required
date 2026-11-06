@@ -35,7 +35,9 @@ export class Session {
     let botCount = 0;
     this.bots = Array.from({ length: cfg.players }, (_, p) => {
       if (p === this.seat) return null;
-      const personality = opts.bots?.[p] ?? (botCount++ === 0 ? PERSONALITIES.speculator : PERSONALITIES.balanced);
+      // The same line-up as the bot games: a speculator, a controller, then balanced bots.
+      const k = botCount++;
+      const personality = opts.bots?.[p] ?? (k === 0 ? PERSONALITIES.speculator : k === 1 ? PERSONALITIES.controller : PERSONALITIES.balanced);
       return new Bot(p, this.game.town, cfg, personality);
     });
     this.pending = Array.from({ length: cfg.players }, () => []);

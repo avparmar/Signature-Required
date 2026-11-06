@@ -106,7 +106,7 @@ export const DEFAULT_TOWN: TownConfig = {
   companies: 5,
   extraDepotSites: [6, 9],
   emptyLots: [20, 30],
-  rivers: 0,
+  rivers: 1,
   bridgesPerRiver: [2, 3],
   minSpacing: 1,
   pairGap: 3,
@@ -192,20 +192,23 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
     const across = vertical ? W : H;
     const block = (k: number, c: number) => (vertical ? `${c},${k}` : `${k},${c}`);
     const mine = new Set<string>();
-    // Course: one step along per block, drifting at most one block sideways (and never straight
-    // back), so the river reads as one band. A sideways step floods both blocks in that column.
+    // Course: one step along per block, drifting at most one block sideways, so the river reads as
+    // one band. It can bend back the other way, but only after a few straight blocks, which gives
+    // it gentle S-curves rather than zig-zags. A sideways step floods both blocks in that column.
     let pos = rng.int(Math.floor(across * 0.3), Math.ceil(across * 0.7) - 1);
     let lastDrift = 0;
+    let sinceDrift = 0;
     for (let k = 0; k < len; k++) {
       mine.add(block(k, pos));
       const roll = rng.next();
-      let drift = roll < 0.2 ? -1 : roll > 0.8 ? 1 : 0;
-      if (drift === -lastDrift || pos + drift < 2 || pos + drift > across - 3) drift = 0;
+      let drift = roll < 0.22 ? -1 : roll > 0.78 ? 1 : 0;
+      if ((drift === -lastDrift && sinceDrift < 3) || pos + drift < 2 || pos + drift > across - 3) drift = 0;
       if (drift !== 0 && k < len - 1) {
         pos += drift;
         mine.add(block(k, pos));
-      }
-      if (drift !== 0) lastDrift = drift;
+        lastDrift = drift;
+        sinceDrift = 0;
+      } else sinceDrift++;
     }
     for (const b of mine) riverBlocks.add(b);
     // Every street with this river's water on both sides crosses it. Keep a few as bridges,

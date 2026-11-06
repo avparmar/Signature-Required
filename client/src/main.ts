@@ -9,9 +9,10 @@
  *   depots (affordable sites light up on the map with your price).
  * - Auction panel (#35): bid on the running auction; presidents can put bank-held shares up.
  */
-import { distancesFrom, minimumBid, stillBidding, type GameConfigOverrides, type GameEvent, type Location, type Observation } from '@sr/core';
+import { distancesFrom, makeGameConfig, minimumBid, stillBidding, type GameConfig, type GameConfigOverrides, type GameEvent, type Location, type Observation } from '@sr/core';
 import { Renderer, companyColor, coordOf, drawBusiness, drawFactory, goodColor, type Highlights } from './render.js';
 import { Session } from './session.js';
+import { SETTINGS, loadSettings, mergeOverrides, overridesFrom, saveSettings, valueIn, type Setting } from './settings.js';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const money = (x: number) => `$${Math.floor(x + 1e-9)}`;
@@ -37,17 +38,18 @@ const fmtClock = (sec: number) => {
 function overridesFromUrl(): GameConfigOverrides {
   const q = new URLSearchParams(location.search);
   const via = q.get('via');
-  const rivers = Number(q.get('rivers') ?? 0);
+  const rivers = q.get('rivers') === null ? null : Number(q.get('rivers'));
   const o: GameConfigOverrides = {};
   if (via === 'none' || via === 'loaded' || via === 'hub') o.trucks = { viaDepot: via };
-  if (rivers > 0) o.town = { rivers: Math.min(2, Math.floor(rivers)) };
+  // One river by default; ?rivers=0 for none, ?rivers=2 for two.
+  if (rivers !== null && Number.isFinite(rivers)) o.town = { rivers: Math.max(0, Math.min(2, Math.floor(rivers))) };
   // ?seed=N replays the same town (handy for comparing or reporting a game).
   const seed = Number(q.get('seed'));
   if (Number.isInteger(seed) && seed > 0) o.seed = seed;
   return o;
 }
 
-let session = new Session({ overrides: overridesFromUrl() });
+let session = new Session({ overrides: mergeOverrides(loadSettings(), overridesFromUrl()) });
 const renderer = new Renderer($<HTMLCanvasElement>('map'), session.game.town);
 renderer.via = session.cfg.trucks.viaDepot;
 let last = performance.now();
@@ -60,6 +62,7 @@ const hl: Highlights = {
   picked: [],
   hoverRoute: null,
   listRoute: null,
+  saturated: new Set(),
   buyFor: null,
   spotlight: null,
   district: session.cfg.depots.districtBlocks,
@@ -289,17 +292,21 @@ function tooltip(obs: Observation) {
   hl.hover = l && l.kind !== 'lot' ? l.id : null;
   hl.hoverRoute = route?.key ?? null;
   let html = '';
+  // A free site's card goes in a corner of the map, away from the site, so it doesn't hide the zone.
+  let docked = false;
   if (l && (l.kind === 'producer' || l.kind === 'consumer')) {
     const s = obs.locations.find((x) => x.id === l.id);
     if (s) {
       const n = names(s.good);
       const recent = s.history.length ? Math.round((100 * s.history.reduce((a, b) => a + b, 0)) / s.history.length) : null;
-      html = `<b>${cap(s.kind === 'producer' ? n.source : n.shop)} ${at(l.id)}</b> · level ${s.level}/${g.cfg.cycles.maxLevel}`;
-      html +=
-        s.kind === 'producer'
-          ? `<div>${s.stock} load${s.stock === 1 ? '' : 's'} of ${n.raw} waiting · ${s.cycleAmount} per cycle</div><div class="muted">A factory turns it into ${n.product}</div>`
-          : `<div>Wants ${s.demand} more ${n.product} · pays ${cents(s.price)} a pallet${s.price > g.cfg.money.palletPrice ? ' (premium)' : ''}</div>`;
-      html += `<div class="muted">Next cycle in ${fmtClock(s.nextCycleAt - obs.t)}${recent !== null ? ` · ${recent}% served lately` : ''}</div>`;
+      // At a glance: level, this cycle's progress, and when the next cycle comes.
+      const prod = s.kind === 'producer';
+      html = `<b>${cap(prod ? n.source : n.shop)} ${at(l.id)}</b>`;
+      html += `<div class="tip-stats"><div><span>Level</span><b>${s.level}/${g.cfg.cycles.maxLevel}</b></div><div><span>${prod ? 'Shipped / made' : 'Received / needed'}</span><b>${s.served}/${s.cycleAmount}</b></div><div><span>Next cycle</span><b>${fmtClock(Math.max(0, s.nextCycleAt - obs.t))}</b></div></div>`;
+      html += prod
+        ? `<div class="muted">${s.stock} load${s.stock === 1 ? '' : 's'} of ${n.raw} waiting · a factory makes it into ${n.product}</div>`
+        : `<div class="muted">Pays ${cents(s.price)} a pallet${s.price > g.cfg.money.palletPrice ? ' (premium)' : ''}</div>`;
+      if (recent !== null) html += `<div class="muted">${recent}% served lately</div>`;
       if (s.closingIn !== null) html += `<div class="bad">Closing in ${s.closingIn} cycle${s.closingIn === 1 ? '' : 's'} unless served</div>`;
       const servers = [...new Set(obs.routes.filter((r) => r.producer === l.id || r.consumer === l.id).map((r) => r.company))];
       if (servers.length) html += `<div class="muted">Served by ${servers.map(coName).join(', ')}</div>`;
@@ -307,6 +314,7 @@ function tooltip(obs: Observation) {
   } else if (l && l.kind === 'depot') {
     const owner = obs.depots[l.id];
     if (owner === undefined) {
+      docked = true;
       html = `<b>Unclaimed factory site ${at(l.id)}</b><div>Serving the producers and shops in the <b>gold zone</b> cuts a company's price here.</div><div class="muted">The zone is only for the discount: a factory here can run routes anywhere.</div>`;
       const prices = obs.depotPrices[l.id];
       const dc = g.cfg.depots;
@@ -337,8 +345,14 @@ function tooltip(obs: Observation) {
   tip.innerHTML = html;
   tip.hidden = false;
   const wrap = $('map-wrap').getBoundingClientRect();
-  const x = Math.min(mouse.x + 16, wrap.width - tip.offsetWidth - 8);
-  const y = Math.min(mouse.y + 16, wrap.height - tip.offsetHeight - 8);
+  let x = Math.min(mouse.x + 16, wrap.width - tip.offsetWidth - 8);
+  let y = Math.min(mouse.y + 16, wrap.height - tip.offsetHeight - 8);
+  if (docked) {
+    // The corner furthest from the pointer.
+    x = mouse.x < wrap.width / 2 ? wrap.width - tip.offsetWidth - 12 : 12;
+    y = mouse.y < wrap.height / 2 ? wrap.height - tip.offsetHeight - 56 : 12; // clear of the hint at the bottom
+  }
+  tip.classList.toggle('docked', docked);
   tip.style.left = `${x}px`;
   tip.style.top = `${y}px`;
 }
@@ -362,6 +376,8 @@ function refreshPanels(obs: Observation) {
       : obs.phase === 'ended'
         ? 'Game over'
         : `Next payout in ${fmtClock(obs.nextPayoutAt - obs.t)}`;
+  // The last 10 seconds before a payout: the countdown lights up.
+  $('phase').classList.toggle('soon', obs.phase === 'running' && obs.nextPayoutAt - obs.t <= 10);
 
   // You: cash and shares.
   let html = `<div class="row big"><span>Cash</span><b>${money(me.cash)}</b></div>`;
@@ -578,7 +594,7 @@ function refreshMyCompanies(obs: Observation) {
       }
       if (open) for (const r of routes) {
         const p = g.town.locations[r.producer];
-        html += `<div class="row small route-row${hl.hoverRoute === r.key ? ' hot' : ''}" data-routerow="${r.key}"><span><span class="dot" style="background:${goodColor(p.good!)}"></span>${cap(names(p.good!).product)} ${at(r.producer)} → ${at(r.depot)} → ${at(r.consumer)}</span><span><button data-unroute="${r.key}">−</button> ${r.trucks} <button data-route="${r.key}" ${freeTrucks(obs, id) ? '' : 'disabled'}>+</button></span></div>`;
+        html += `<div class="row small route-row${hl.hoverRoute === r.key ? ' hot' : ''}${hl.saturated.has(r.key) ? ' saturated' : ''}" data-routerow="${r.key}"><span><span class="dot" style="background:${goodColor(p.good!)}"></span>${cap(names(p.good!).product)} ${at(r.producer)} → ${at(r.depot)} → ${at(r.consumer)}<span class="rate" title="What this route earned per minute over the last ${RATE_WINDOW / 60} minutes">${routeRate(r.key, obs.t, r.trucks)}</span>${saturatedNote(r.key, p.good!)}</span><span class="route-ctl"><button data-unroute="${r.key}">−</button> ${r.trucks} <button data-route="${r.key}" ${freeTrucks(obs, id) ? '' : 'disabled'}>+</button></span></div>`;
       }
     }
     html += '</div>';
@@ -639,12 +655,131 @@ document.addEventListener('click', (e) => {
 
 // ------------------------------------------------------------------ log
 
+/**
+ * Payday: a banner over the map with what you were paid, company by company, a "+$" that floats up
+ * from your cash, and the cash itself flashing. Dividends are the big moment of each 3 minutes.
+ */
+function showPayout(paid: { company: number; amount: number; final: boolean }[]) {
+  const total = paid.reduce((a, p) => a + p.amount, 0);
+  const banner = $('payout');
+  const final = paid.some((p) => p.final);
+  banner.innerHTML = total
+    ? `<div class="pay-title">${final ? 'Final dividends!' : 'Payday!'}</div><div class="pay-total">+${money(total)}</div><div class="pay-rows">${paid
+        .sort((a, b) => b.amount - a.amount)
+        .map((p) => `<span>${sw(p.company)}${coName(p.company)} ${money(p.amount)}</span>`)
+        .join('')}</div>`
+    : `<div class="pay-title">Dividends paid</div><div class="pay-rows"><span>You hold no shares that paid this time.</span></div>`;
+  banner.classList.remove('show');
+  void banner.offsetWidth; // restart the animation
+  banner.classList.add('show');
+  if (!total) return;
+  const me = $('me');
+  me.classList.remove('paid');
+  void me.offsetWidth;
+  me.classList.add('paid');
+  const plus = document.createElement('div');
+  plus.className = 'pay-float';
+  plus.textContent = `+${money(total)}`;
+  me.appendChild(plus);
+  setTimeout(() => plus.remove(), 1800);
+}
+
+/**
+ * Saturation: how much of the last minute each of your routes' trucks spent queued (waiting for a
+ * load at the producer, for the shop to want more, or for a turn at the bay), sampled twice a
+ * second of game time. A route whose trucks wait more than SATURATED of the time has more trucks
+ * than it can use.
+ */
+const waitLog = new Map<string, { t: number; n: number; atProducer: number; atShop: number }[]>();
+const SATURATED = 0.2;
+let lastWaitSample = -1;
+
+function sampleWaiting(obs: Observation) {
+  if (obs.phase !== 'running' || obs.t - lastWaitSample < 0.5) return;
+  lastWaitSample = obs.t;
+  const mine = new Set(myCompanies(obs));
+  const where = new Map<number, number>();
+  for (const [loc, ids] of Object.entries(obs.queues)) for (const id of ids) where.set(id, Number(loc));
+  const now = new Map<string, { n: number; atProducer: number; atShop: number }>();
+  for (const t of obs.trucks) {
+    if (!t.route || !mine.has(t.company)) continue;
+    const x = now.get(t.route) ?? { n: 0, atProducer: 0, atShop: 0 };
+    x.n++;
+    if (t.state === 'queued') {
+      const l = where.get(t.id);
+      if (l !== undefined && session.game.town.locations[l].kind === 'producer') x.atProducer++;
+      else if (l !== undefined && session.game.town.locations[l].kind === 'consumer') x.atShop++;
+    }
+    now.set(t.route, x);
+  }
+  for (const [key, x] of now) {
+    const log = waitLog.get(key) ?? [];
+    log.push({ t: obs.t, ...x });
+    while (log.length && log[0].t < obs.t - 60) log.shift();
+    waitLog.set(key, log);
+  }
+  for (const key of [...waitLog.keys()]) if (!now.has(key)) waitLog.delete(key);
+  hl.saturated = new Set([...waitLog.keys()].filter((k) => waiting(k)?.saturated));
+}
+
+/** A route's waiting over the last minute (null until it has 20 seconds of samples). */
+function waiting(key: string): { share: number; saturated: boolean; where: 'producer' | 'shop' } | null {
+  const log = waitLog.get(key);
+  if (!log || log.length < 40) return null;
+  const n = log.reduce((a, x) => a + x.n, 0);
+  const p = log.reduce((a, x) => a + x.atProducer, 0);
+  const c = log.reduce((a, x) => a + x.atShop, 0);
+  const share = n ? (p + c) / n : 0;
+  return { share, saturated: share > SATURATED, where: p >= c ? 'producer' : 'shop' };
+}
+
+/** Deliveries per route (time, price), for its earnings per minute. */
+const routeLog = new Map<string, { since: number; hits: { t: number; price: number }[] }>();
+/** Seconds of history a route's earnings rate is taken over. */
+const RATE_WINDOW = 120;
+
+/** A route's earnings per minute over the last RATE_WINDOW seconds (or since it started, once it's had a minute). */
+function routeRate(key: string, now: number, trucks: number): string {
+  let log = routeLog.get(key);
+  if (!log) {
+    log = { since: now, hits: [] };
+    routeLog.set(key, log);
+  }
+  log.hits = log.hits.filter((h) => h.t > now - RATE_WINDOW);
+  const span = Math.min(RATE_WINDOW, now - log.since);
+  if (span < 60) return 'earning… (give it a minute)';
+  const perMin = (log.hits.reduce((a, h) => a + h.price, 0) * 60) / span;
+  const each = trucks ? perMin / trucks : 0;
+  return `$${perMin.toFixed(1)}/min · $${each.toFixed(1)} per truck`;
+}
+
+/** The line under a saturated route's row: where its trucks are waiting, and what to do about it. */
+function saturatedNote(key: string, good: number): string {
+  const w = waiting(key);
+  if (!w || !w.saturated) return '';
+  const n = names(good);
+  const where = w.where === 'producer' ? `at the ${n.source}: it can't make ${n.raw} fast enough` : `at the ${n.shop}: it doesn't want more ${n.product} yet`;
+  // Short in the card; the whole story when you hover over it.
+  return `<span class="wait" title="Trucks waiting ${where}. They spent ${Math.round(100 * w.share)}% of the last minute waiting, so another truck won't help: take one off, or put it on another route.">⏳ Too many trucks</span>`;
+}
+
 function handleEvents(evs: GameEvent[]) {
   const obs = session.obs();
   const g = session.game;
   const mine = new Set(myCompanies(obs));
   const ol = $('log');
+  const truckRoute = new Map(obs.trucks.map((t) => [t.id, t.route]));
+  const paidNow: { company: number; amount: number; final: boolean }[] = [];
+  let payoutSeen = false;
   for (const e of evs) {
+    if (e.type === 'delivered') {
+      const key = truckRoute.get(e.truck);
+      if (key) {
+        const log = routeLog.get(key) ?? { since: e.t, hits: [] };
+        log.hits.push({ t: e.t, price: e.price });
+        routeLog.set(key, log);
+      }
+    }
     let text: string | null = null;
     let cls = '';
     // A pickup or delivery by any company: blink its arc on the free sites whose zone it's in.
@@ -660,6 +795,10 @@ function handleEvents(evs: GameEvent[]) {
     if (e.type === 'rejected') {
       toast(cap(e.reason) + '.', 'error');
       continue;
+    }
+    if (e.type === 'payout') {
+      payoutSeen = true;
+      if (e.paid[session.seat]) paidNow.push({ company: e.company, amount: e.paid[session.seat], final: !!e.final });
     }
     if (e.type === 'auctionWon') text = `${cap(playerName(e.player, obs.me))} bought a share of ${coName(e.company)} for ${money(e.amount)}`;
     else if (e.type === 'payout' && e.paid[session.seat]) {
@@ -681,6 +820,7 @@ function handleEvents(evs: GameEvent[]) {
     ol.prepend(li);
   }
   while (ol.children.length > 120) ol.lastChild!.remove();
+  if (payoutSeen) showPayout(paidNow);
 }
 
 // ------------------------------------------------------------------ end screen
@@ -824,6 +964,7 @@ function frame(now: number) {
   session.update(dt);
   const obs = session.obs();
   handleEvents(session.takeEvents());
+  sampleWaiting(obs);
   // Ease drawn truck positions towards where they are (smooth between ticks, and into queues).
   const targets = renderer.truckTargets(obs);
   const k = 1 - Math.exp(-dt * 14);
@@ -856,7 +997,11 @@ function togglePause() {
 
 function newGame() {
   const { seed: _replay, ...fresh } = overridesFromUrl(); // a new game gets a new town
-  session = new Session({ overrides: fresh });
+  session = new Session({ overrides: mergeOverrides(loadSettings(), fresh) });
+  routeLog.clear();
+  waitLog.clear();
+  lastWaitSample = -1;
+  hl.saturated = new Set();
   session.speed = Number($<HTMLSelectElement>('speed').value);
   renderer.setTown(session.game.town);
   renderer.via = session.cfg.trucks.viaDepot;
@@ -886,6 +1031,57 @@ document.addEventListener('pointermove', (e) => {
 $('btn-help').onclick = () => showHelp();
 $<HTMLSelectElement>('speed').onchange = (e) => (session.speed = Number((e.target as HTMLSelectElement).value));
 $('btn-new').onclick = newGame;
+$('btn-settings').onclick = () => showSettings();
+
+/** The ⚙ card: tune the game, then start a new one with those settings (kept in this browser). */
+function showSettings() {
+  const ov = $('overlay');
+  const defaults = makeGameConfig({});
+  const current = makeGameConfig(loadSettings());
+  const decimals = (st: Setting) => (String(st.step).split('.')[1] ?? '').length;
+  const shown = (cfg: GameConfig, st: Setting) => (valueIn(cfg, st) * (st.scale ?? 1)).toFixed(decimals(st));
+  const groups = [...new Set(SETTINGS.map((st) => st.group))];
+  ov.innerHTML = `<div class="card settings"><h1>Settings</h1><p class="muted small">These apply when you start a new game, and are kept in this browser.</p>
+    ${groups
+      .map(
+        (gname) => `<h2>${gname}</h2>${SETTINGS.map((st, i) => (st.group !== gname ? '' : `<label class="set-row" data-i="${i}" title="${st.hint ?? ''}"><span>${st.label}</span>
+          <span class="set-in"><input type="number" data-i="${i}" min="${st.min}" max="${st.max}" step="${st.step}" value="${shown(current, st)}">${st.unit ? `<em>${st.unit}</em>` : ''}</span>
+          <span class="set-def">default ${shown(defaults, st)}</span></label>`)).join('')}`,
+      )
+      .join('')}
+    <div class="set-buttons"><button id="set-start">Start a new game</button><button id="set-reset" class="plain">Reset to defaults</button><button id="set-close" class="plain">Close</button></div></div>`;
+  ov.hidden = false;
+  const wasPaused = session.paused;
+  session.paused = true;
+  const inputs = [...ov.querySelectorAll<HTMLInputElement>('input[data-i]')];
+  const mark = () =>
+    inputs.forEach((inp) => {
+      const st = SETTINGS[Number(inp.dataset.i)];
+      inp.closest('.set-row')!.classList.toggle('changed', inp.value !== shown(defaults, st));
+    });
+  inputs.forEach((inp) => inp.addEventListener('input', mark));
+  mark();
+  const close = () => {
+    ov.hidden = true;
+    session.paused = wasPaused;
+  };
+  $('set-close').onclick = close;
+  $('set-reset').onclick = () => {
+    for (const inp of inputs) inp.value = shown(defaults, SETTINGS[Number(inp.dataset.i)]);
+    mark();
+  };
+  $('set-start').onclick = () => {
+    const values = new Map<Setting, number>();
+    for (const inp of inputs) {
+      const st = SETTINGS[Number(inp.dataset.i)];
+      const v = Number(inp.value);
+      if (Number.isFinite(v)) values.set(st, Math.min(st.max, Math.max(st.min, v)));
+    }
+    saveSettings(overridesFrom(values));
+    ov.hidden = true;
+    newGame();
+  };
+}
 window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement) return;
   if (e.key === 'p' || e.key === 'P' || e.key === ' ') {

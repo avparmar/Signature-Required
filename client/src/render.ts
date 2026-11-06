@@ -39,6 +39,8 @@ export interface Highlights {
   hoverRoute: string | null;
   /** The route whose row in the routes list the pointer is over. */
   listRoute: string | null;
+  /** Routes of your companies with more trucks than they can use (their trucks keep waiting). */
+  saturated: Set<string>;
   /** Free depot sites to highlight with this company's prices (buy-depot mode). */
   buyFor: number | null;
   /** Company being auctioned: its factories get a pulsing ring. */
@@ -332,9 +334,11 @@ export class Renderer {
     const site = hl.hover !== null ? town.locations[hl.hover] : null;
     if (site && site.kind === 'depot' && obs.depots[site.id] === undefined) {
       const d = this.districtOf(site.node);
+      // Its streets, kept to the road itself so nothing spills onto blocks outside the zone.
       ctx.strokeStyle = '#b08a1e';
-      ctx.globalAlpha = 0.28;
-      ctx.lineWidth = roadW * 2.4;
+      ctx.globalAlpha = 0.3;
+      ctx.lineWidth = roadW;
+      ctx.lineCap = 'butt';
       ctx.beginPath();
       for (const e of town.graph.edges) {
         if (d[e.a] > hl.district || d[e.b] > hl.district || term[e.a] || term[e.b]) continue;
@@ -344,6 +348,25 @@ export class Renderer {
         ctx.lineTo(this.X(b.x), this.Y(b.y));
       }
       ctx.stroke();
+      // The blocks it covers, filled edge to edge: a building counts when the street it's on is in
+      // the zone. Blocks with a building go by its street; other blocks by the nearest street round them.
+      ctx.lineCap = 'round';
+      ctx.fillStyle = '#b08a1e';
+      ctx.globalAlpha = 0.3;
+      const inset = roadW / 2;
+      const built = new Map<string, number>();
+      for (const l of town.locations) built.set(`${Math.floor(l.x)},${Math.floor(l.y)}`, l.node);
+      const near = this.nodeAt();
+      const water = new Set(town.river.map(({ i, j }) => `${i},${j}`));
+      for (let j = 0; j < town.cfg.blocksY; j++)
+        for (let i = 0; i < town.cfg.blocksX; i++) {
+          if (water.has(`${i},${j}`)) continue;
+          const own = built.get(`${i},${j}`);
+          const sides = [`${i + 0.5},${j}`, `${i + 1},${j + 0.5}`, `${i + 0.5},${j + 1}`, `${i},${j + 0.5}`].map((k) => near.get(k)).filter((n) => n !== undefined) as number[];
+          const dist = own !== undefined ? d[own] : Math.min(Infinity, ...sides.map((n) => d[n]));
+          if (dist > hl.district) continue;
+          ctx.fillRect(this.X(i) + inset, this.Y(j) + inset, this.scale - 2 * inset, this.scale - 2 * inset);
+        }
       ctx.globalAlpha = 1;
       label(ctx, 'subsidy zone', this.X(site.x), this.Y(site.y) - this.r * 1.9, '#7a5d10');
     }
@@ -356,6 +379,15 @@ export class Renderer {
       // Hovering a route, or the factory it runs through, highlights it.
       const hot = hl.hoverRoute === r.key || hl.listRoute === r.key || hl.hover === r.depot;
       ctx.lineJoin = 'round';
+      if (hl.saturated.has(r.key)) {
+        // More trucks than the route can use: an amber band that slowly pulses under it.
+        const pulse = 0.5 + 0.5 * Math.sin(now * 3.5);
+        ctx.strokeStyle = `rgba(240, 160, 32, ${0.25 + 0.45 * pulse})`;
+        ctx.lineWidth = Math.max(9, this.roadWidth * 0.9);
+        ctx.beginPath();
+        pts.forEach((p, k) => (k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+        ctx.stroke();
+      }
       if (hot) {
         // A soft band under a highlighted route, so it stands out from the rest.
         ctx.strokeStyle = hexAlpha(companyColor(r.company), 0.28);
@@ -505,7 +537,8 @@ export class Renderer {
           ctx.stroke();
         }
       }
-      if (closing && Math.floor(now * 2.5) % 2 === 0) ring(ctx, x, y, r * 1.6, '#d1342f', 2.5);
+      // Closing: a slow, soft pulse rather than a hard blink (it's news, not an alarm).
+      if (closing) ring(ctx, x, y, r * 1.6, `rgba(209, 52, 47, ${0.25 + 0.5 * (0.5 + 0.5 * Math.sin(now * 2.2))})`, 2.5);
       if (picked || hovered) ring(ctx, x, y, r * 1.6, picked ? INK : '#8a8273');
     }
 
@@ -523,7 +556,7 @@ export class Renderer {
       const a = pts.slice(0, split + 1);
       const b = pts.slice(split);
       const m = midpoint(pathLength(a) >= pathLength(b) ? a : b);
-      badge(ctx, `${rt.trucks}`, m.x, m.y, companyColor(rt.company));
+      badge(ctx, `${rt.trucks}`, m.x, m.y, hl.saturated.has(rt.key) ? '#d98a0b' : companyColor(rt.company));
     }
 
     // Grid coordinates along the top and left edges.
@@ -612,6 +645,47 @@ export class Renderer {
     }
   }
 
+  /** Road nodes by position ("x,y"), for finding the street at a block's side. Cached per town. */
+  private nodeAtCache: { town: Town; map: Map<string, number> } | null = null;
+  private nodeAt(): Map<string, number> {
+    if (this.nodeAtCache?.town === this.town) return this.nodeAtCache.map;
+    const map = new Map<string, number>();
+    const term = this.town.graph.terminal;
+    this.town.graph.nodes.forEach((n, id) => {
+      if (!term[id]) map.set(`${n.x},${n.y}`, id);
+    });
+    this.nodeAtCache = { town: this.town, map };
+    return map;
+  }
+
+  /** Parking spots each truck holds at a building or factory, kept while it waits there. */
+  private parked = new Map<string, { spots: number; at: Map<number, number> }>();
+
+  /** Kerbside spots round a block centred at (cx, cy): the near lane clockwise, then the far lane. */
+  private parkingSpots(cx: number, cy: number): { x: number; y: number; dx: number; dy: number }[] {
+    const spacing = (this.truckSize.w / this.scale) * 1.2;
+    const quarter = this.roadWidth / this.scale / 4;
+    const out: { x: number; y: number; dx: number; dy: number }[] = [];
+    for (const [o, dir] of [[0.5 - quarter, 1], [0.5 + quarter, -1]] as const) {
+      const side = 2 * o;
+      const n = Math.max(1, Math.floor(side / spacing)); // spots per side, spread evenly
+      for (let k = 0; k < 4; k++)
+        for (let m = 0; m < n; m++) {
+          const along = ((m + 0.5) / n) * side;
+          const h = o;
+          const pts: [number, number, number, number][] = [
+            [cx - h + along, cy - h, 1, 0],
+            [cx + h, cy - h + along, 0, 1],
+            [cx + h - along, cy + h, -1, 0],
+            [cx - h, cy + h - along, 0, -1],
+          ];
+          const [x, y, dx, dy] = pts[k];
+          out.push({ x, y, dx: dx * dir, dy: dy * dir });
+        }
+    }
+    return out;
+  }
+
   /**
    * Where each truck should be drawn: its road position, or, when queued or loading at a
    * building, a slot in a neat row beside it (and likewise when parked at a depot). The facing is
@@ -620,47 +694,45 @@ export class Renderer {
   truckTargets(obs: Observation): Map<number, { x: number; y: number; dx: number; dy: number }> {
     const out = new Map<number, { x: number; y: number; dx: number; dy: number }>();
     const tById = new Map(obs.trucks.map((t) => [t.id, t]));
-    // Trucks waiting or loading at a building park along the kerbs around its block, grouped by
-    // company (a gap between companies), going clockwise from the top-left corner. When the kerbside
-    // lane is full they double-park in the far lane of the same streets, and beyond that bunch up
-    // there (never further out, which would put them on the next block).
-    const park = (cx: number, cy: number, ids: number[]) => {
-      const truckLen = this.truckSize.w / this.scale;
-      const spacing = truckLen * 1.2;
-      // The lane nearest the block (half a block out, less a quarter of the road's width), then the far lane.
-      const kerb = 0.5 - this.roadWidth / this.scale / 4;
-      const lanes = [kerb, 0.5 + this.roadWidth / this.scale / 4];
-      const ordered = [...ids].sort((a, b) => tById.get(a)!.company - tById.get(b)!.company || ids.indexOf(a) - ids.indexOf(b));
-      let pos = spacing / 2;
-      let ring = 0;
-      let prevCompany: number | null = null;
-      for (const id of ordered) {
-        const c = tById.get(id)!.company;
-        if (prevCompany !== null && c !== prevCompany) pos += spacing * 0.5; // gap between companies
-        prevCompany = c;
-        const perim = 8 * lanes[Math.min(ring, 1)];
-        if (pos > perim - spacing / 2) {
-          ring++;
-          pos = ring >= 2 ? spacing * (0.5 + 0.5 * (ring - 1)) : spacing / 2; // bunching up: offset each pass
-        }
-        const side = 2 * lanes[Math.min(ring, 1)];
-        const along = pos % side;
-        const k = Math.floor(pos / side);
-        const h = side / 2;
-        const pts: [number, number, number, number][] = [
-          [cx - h + along, cy - h, 1, 0],
-          [cx + h, cy - h + along, 0, 1],
-          [cx + h - along, cy + h, -1, 0],
-          [cx - h, cy + h - along, 0, -1],
-        ];
-        const [x, y, dx, dy] = pts[k % 4];
-        out.set(id, { x, y, dx, dy });
-        pos += spacing;
+    // Trucks waiting or loading at a building park along the kerbs around its block. Each truck
+    // takes the free spot nearest to where it pulled up and keeps it until it leaves. Spots run
+    // round the kerbside lane first (facing clockwise, the way traffic goes in that lane), then the
+    // far lane of the same streets (facing the other way); past that, trucks double up there.
+    const park = (key: string, cx: number, cy: number, ids: number[]) => {
+      const spots = this.parkingSpots(cx, cy);
+      let held = this.parked.get(key);
+      if (!held || held.spots !== spots.length) {
+        held = { spots: spots.length, at: new Map() };
+        this.parked.set(key, held);
       }
+      seen.add(key);
+      const here = new Set(ids);
+      for (const id of [...held.at.keys()]) if (!here.has(id)) held.at.delete(id);
+      const taken = new Set(held.at.values());
+      for (const id of ids) {
+        if (held.at.has(id)) continue;
+        const t = tById.get(id)!;
+        let best = -1;
+        let bestD = Infinity;
+        spots.forEach((p, k) => {
+          if (taken.has(k)) return;
+          const d = Math.hypot(p.x - t.x, p.y - t.y);
+          if (d < bestD) {
+            bestD = d;
+            best = k;
+          }
+        });
+        // All taken: double up in the far lane.
+        if (best < 0) best = spots.length - 1 - (held.at.size % Math.max(1, Math.floor(spots.length / 2)));
+        held.at.set(id, best);
+        taken.add(best);
+      }
+      for (const [id, k] of held.at) out.set(id, spots[k]);
     };
+    const seen = new Set<string>();
     for (const [loc, ids] of Object.entries(obs.queues)) {
       const l = this.town.locations[Number(loc)];
-      park(l.x, l.y, ids);
+      park(`b${loc}`, l.x, l.y, ids);
     }
     const atDepot = new Map<number, number[]>();
     for (const t of obs.trucks) {
@@ -681,8 +753,9 @@ export class Renderer {
     }
     for (const [node, ids] of atDepot) {
       const n = this.town.graph.nodes[node];
-      park(n.x, n.y, ids);
+      park(`n${node}`, n.x, n.y, ids);
     }
+    for (const key of [...this.parked.keys()]) if (!seen.has(key)) this.parked.delete(key);
     return out;
   }
 }

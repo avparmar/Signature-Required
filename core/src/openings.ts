@@ -26,7 +26,7 @@ export interface OpeningConfig {
 }
 
 export const DEFAULT_OPENINGS: OpeningConfig = {
-  everySec: 60,
+  everySec: 40,
   quietStartSec: 60,
   quietEndSec: 120,
   crowdRadius: 2,
