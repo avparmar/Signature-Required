@@ -126,3 +126,20 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 /* A route row lights up while its route is hovered on the map (and vice versa). */
 .route-row { border-radius: 4px; margin: 0 -4px; padding: 0 4px; }
 .route-row:hover, .route-row.hot { background: #f1ecdf; }
+
+/* How to play: Basics / Walkthrough */
+.card.help.wide { max-width: 660px; }
+.help-tabs { display: flex; gap: 6px; margin: -4px 0 12px; }
+.card .help-tabs button { background: #f0ebe0; color: var(--ink); padding: 5px 12px; font-size: 13px; }
+.card .help-tabs button.on { background: var(--ink); color: #fff; }
+.guide-imgs { display: flex; gap: 10px; align-items: flex-start; justify-content: center; background: #f7f4ec; border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
+.guide-imgs img { max-width: 100%; max-height: 300px; min-width: 0; flex: 0 1 auto; border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.12); }
+.guide-step h2 { font-size: 17px; margin: 14px 0 4px; }
+.guide-nav { display: flex; align-items: center; justify-content: space-between; margin: 8px 0 14px; }
+.card .guide-nav button { background: #f0ebe0; color: var(--ink); padding: 6px 12px; }
+.card .guide-nav button:disabled { opacity: 0.4; cursor: default; }
+.guide-nav .dots { display: flex; gap: 6px; }
+.guide-nav .dots span { width: 8px; height: 8px; border-radius: 50%; background: var(--line); cursor: pointer; }
+.guide-nav .dots span.on { background: var(--ink); }
+.card.help { max-height: calc(100vh - 80px); overflow-y: auto; }
+.card.help a { color: var(--ink); font-weight: 600; }
