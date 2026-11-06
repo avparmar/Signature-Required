@@ -399,7 +399,8 @@ export class Game {
         a.highBid = action.amount;
         a.highBidder = player;
         a.passed = []; // everyone else may answer the new bid
-        if (a.timeLeft < this.cfg.auctions.softCloseSec) a.timeLeft = this.cfg.auctions.softCloseSec;
+        const cap = Math.max(0, this.cfg.auctions.maxSec - a.age);
+        if (a.timeLeft < this.cfg.auctions.softCloseSec) a.timeLeft = Math.min(this.cfg.auctions.softCloseSec, Math.max(a.timeLeft, cap));
         this.emit('all', { type: 'bid', t: this.t, company: a.company, player, amount: action.amount, timeLeft: a.timeLeft });
         break;
       }
@@ -419,10 +420,9 @@ export class Game {
         const c = this.companies[action.company];
         if (!c) return reject(`no company ${action.company}`);
         let seller: number | null;
-        if (c.shares.some((s) => s === null)) {
-          if (!this.presidents(c.id).includes(player)) return reject('only a president can auction the bank-held shares');
-          seller = null;
-        } else if (c.shares.includes(player)) seller = player;
+        // Anyone may put up one of a company's bank-held shares, president or not.
+        if (c.shares.some((s) => s === null)) seller = null;
+        else if (c.shares.includes(player)) seller = player;
         else return reject("all shares are out and you don't own any to sell");
         if (this.elapsed < this.auctionCooldownUntil[c.id] - 1e-9)
           return reject(`${this.lastAuctionSold[c.id] ? 'a share sold recently' : 'no bids last time'}; try again in ${Math.ceil(this.auctionCooldownUntil[c.id] - this.elapsed)}s`);
@@ -465,6 +465,7 @@ export class Game {
     const cfg = this.cfg.auctions;
     if (this.auction) {
       this.auction.timeLeft -= this.cfg.tickSec;
+      this.auction.age += this.cfg.tickSec;
       if (this.auction.timeLeft <= 1e-9) this.settleAuction();
     }
     if (this.auction) return;
@@ -493,6 +494,7 @@ export class Game {
       highBid: 0,
       highBidder: null,
       timeLeft: opening ? cfg.openingClockSec : cfg.clockSec,
+      age: 0,
       opening,
       passed: [],
     };
