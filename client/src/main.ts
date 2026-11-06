@@ -659,7 +659,9 @@ function refreshCompanies(obs: Observation) {
     // (or, with nobody selling, well above the company's worth per share).
     const low = leastBid(obs, c.id);
     const perShare = Math.ceil(obs.value[c.id] / c.shares.length);
-    const high = Math.max(low, otherAsk !== null ? otherAsk - 1 : Math.max(low + 20, Math.ceil(perShare * 1.5)));
+    // With nobody selling, the slider goes as high as you could bid (all your spare cash), or for a sell
+    // order, well above the company's value per share; with a standing sell order, to just below it.
+    const high = Math.max(low, otherAsk !== null ? otherAsk - 1 : Math.max(Math.floor(free + myBid), Math.ceil(perShare * 1.5), low + 20));
     k.slider.min = String(low);
     k.slider.max = String(high);
     const key = sale ? `sale@${Math.round(obs.elapsed - sale.age)}` : 'market';
@@ -674,7 +676,7 @@ function refreshCompanies(obs: Observation) {
     k.lo.textContent = money(low);
     k.lo.title = 'The least a buy order can be now';
     k.hi.textContent = money(high);
-    k.hi.title = otherAsk !== null ? 'Just below the standing sell price' : 'Nobody is selling: well above the company value per share';
+    k.hi.title = otherAsk !== null ? 'Just below the standing sell price' : 'Nobody is selling: as much as you have to bid with';
     // Place a buy order at that price (in a sale, that's your bid), or a sell order for one of your shares.
     k.placeBuy.textContent = myBid ? 'Raise buy' : sale ? 'Bid' : 'Place buy';
     k.placeBuy.disabled = v < low || (otherAsk !== null && v >= otherAsk) || v - myBid > free;
