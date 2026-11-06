@@ -153,18 +153,18 @@ export class Renderer {
   /** Road width on screen: most of the gap between blocks, room for two lanes. */
   /** Truck size on screen (pixels): long enough that the company colour shows around the load. */
   get truckSize() {
-    const w = Math.max(11, Math.min(26, this.scale * 0.5));
+    const w = Math.max(11, this.scale * 0.5); // grows with the zoom
     return { w, h: w * 0.5 };
   }
 
   get roadWidth() {
-    return Math.max(3, Math.min(24, this.scale * 0.31));
+    return Math.max(3, this.scale * 0.31);
   }
 
   /** Building radius on screen. */
   get r() {
     // Small enough to leave room in the block, now that roads take most of the gap.
-    return Math.max(5, Math.min(24, this.scale * 0.27));
+    return Math.max(5, this.scale * 0.27);
   }
 
   /** The location under a screen point, if any. */
@@ -667,28 +667,9 @@ export class Renderer {
       const rim = Math.max(1.5, th * 0.2);
       const bx = -tw / 2 + rim;
       const bw = trW - 2 * rim;
-      if (t.cargo) {
-        const x0 = bx;
-        const y0 = -th / 2 + rim;
-        const w = bw;
-        const h = th - 2 * rim;
-        ctx.fillStyle = goodColor(t.cargo.good);
-        ctx.fillRect(x0, y0, w, h);
-        ctx.strokeStyle = INK;
-        ctx.lineWidth = 1.2;
-        ctx.strokeRect(x0, y0, w, h);
-        if (!t.cargo.processed) {
-          ctx.lineWidth = 0.9;
-          ctx.beginPath();
-          ctx.moveTo(x0, y0);
-          ctx.lineTo(x0 + w, y0 + h);
-          ctx.moveTo(x0 + w, y0);
-          ctx.lineTo(x0, y0 + h);
-          ctx.stroke();
-        } else {
-          ctx.fillStyle = t.cargo.good === 0 ? 'rgba(0,0,0,0.25)' : 'rgba(255,255,255,0.75)';
-          ctx.fillRect(x0 + w * 0.4, y0, w * 0.2, h);
-        }
+      // While a load is being processed it's in the factory, not on the truck.
+      if (t.cargo && t.state !== 'processing') {
+        drawCrate(ctx, bx, -th / 2 + rim, bw, th - 2 * rim, t.cargo.good, t.cargo.processed);
       } else {
         ctx.fillStyle = 'rgba(0,0,0,0.25)';
         ctx.fillRect(bx, -th / 2 + rim, bw, th - 2 * rim);
@@ -715,22 +696,29 @@ export class Renderer {
         ctx.arc(px, py, pr - 1.5, -Math.PI / 2, -Math.PI / 2 + done * Math.PI * 2);
         ctx.closePath();
         ctx.fill();
-        if (t.state === 'servicing' && t.at !== null) {
-          const l = this.town.locations[t.at];
-          const loading = l.kind === 'producer';
-          const bx = this.X(l.x);
-          const by = this.Y(l.y);
-          // Three hops per job, building -> truck when loading, truck -> building when unloading.
-          let f = (done * 3) % 1;
-          if (!loading) f = 1 - f;
+        // A crate hops between the building and the truck: raw goods (cross-braced) into a truck at a
+        // producer and into the factory; finished goods (gold-trimmed) out of the factory and into a shop.
+        const site = t.state === 'servicing' ? (t.at !== null ? this.town.locations[t.at] : null) : this.locationByNode().get(t.node) ?? null;
+        if (site) {
+          const bx = this.X(site.x);
+          const by = this.Y(site.y);
+          let f: number;
+          let finished: boolean;
+          if (t.state === 'processing') {
+            // First half: the raw load goes in; second half: the finished product comes back out.
+            finished = done >= 0.5;
+            f = finished ? (done - 0.5) * 2 : 1 - done * 2;
+          } else {
+            f = (done * 3) % 1; // three hops per job
+            finished = site.kind === 'consumer';
+            if (finished) f = 1 - f;
+          }
           const hop = Math.min(this.scale * 0.25, Math.hypot(x - bx, y - by) * 0.35);
           const cx = bx + (x - bx) * f;
           const cy = by + (y - by) * f - Math.sin(f * Math.PI) * hop;
           const cs = Math.max(5, tw * 0.38);
-          ctx.fillStyle = goodColor(l.good ?? 0);
-          ctx.strokeStyle = INK;
-          ctx.fillRect(cx - cs / 2, cy - cs / 2, cs, cs);
-          ctx.strokeRect(cx - cs / 2, cy - cs / 2, cs, cs);
+          const good = t.cargo?.good ?? site.good ?? 0;
+          drawCrate(ctx, cx - cs / 2, cy - cs / 2, cs, cs, good, finished);
         }
       }
     }
@@ -763,14 +751,21 @@ export class Renderer {
   serviceSec = 3;
   processSec = 3;
 
+  /** Locations by road node (cached per town). */
+  private locAtCache: { town: Town; map: Map<number, Location> } | null = null;
+  private locationByNode(): Map<number, Location> {
+    if (this.locAtCache?.town !== this.town) this.locAtCache = { town: this.town, map: new Map(this.town.locations.map((l) => [l.node, l])) };
+    return this.locAtCache.map;
+  }
+
   /** Parking spots each truck holds at a building or factory, kept while it waits there. */
   private parked = new Map<string, { spots: number; at: Map<number, number> }>();
 
   /** Kerbside spots round a block centred at (cx, cy): the near lane clockwise, then the far lane. */
-  private parkingSpots(cx: number, cy: number): { x: number; y: number; dx: number; dy: number }[] {
+  private parkingSpots(cx: number, cy: number): Spot[] {
     const spacing = (this.truckSize.w / this.scale) * 1.2;
     const quarter = this.roadWidth / this.scale / 4;
-    const out: { x: number; y: number; dx: number; dy: number }[] = [];
+    const out: Spot[] = [];
     for (const [o, dir] of [[0.5 - quarter, 1], [0.5 + quarter, -1]] as const) {
       const side = 2 * o;
       const n = Math.max(1, Math.floor(side / spacing)); // spots per side, spread evenly
@@ -785,7 +780,7 @@ export class Renderer {
             [cx - h, cy + h - along, 0, -1],
           ];
           const [x, y, dx, dy] = pts[k];
-          out.push({ x, y, dx: dx * dir, dy: dy * dir });
+          out.push({ x, y, dx: dx * dir, dy: dy * dir, ring: { cx, cy, h } });
         }
     }
     return out;
@@ -796,8 +791,8 @@ export class Renderer {
    * building, a slot in a neat row beside it (and likewise when parked at a depot). The facing is
    * the direction to the next road node.
    */
-  truckTargets(obs: Observation): Map<number, { x: number; y: number; dx: number; dy: number }> {
-    const out = new Map<number, { x: number; y: number; dx: number; dy: number }>();
+  truckTargets(obs: Observation): Map<number, Spot> {
+    const out = new Map<number, Spot>();
     const tById = new Map(obs.trucks.map((t) => [t.id, t]));
     // Trucks waiting or loading at a building park along the kerbs around its block. Each truck
     // takes the free spot nearest to where it pulled up and keeps it until it leaves. Spots run
@@ -835,15 +830,17 @@ export class Renderer {
       for (const [id, k] of held.at) out.set(id, spots[k]);
     };
     const seen = new Set<string>();
-    for (const [loc, ids] of Object.entries(obs.queues)) {
-      const l = this.town.locations[Number(loc)];
-      park(`b${loc}`, l.x, l.y, ids);
-    }
-    const atDepot = new Map<number, number[]>();
+    // Everyone stopped at a building, by its road node: queued or loading there, idle or being
+    // processed at a factory, or waiting for their turn to pull out.
+    const term = this.town.graph.terminal;
+    const atNode = new Map<number, number[]>();
+    const add = (node: number, id: number) => atNode.set(node, [...(atNode.get(node) ?? []), id]);
+    for (const [loc, ids] of Object.entries(obs.queues)) for (const id of ids) add(this.town.locations[Number(loc)].node, id);
+    const queued = new Set(Object.values(obs.queues).flat());
     for (const t of obs.trucks) {
-      if (out.has(t.id)) continue;
-      if (t.state === 'idle' || t.state === 'processing') {
-        atDepot.set(t.node, [...(atDepot.get(t.node) ?? []), t.id]);
+      if (queued.has(t.id)) continue;
+      if (t.state === 'idle' || t.state === 'processing' || (t.state === 'driving' && t.progress === 0 && term[t.node])) {
+        add(t.node, t.id);
         continue;
       }
       // Keep right: shift the truck a quarter of the road's width to the right of its heading.
@@ -856,12 +853,41 @@ export class Renderer {
       const oy = len > 1e-9 ? (dx / len) * lane : 0;
       out.set(t.id, { x: t.x + ox, y: t.y + oy, dx, dy });
     }
-    for (const [node, ids] of atDepot) {
+    const locAt = this.locationByNode();
+    for (const [node, ids] of atNode) {
+      const l = locAt.get(node);
       const n = this.town.graph.nodes[node];
-      park(`n${node}`, n.x, n.y, ids);
+      park(`n${node}`, l ? l.x : n.x, l ? l.y : n.y, ids);
     }
     for (const key of [...this.parked.keys()]) if (!seen.has(key)) this.parked.delete(key);
     return out;
+  }
+}
+
+/** A load in the good's colour: raw goods are a cross-braced crate, finished goods a pallet with a band and a gold trim. */
+function drawCrate(ctx: CanvasRenderingContext2D, x0: number, y0: number, w: number, h: number, good: number, finished: boolean) {
+  ctx.fillStyle = goodColor(good);
+  ctx.fillRect(x0, y0, w, h);
+  if (finished) {
+    ctx.fillStyle = good === 0 ? 'rgba(0,0,0,0.25)' : 'rgba(255,255,255,0.75)';
+    ctx.fillRect(x0 + w * 0.4, y0, w * 0.2, h);
+    ctx.strokeStyle = '#e6b422';
+    ctx.lineWidth = Math.max(1.5, Math.min(w, h) * 0.16);
+    ctx.strokeRect(x0, y0, w, h);
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 0.8;
+    ctx.strokeRect(x0 - ctx.lineWidth, y0 - ctx.lineWidth, w + 1.6, h + 1.6);
+  } else {
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 1.2;
+    ctx.strokeRect(x0, y0, w, h);
+    ctx.lineWidth = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x0 + w, y0 + h);
+    ctx.moveTo(x0 + w, y0);
+    ctx.lineTo(x0, y0 + h);
+    ctx.stroke();
   }
 }
 
@@ -919,6 +945,43 @@ export function drawFactory(ctx: CanvasRenderingContext2D, x: number, y: number,
     ctx.lineTo(x + s * 0.55, y - s * 0.1 + (k * s * 0.85) / 3);
     ctx.stroke();
   }
+}
+
+/**
+ * Where a truck should be drawn. Parked trucks also carry the kerbside loop (a square round the
+ * block, centre and half-side) their spot is on, so they can drive round it rather than cut across.
+ */
+export interface Spot {
+  x: number;
+  y: number;
+  dx: number;
+  dy: number;
+  ring?: { cx: number; cy: number; h: number };
+}
+
+/** Distance clockwise round a square loop, from its top-left corner, to the point on it nearest (x, y). */
+export function ringParam(r: { cx: number; cy: number; h: number }, x: number, y: number): number {
+  const { cx, cy, h } = r;
+  const px = Math.max(cx - h, Math.min(cx + h, x));
+  const py = Math.max(cy - h, Math.min(cy + h, y));
+  // Snap to the nearest side.
+  const sides = [Math.abs(py - (cy - h)), Math.abs(px - (cx + h)), Math.abs(py - (cy + h)), Math.abs(px - (cx - h))];
+  const k = sides.indexOf(Math.min(...sides));
+  if (k === 0) return px - (cx - h);
+  if (k === 1) return 2 * h + (py - (cy - h));
+  if (k === 2) return 4 * h + (cx + h - px);
+  return 6 * h + (cy + h - py);
+}
+
+/** The point (and clockwise heading) at distance s round a square loop. */
+export function ringPoint(r: { cx: number; cy: number; h: number }, s: number): { x: number; y: number; dx: number; dy: number } {
+  const { cx, cy, h } = r;
+  const L = 8 * h;
+  s = ((s % L) + L) % L;
+  if (s < 2 * h) return { x: cx - h + s, y: cy - h, dx: 1, dy: 0 };
+  if (s < 4 * h) return { x: cx + h, y: cy - h + (s - 2 * h), dx: 0, dy: 1 };
+  if (s < 6 * h) return { x: cx + h - (s - 4 * h), y: cy + h, dx: -1, dy: 0 };
+  return { x: cx - h, y: cy + h - (s - 6 * h), dx: 0, dy: -1 };
 }
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {

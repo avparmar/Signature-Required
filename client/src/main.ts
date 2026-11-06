@@ -10,7 +10,7 @@
  * - Auction panel (#35): bid on the running auction; presidents can put bank-held shares up.
  */
 import { distancesFrom, makeGameConfig, minimumBid, stillBidding, type GameConfig, type GameConfigOverrides, type GameEvent, type Location, type Observation } from '@sr/core';
-import { Renderer, companyColor, companySlot, coordOf, drawBusiness, drawFactory, goodColor, pickCompanySlots, type Highlights } from './render.js';
+import { Renderer, ringParam, ringPoint, type Spot, companyColor, companySlot, coordOf, drawBusiness, drawFactory, goodColor, pickCompanySlots, type Highlights } from './render.js';
 import { Session } from './session.js';
 import type { Match } from './match.js';
 import { GuestLobby, HostLobby, normalizeCode } from './net.js';
@@ -107,7 +107,7 @@ const hl: Highlights = {
 /** Company the player last acted for (route clicks default to it). */
 let activeCompany: number | null = null;
 /** Smoothed on-screen truck positions (town coordinates). */
-const shown = new Map<number, { x: number; y: number; dx: number; dy: number }>();
+const shown = new Map<number, Spot>();
 let mouse = { x: 0, y: 0, inside: false };
 
 function myCompanies(obs: Observation): number[] {
@@ -469,7 +469,7 @@ function refreshPanels(obs: Observation) {
           })
           .join('') + (bank ? `<span class="chip bank" title="Still with the bank">bank ×${bank}</span>` : '');
       const routes = obs.routes.filter((r) => r.company === c.id).length;
-      return `<div class="co" data-cohover="${c.id}"><div class="row"><span>${sw(c.id)}<b>${coName(c.id)}</b></span><span>${money(c.treasury)}</span></div><div class="chips">${chips}</div><div class="row muted small"><span>${trucks} trucks · ${depots} factor${depots === 1 ? 'y' : 'ies'} · ${routes} route${routes === 1 ? '' : 's'}</span></div><div class="row muted small"><span>Dividend: last · next</span><span>${lastDividend.has(c.id) ? money(lastDividend.get(c.id)!) : '–'} · ${money(c.dividendPerShare)}/share</span></div></div>`;
+      return `<div class="co" data-cohover="${c.id}"><div class="row"><span>${sw(c.id)}<b>${coName(c.id)}</b></span><span>${money(c.treasury)}</span></div><div class="chips">${chips}</div><div class="row muted small"><span>${trucks} trucks · ${depots} factor${depots === 1 ? 'y' : 'ies'} · ${routes} route${routes === 1 ? '' : 's'}</span></div><div class="row muted small"><span>Last dividend</span><span>${lastDividend.has(c.id) ? `${money(lastDividend.get(c.id)!)} / share` : 'none yet'}</span></div><div class="row muted small"><span>Next dividend</span><span>${money(c.dividendPerShare)} / share</span></div></div>`;
     })
     .join('');
 
@@ -710,9 +710,13 @@ function showPayout(paid: { company: number; amount: number; final: boolean }[])
         .map((p) => `<span>${sw(p.company)}${coName(p.company)} ${money(p.amount)}</span>`)
         .join('')}</div>`
     : `<div class="pay-title">Dividends paid</div><div class="pay-rows"><span>${watching ? 'Player 1 holds' : 'You hold'} no shares that paid this time.</span></div>`;
+  banner.innerHTML += '<div class="pay-close">click to close</div>';
   banner.classList.remove('show');
   void banner.offsetWidth; // restart the animation
   banner.classList.add('show');
+  banner.onclick = () => banner.classList.remove('show');
+  // Once it has faded out, it mustn't catch clicks meant for the map.
+  banner.onanimationend = () => banner.classList.remove('show');
   if (!total) return;
   const me = $('me');
   me.classList.remove('paid');
@@ -841,6 +845,15 @@ function drawChart(cv: HTMLCanvasElement, series: { label: string; color: string
   }
 }
 
+/** What kind of business a location is (or was, if it just closed and the lot no longer says). */
+function bizName(id: number): string {
+  const k = knownBusiness.get(id);
+  if (!k) return 'business';
+  return k.kind === 'producer' ? names(k.good).source : names(k.good).shop;
+}
+/** Each business's kind and good as last seen (a closed one is gone from the view by the time its event is read). */
+const knownBusiness = new Map<number, { kind: 'producer' | 'consumer'; good: number }>();
+
 /** What each company's last payout paid per share. */
 const lastDividend = new Map<number, number>();
 
@@ -917,15 +930,15 @@ function handleEvents(evs: GameEvent[]) {
     else if (e.type === 'payout' && e.paid[session.seat]) {
       text = `Dividend from ${coName(e.company)}: ${money(e.paid[session.seat])}${e.final ? ' (final)' : ''}`;
       cls = 'good';
-    } else if (e.type === 'opened') text = `A ${e.kind === 'producer' ? names(e.good).source : names(e.good).shop} opened`;
+    } else if (e.type === 'opened') text = `[${at(e.location)}] A ${e.kind === 'producer' ? names(e.good).source : names(e.good).shop} opened`;
     else if (e.type === 'closed') {
-      text = 'A business closed';
+      text = `[${at(e.location)}] A ${bizName(e.location)} closed`;
       cls = 'bad';
     } else if (e.type === 'closing') {
-      text = 'A business is about to close: serve it to save it';
+      text = `[${at(e.location)}] A ${bizName(e.location)} is about to close: serve it to save it`;
       cls = 'bad';
     } else if (e.type === 'boughtDepot') {
-      text = `${coName(e.company)} bought a factory for ${money(e.price)}`;
+      text = `[${at(e.site)}] ${coName(e.company)} bought a factory for ${money(e.price)}`;
       const site = g.town.locations[e.site];
       renderer.puff(site.x, site.y);
     }
@@ -1110,6 +1123,7 @@ function frame(now: number) {
   session.update(dt);
   const obs = session.obs();
   handleEvents(session.takeEvents());
+  for (const l of obs.locations) knownBusiness.set(l.id, { kind: l.kind, good: l.good });
   // Online: someone left, or the host did.
   const notices = (session as { notices?: string[] }).notices;
   while (notices?.length) toast(notices.shift()!, 'info');
@@ -1119,10 +1133,35 @@ function frame(now: number) {
   // Ease drawn truck positions towards where they are (smooth between ticks, and into queues).
   const targets = renderer.truckTargets(obs);
   const k = 1 - Math.exp(-dt * 14);
+  // Parking and pulling out follow the kerb round the block, at about a truck's driving speed.
+  const kerbStep = Math.max(0.02, session.cfg.trucks.speed * 2.5 * dt * (session.paused ? 0 : session.speed));
   for (const [id, t] of targets) {
     const s = shown.get(id);
-    if (!s || Math.hypot(s.x - t.x, s.y - t.y) > 3) shown.set(id, { ...t });
-    else shown.set(id, { x: s.x + (t.x - s.x) * k, y: s.y + (t.y - s.y) * k, dx: t.dx, dy: t.dy });
+    if (!s || Math.hypot(s.x - t.x, s.y - t.y) > 3) {
+      shown.set(id, { ...t });
+      continue;
+    }
+    const ring = t.ring ?? s.ring;
+    if (ring) {
+      // Drive round the loop towards the spot (or, pulling out, towards where the road picks up).
+      const L = 8 * ring.h;
+      const from = ringParam(ring, s.x, s.y);
+      const to = ringParam(ring, t.x, t.y);
+      let d = to - from;
+      if (d > L / 2) d -= L;
+      if (d < -L / 2) d += L;
+      const offRing = Math.hypot(ringPoint(ring, from).x - s.x, ringPoint(ring, from).y - s.y);
+      if (Math.abs(d) > kerbStep && offRing < 0.2) {
+        const p = ringPoint(ring, from + Math.sign(d) * kerbStep);
+        shown.set(id, { x: p.x, y: p.y, dx: p.dx * Math.sign(d), dy: p.dy * Math.sign(d), ring });
+        continue;
+      }
+      // Round the corner: settle into the spot, or (pulling out) leave the loop for the road.
+      const near = { x: s.x + (t.x - s.x) * k, y: s.y + (t.y - s.y) * k, dx: t.dx, dy: t.dy };
+      shown.set(id, t.ring ? { ...near, ring } : Math.hypot(t.x - s.x, t.y - s.y) < 0.05 ? near : { ...near, ring: offRing < 0.2 && Math.abs(d) > kerbStep ? ring : undefined });
+      continue;
+    }
+    shown.set(id, { x: s.x + (t.x - s.x) * k, y: s.y + (t.y - s.y) * k, dx: t.dx, dy: t.dy });
   }
   tooltip(obs);
   hl.spotlight = obs.auction ? obs.auction.company : null;
@@ -1159,6 +1198,7 @@ function beginMatch(m: Match) {
   watching = m.watch;
   pickCompanySlots(session.cfg.companies, session.cfg.seed);
   routeLog.clear();
+  knownBusiness.clear();
   lastDividend.clear();
   history.length = 0;
   earned.clear();
