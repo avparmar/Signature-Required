@@ -106,3 +106,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 .sites { display: flex; gap: 4px; flex-wrap: wrap; margin: 2px 0 4px; }
 .holding { display: inline-flex; align-items: center; margin-right: 6px; white-space: nowrap; }
 .holding .tag { margin-left: 3px; }
+#bid-custom { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 14px; }
+#bid-custom[hidden] { display: none; }
+#bid-custom input { flex: 1; min-width: 0; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; font-size: 14px; }
+#bid-custom button { padding: 5px 14px; font-size: 13px; font-weight: 600; }

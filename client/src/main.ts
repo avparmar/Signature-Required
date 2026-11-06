@@ -417,7 +417,29 @@ function refreshAuction(obs: Observation) {
     box.innerHTML = html;
     box.dataset.html = html;
   }
+  // The custom bid box stays put (it isn't re-rendered), so typing in it isn't interrupted.
+  const form = $<HTMLFormElement>('bid-custom');
+  form.hidden = !a || a.highBidder === obs.me;
+  if (a) $<HTMLInputElement>('bid-amount').min = String(minimumBid(a, g.cfg.auctions));
 }
+
+// A bid of any amount: you may want to put more into a company than the minimum.
+$<HTMLFormElement>('bid-custom').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const obs = session.obs();
+  const a = obs.auction;
+  const input = $<HTMLInputElement>('bid-amount');
+  const amount = Math.floor(Number(input.value));
+  if (!a || !Number.isFinite(amount)) return;
+  const min = minimumBid(a, session.cfg.auctions);
+  const me = obs.players[obs.me];
+  const spendable = me.cash - me.held;
+  if (amount < min) return toast(`The lowest bid now is ${money(min)}.`, 'error');
+  if (amount > spendable) return toast(`You have ${money(spendable)} to bid with.`, 'error');
+  session.act({ type: 'bid', company: a.company, amount });
+  input.value = '';
+  input.blur();
+});
 
 function refreshMyCompanies(obs: Observation) {
   const g = session.game;
