@@ -40,7 +40,7 @@ export const DEFAULT_TRUCKS: TruckConfig = {
   takeTurns: true,
   viaDepot: 'loaded',
   signOffSec: 3,
-  departGapSec: 1.5,
+  departGapSec: 2.5,
 };
 
 export interface Stop {

@@ -153,18 +153,18 @@ export class Renderer {
   /** Road width on screen: most of the gap between blocks, room for two lanes. */
   /** Truck size on screen (pixels): long enough that the company colour shows around the load. */
   get truckSize() {
-    const w = Math.max(11, Math.min(26, this.scale * 0.5));
+    const w = Math.max(11, this.scale * 0.5); // grows with the zoom
     return { w, h: w * 0.5 };
   }
 
   get roadWidth() {
-    return Math.max(3, Math.min(24, this.scale * 0.31));
+    return Math.max(3, this.scale * 0.31);
   }
 
   /** Building radius on screen. */
   get r() {
     // Small enough to leave room in the block, now that roads take most of the gap.
-    return Math.max(5, Math.min(24, this.scale * 0.27));
+    return Math.max(5, this.scale * 0.27);
   }
 
   /** The location under a screen point, if any. */
