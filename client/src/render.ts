@@ -15,9 +15,9 @@ import { distancesFrom, shortestPath, type Location, type Observation, type Rout
 export const COMPANY_COLORS = ['#d1452f', '#2a7ab0', '#3f9a54', '#8a5cc2', '#d24f93', '#1f9e9a'];
 export const GOOD_COLORS = ['#ffffff', '#d9a35f', '#3d4660', '#8fbf5a', '#b05bb0'];
 
-/** Chess-style name for a spot: column letter (A at the left) and row number (1 at the top). */
+/** Chess-style name for a block: column letter (A at the left) and row number (1 at the top). */
 export function coordOf(x: number, y: number): string {
-  return `${String.fromCharCode(65 + Math.round(x))}${Math.round(y) + 1}`;
+  return `${String.fromCharCode(65 + Math.floor(x))}${Math.floor(y) + 1}`;
 }
 const INK = '#23201b';
 const ROAD = '#d9d2c3';
@@ -105,7 +105,7 @@ export class Renderer {
 
   /** Building radius on screen. */
   get r() {
-    return Math.max(4, Math.min(18, this.scale * 0.24));
+    return Math.max(4, Math.min(22, this.scale * 0.27));
   }
 
   /** The location under a screen point, if any. */
@@ -159,7 +159,11 @@ export class Renderer {
    * ends (several companies, or several depots) are nudged apart sideways.
    */
   private routeLine(r: Route, routes: Route[]): { x: number; y: number }[] {
-    const nodes = this.routePath(r).map((n) => this.town.graph.nodes[n]);
+    // From kerb to kerb: leave off the zero-length driveways into the buildings themselves.
+    const path = this.routePath(r);
+    const term = this.town.graph.terminal;
+    const trimmed = path.filter((n, i) => !(term[n] && (i === 0 || i === path.length - 1)) || path.length <= 2);
+    const nodes = trimmed.map((n) => this.town.graph.nodes[n]);
     const same = routes.filter((x) => x.producer === r.producer && x.consumer === r.consumer);
     const k = (same.indexOf(r) - (same.length - 1) / 2) * 4;
     return nodes.map((n, i) => {
@@ -197,8 +201,10 @@ export class Renderer {
     ctx.lineCap = 'round';
     ctx.strokeStyle = ROAD;
     ctx.lineWidth = roadW;
+    const term = town.graph.terminal;
     ctx.beginPath();
     for (const e of town.graph.edges) {
+      if (term[e.a] || term[e.b]) continue;
       const a = town.graph.nodes[e.a];
       const b = town.graph.nodes[e.b];
       ctx.moveTo(this.X(a.x), this.Y(a.y));
@@ -229,7 +235,7 @@ export class Renderer {
       ctx.lineWidth = roadW * 2.2;
       ctx.beginPath();
       for (const e of town.graph.edges) {
-        if (d[e.a] > hl.leash || d[e.b] > hl.leash) continue;
+        if (d[e.a] > hl.leash || d[e.b] > hl.leash || term[e.a] || term[e.b]) continue;
         const a = town.graph.nodes[e.a];
         const b = town.graph.nodes[e.b];
         ctx.moveTo(this.X(a.x), this.Y(a.y));
@@ -376,9 +382,9 @@ export class Renderer {
       ctx.font = '600 10px system-ui, sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      for (let i = 0; i <= blocksX; i++) ctx.fillText(String.fromCharCode(65 + i), this.X(i), Math.max(8, this.Y(-0.3) - 8));
+      for (let i = 0; i < blocksX; i++) ctx.fillText(String.fromCharCode(65 + i), this.X(i + 0.5), Math.max(8, this.Y(-0.3) - 8));
       ctx.textAlign = 'right';
-      for (let j = 0; j <= blocksY; j++) ctx.fillText(`${j + 1}`, Math.max(14, this.X(-0.3) - 4), this.Y(j));
+      for (let j = 0; j < blocksY; j++) ctx.fillText(`${j + 1}`, Math.max(14, this.X(-0.3) - 4), this.Y(j + 0.5));
     }
 
     // Trucks.
@@ -452,28 +458,58 @@ export class Renderer {
    */
   truckTargets(obs: Observation): Map<number, { x: number; y: number; dx: number; dy: number }> {
     const out = new Map<number, { x: number; y: number; dx: number; dy: number }>();
-    const step = Math.max(0.22, 9 / this.scale);
-    const rr = this.r / this.scale;
+    const tById = new Map(obs.trucks.map((t) => [t.id, t]));
+    // Trucks waiting or loading at a building park along the kerbs around its block, grouped by
+    // company (a gap between companies), going clockwise from the top-left corner.
+    const park = (cx: number, cy: number, ids: number[]) => {
+      const truckLen = Math.max(8, Math.min(18, this.scale * 0.4)) / this.scale;
+      const spacing = truckLen * 1.5;
+      const ordered = [...ids].sort((a, b) => tById.get(a)!.company - tById.get(b)!.company || ids.indexOf(a) - ids.indexOf(b));
+      let pos = spacing / 2;
+      let ring = 0;
+      let prevCompany: number | null = null;
+      for (const id of ordered) {
+        const c = tById.get(id)!.company;
+        if (prevCompany !== null && c !== prevCompany) pos += spacing * 0.8; // gap between companies
+        prevCompany = c;
+        const o = 0.5 + ring * truckLen * 1.1; // kerb distance from the building's centre
+        const perim = 8 * o;
+        if (pos > perim - spacing / 2) {
+          ring++;
+          pos = spacing / 2;
+        }
+        const side = 2 * (0.5 + ring * truckLen * 1.1);
+        const along = pos % side;
+        const k = Math.floor(pos / side);
+        const h = side / 2;
+        const pts: [number, number, number, number][] = [
+          [cx - h + along, cy - h, 1, 0],
+          [cx + h, cy - h + along, 0, 1],
+          [cx + h - along, cy + h, -1, 0],
+          [cx - h, cy + h - along, 0, -1],
+        ];
+        const [x, y, dx, dy] = pts[k % 4];
+        out.set(id, { x, y, dx, dy });
+        pos += spacing;
+      }
+    };
     for (const [loc, ids] of Object.entries(obs.queues)) {
       const l = this.town.locations[Number(loc)];
-      ids.forEach((id, k) => {
-        const col = k % 4;
-        const row = Math.floor(k / 4);
-        out.set(id, { x: l.x + (col - 1.5) * step, y: l.y + rr + step * (1.7 + row), dx: 1, dy: 0 });
-      });
+      park(l.x, l.y, ids);
     }
-    const atDepot = new Map<number, number>();
+    const atDepot = new Map<number, number[]>();
     for (const t of obs.trucks) {
       if (out.has(t.id)) continue;
       if (t.state === 'idle' || t.state === 'repairing') {
-        const k = atDepot.get(t.node) ?? 0;
-        atDepot.set(t.node, k + 1);
-        const n = this.town.graph.nodes[t.node];
-        out.set(t.id, { x: n.x + rr + step * (1 + (k % 4)), y: n.y + step * Math.floor(k / 4), dx: 1, dy: 0 });
+        atDepot.set(t.node, [...(atDepot.get(t.node) ?? []), t.id]);
         continue;
       }
       const next = t.path.length ? this.town.graph.nodes[t.path[0]] : null;
       out.set(t.id, { x: t.x, y: t.y, dx: next ? next.x - t.x : 0, dy: next ? next.y - t.y : 0 });
+    }
+    for (const [node, ids] of atDepot) {
+      const n = this.town.graph.nodes[node];
+      park(n.x, n.y, ids);
     }
     return out;
   }

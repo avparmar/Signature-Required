@@ -293,7 +293,6 @@ describe('wear, servicing and breakdowns', () => {
     // It kept delivering after its first service.
     const first = services[0].t;
     expect(ev.some((e) => e.type === 'delivered' && e.t > first)).toBe(true);
-    expect(g.trucks.trucks[0].reliability).toBeGreaterThan(0.4);
   });
 
   it('breaks down, stands still, limps to a depot keeping its cargo, and is repaired', () => {

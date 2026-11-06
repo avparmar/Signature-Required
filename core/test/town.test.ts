@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { distancesFrom, generateTown, isConnected, makeTownConfig, renderTown } from '../src/index.js';
+import { distancesFrom, generateTown, isConnected, makeTownConfig, renderTown, shortestPath } from '../src/index.js';
 
 // 16x16 towns take a few hundred ms each to generate, so the multi-seed tests get more time.
 const SLOW = 60_000;
@@ -82,8 +82,11 @@ describe('distancesFrom', () => {
     const g = t.graph;
     const d = distancesFrom(g, 0);
     expect(d[0]).toBe(0);
-    // Driving is never shorter than a straight line.
-    for (const n of g.nodes) expect(d[n.id]).toBeGreaterThanOrEqual(Math.hypot(n.x - g.nodes[0].x, n.y - g.nodes[0].y) - 1e-9);
+    // Driving is never shorter than a straight line (to a building: to its kerb, half a block short).
+    for (const n of g.nodes) {
+      const straight = Math.hypot(n.x - g.nodes[0].x, n.y - g.nodes[0].y) - (g.terminal[n.id] ? 0.5 : 0);
+      expect(d[n.id]).toBeGreaterThanOrEqual(straight - 1e-9);
+    }
   });
 });
 
@@ -101,7 +104,7 @@ describe('rivers', () => {
         const t = town(seed, { rivers });
         const W = t.cfg.blocksX;
         expect(t.river.length).toBeGreaterThanOrEqual(t.cfg.blocksY);
-        expect(t.bridges.length).toBeGreaterThanOrEqual(rivers * t.cfg.bridgesPerRiver[0] - (rivers - 1));
+        expect(t.bridges.length).toBeGreaterThanOrEqual(rivers * t.cfg.bridgesPerRiver[0] - 2 * (rivers - 1)); // crossing rivers can share or lose a bridge
         expect(t.bridges.length).toBeLessThanOrEqual(rivers * t.cfg.bridgesPerRiver[1]);
         const wet = new Set(t.river.map((b) => `${b.i},${b.j}`));
         const key = (a: number, b: number) => `${Math.min(a, b)}-${Math.max(a, b)}`;
@@ -180,4 +183,54 @@ describe('snowflake layout', () => {
     },
     SLOW,
   );
+});
+
+describe('buildings in blocks', () => {
+  it('puts every building in the middle of its own block, with a driveway to each street around it', () => {
+    const t = town(4);
+    const { nodes, adj } = t.graph;
+    const seen = new Set<string>();
+    for (const l of t.locations) {
+      expect(l.x % 1).toBeCloseTo(0.5);
+      expect(l.y % 1).toBeCloseTo(0.5);
+      const key = `${l.x},${l.y}`;
+      expect(seen.has(key)).toBe(false);
+      seen.add(key);
+      expect(t.graph.terminal[l.node]).toBe(true);
+      // Driveways lead to street midpoints half a block away (and cost nothing to drive).
+      expect(adj[l.node].length).toBeGreaterThanOrEqual(1);
+      for (const { to } of adj[l.node]) {
+        expect(Math.hypot(nodes[to].x - l.x, nodes[to].y - l.y)).toBeCloseTo(0.5);
+        expect(t.graph.terminal[to]).toBe(false);
+      }
+    }
+  });
+
+  it("never routes through a building (no cutting across a block)", () => {
+    const t = town(4);
+    for (const l of t.locations.slice(0, 20)) {
+      const ends = t.graph.adj[l.node].map((x) => x.to);
+      if (ends.length < 2) continue;
+      const path = shortestPath(t.graph, ends[0], ends[1])!;
+      expect(path.slice(1, -1)).not.toContain(l.node);
+    }
+    // And no route between two other places passes through any building.
+    const a = t.locations[0].node;
+    for (const l of t.locations.slice(1)) {
+      const path = shortestPath(t.graph, a, l.node)!;
+      for (const n of path.slice(1, -1)) expect(t.graph.terminal[n]).toBe(false);
+    }
+  });
+});
+
+describe('trading partners apart', () => {
+  it('never puts a producer within pairGap blocks of a consumer of the same good', () => {
+    for (const seed of [1, 2, 3]) {
+      const t = town(seed);
+      const ps = t.locations.filter((l) => l.kind === 'producer');
+      const cs = t.locations.filter((l) => l.kind === 'consumer');
+      for (const p of ps)
+        for (const c of cs) if (p.good === c.good) expect(Math.abs(p.x - c.x) + Math.abs(p.y - c.y)).toBeGreaterThanOrEqual(t.cfg.pairGap);
+    }
+  });
 });

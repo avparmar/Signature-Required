@@ -7,6 +7,7 @@
  * for whichever kind (producer or consumer) of that good the town has fewer of.
  */
 import { distancesFrom } from './graph.js';
+import { pairOk } from './town.js';
 import type { Rng } from './rng.js';
 import type { Location, Town } from './town.js';
 
@@ -60,11 +61,20 @@ export function chooseOpening(town: Town, live: Location[], cfg: OpeningConfig, 
     return lotWeight(nearest, cfg);
   });
   const lot = lots[rng.weighted(weights)];
-  const good = rng.int(0, town.cfg.goods.length - 1);
+  let good = rng.int(0, town.cfg.goods.length - 1);
   const producers = live.filter((l) => l.kind === 'producer' && l.good === good).length;
   const consumers = live.filter((l) => l.kind === 'consumer' && l.good === good).length;
   // Lean towards the side that's short, but not deterministically.
   const pConsumer = consumers >= 2 * producers ? 0.35 : producers >= consumers ? 0.75 : 0.6;
-  const kind = rng.next() < pConsumer ? 'consumer' : 'producer';
+  let kind: 'producer' | 'consumer' = rng.next() < pConsumer ? 'consumer' : 'producer';
+  // Never right next to its own trading partner: try the other kind, then other goods.
+  const ok = (k: 'producer' | 'consumer', g: number) => pairOk(live, k, g, lot, town.cfg.pairGap);
+  if (!ok(kind, good)) {
+    const options: ['producer' | 'consumer', number][] = [];
+    for (let k = 0; k < town.cfg.goods.length; k++) for (const kk of [kind, kind === 'producer' ? 'consumer' : 'producer'] as const) options.push([kk, (good + k) % town.cfg.goods.length]);
+    const pick = options.find(([kk, g]) => ok(kk, g));
+    if (!pick) return null;
+    [kind, good] = pick;
+  }
   return { lot: lot.id, kind, good };
 }
