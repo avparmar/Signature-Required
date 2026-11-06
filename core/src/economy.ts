@@ -50,7 +50,7 @@ export const DEFAULT_CYCLES: CycleConfig = {
   growAbove: 0.75,
   shrinkBelow: 0.5,
   closingCycles: 1,
-  graceSec: 120,
+  graceSec: 60,
 };
 
 /** Dynamic state of a producer or consumer. */

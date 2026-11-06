@@ -758,7 +758,8 @@ function saturatedNote(key: string, good: number): string {
   if (!w || !w.saturated) return '';
   const n = names(good);
   const where = w.where === 'producer' ? `at the ${n.source}: it can't make ${n.raw} fast enough` : `at the ${n.shop}: it doesn't want more ${n.product} yet`;
-  return `<span class="wait" title="Its trucks spent ${Math.round(100 * w.share)}% of the last minute waiting. Another truck won't help; take one off, or put it on another route.">⏳ Trucks waiting ${where}</span>`;
+  // Short in the card; the whole story when you hover over it.
+  return `<span class="wait" title="Trucks waiting ${where}. They spent ${Math.round(100 * w.share)}% of the last minute waiting, so another truck won't help: take one off, or put it on another route.">⏳ Too many trucks</span>`;
 }
 
 function handleEvents(evs: GameEvent[]) {
