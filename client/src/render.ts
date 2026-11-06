@@ -667,28 +667,9 @@ export class Renderer {
       const rim = Math.max(1.5, th * 0.2);
       const bx = -tw / 2 + rim;
       const bw = trW - 2 * rim;
-      if (t.cargo) {
-        const x0 = bx;
-        const y0 = -th / 2 + rim;
-        const w = bw;
-        const h = th - 2 * rim;
-        ctx.fillStyle = goodColor(t.cargo.good);
-        ctx.fillRect(x0, y0, w, h);
-        ctx.strokeStyle = INK;
-        ctx.lineWidth = 1.2;
-        ctx.strokeRect(x0, y0, w, h);
-        if (!t.cargo.processed) {
-          ctx.lineWidth = 0.9;
-          ctx.beginPath();
-          ctx.moveTo(x0, y0);
-          ctx.lineTo(x0 + w, y0 + h);
-          ctx.moveTo(x0 + w, y0);
-          ctx.lineTo(x0, y0 + h);
-          ctx.stroke();
-        } else {
-          ctx.fillStyle = t.cargo.good === 0 ? 'rgba(0,0,0,0.25)' : 'rgba(255,255,255,0.75)';
-          ctx.fillRect(x0 + w * 0.4, y0, w * 0.2, h);
-        }
+      // While a load is being processed it's in the factory, not on the truck.
+      if (t.cargo && t.state !== 'processing') {
+        drawCrate(ctx, bx, -th / 2 + rim, bw, th - 2 * rim, t.cargo.good, t.cargo.processed);
       } else {
         ctx.fillStyle = 'rgba(0,0,0,0.25)';
         ctx.fillRect(bx, -th / 2 + rim, bw, th - 2 * rim);
@@ -715,22 +696,29 @@ export class Renderer {
         ctx.arc(px, py, pr - 1.5, -Math.PI / 2, -Math.PI / 2 + done * Math.PI * 2);
         ctx.closePath();
         ctx.fill();
-        if (t.state === 'servicing' && t.at !== null) {
-          const l = this.town.locations[t.at];
-          const loading = l.kind === 'producer';
-          const bx = this.X(l.x);
-          const by = this.Y(l.y);
-          // Three hops per job, building -> truck when loading, truck -> building when unloading.
-          let f = (done * 3) % 1;
-          if (!loading) f = 1 - f;
+        // A crate hops between the building and the truck: raw goods (cross-braced) into a truck at a
+        // producer and into the factory; finished goods (gold-trimmed) out of the factory and into a shop.
+        const site = t.state === 'servicing' ? (t.at !== null ? this.town.locations[t.at] : null) : this.locationByNode().get(t.node) ?? null;
+        if (site) {
+          const bx = this.X(site.x);
+          const by = this.Y(site.y);
+          let f: number;
+          let finished: boolean;
+          if (t.state === 'processing') {
+            // First half: the raw load goes in; second half: the finished product comes back out.
+            finished = done >= 0.5;
+            f = finished ? (done - 0.5) * 2 : 1 - done * 2;
+          } else {
+            f = (done * 3) % 1; // three hops per job
+            finished = site.kind === 'consumer';
+            if (finished) f = 1 - f;
+          }
           const hop = Math.min(this.scale * 0.25, Math.hypot(x - bx, y - by) * 0.35);
           const cx = bx + (x - bx) * f;
           const cy = by + (y - by) * f - Math.sin(f * Math.PI) * hop;
           const cs = Math.max(5, tw * 0.38);
-          ctx.fillStyle = goodColor(l.good ?? 0);
-          ctx.strokeStyle = INK;
-          ctx.fillRect(cx - cs / 2, cy - cs / 2, cs, cs);
-          ctx.strokeRect(cx - cs / 2, cy - cs / 2, cs, cs);
+          const good = t.cargo?.good ?? site.good ?? 0;
+          drawCrate(ctx, cx - cs / 2, cy - cs / 2, cs, cs, good, finished);
         }
       }
     }
@@ -873,6 +861,33 @@ export class Renderer {
     }
     for (const key of [...this.parked.keys()]) if (!seen.has(key)) this.parked.delete(key);
     return out;
+  }
+}
+
+/** A load in the good's colour: raw goods are a cross-braced crate, finished goods a pallet with a band and a gold trim. */
+function drawCrate(ctx: CanvasRenderingContext2D, x0: number, y0: number, w: number, h: number, good: number, finished: boolean) {
+  ctx.fillStyle = goodColor(good);
+  ctx.fillRect(x0, y0, w, h);
+  if (finished) {
+    ctx.fillStyle = good === 0 ? 'rgba(0,0,0,0.25)' : 'rgba(255,255,255,0.75)';
+    ctx.fillRect(x0 + w * 0.4, y0, w * 0.2, h);
+    ctx.strokeStyle = '#e6b422';
+    ctx.lineWidth = Math.max(1.5, Math.min(w, h) * 0.16);
+    ctx.strokeRect(x0, y0, w, h);
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 0.8;
+    ctx.strokeRect(x0 - ctx.lineWidth, y0 - ctx.lineWidth, w + 1.6, h + 1.6);
+  } else {
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 1.2;
+    ctx.strokeRect(x0, y0, w, h);
+    ctx.lineWidth = 0.9;
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.lineTo(x0 + w, y0 + h);
+    ctx.moveTo(x0 + w, y0);
+    ctx.lineTo(x0, y0 + h);
+    ctx.stroke();
   }
 }
 
