@@ -37,10 +37,11 @@ const fmtClock = (sec: number) => {
 function overridesFromUrl(): GameConfigOverrides {
   const q = new URLSearchParams(location.search);
   const via = q.get('via');
-  const rivers = Number(q.get('rivers') ?? 0);
+  const rivers = q.get('rivers') === null ? null : Number(q.get('rivers'));
   const o: GameConfigOverrides = {};
   if (via === 'none' || via === 'loaded' || via === 'hub') o.trucks = { viaDepot: via };
-  if (rivers > 0) o.town = { rivers: Math.min(2, Math.floor(rivers)) };
+  // One river by default; ?rivers=0 for none, ?rivers=2 for two.
+  if (rivers !== null && Number.isFinite(rivers)) o.town = { rivers: Math.max(0, Math.min(2, Math.floor(rivers))) };
   // ?seed=N replays the same town (handy for comparing or reporting a game).
   const seed = Number(q.get('seed'));
   if (Number.isInteger(seed) && seed > 0) o.seed = seed;
@@ -296,12 +297,14 @@ function tooltip(obs: Observation) {
     if (s) {
       const n = names(s.good);
       const recent = s.history.length ? Math.round((100 * s.history.reduce((a, b) => a + b, 0)) / s.history.length) : null;
-      html = `<b>${cap(s.kind === 'producer' ? n.source : n.shop)} ${at(l.id)}</b> · level ${s.level}/${g.cfg.cycles.maxLevel}`;
-      html +=
-        s.kind === 'producer'
-          ? `<div>${s.stock} load${s.stock === 1 ? '' : 's'} of ${n.raw} waiting · ${s.cycleAmount} per cycle</div><div class="muted">A factory turns it into ${n.product}</div>`
-          : `<div>Wants ${s.demand} more ${n.product} · pays ${cents(s.price)} a pallet${s.price > g.cfg.money.palletPrice ? ' (premium)' : ''}</div>`;
-      html += `<div class="muted">Next cycle in ${fmtClock(s.nextCycleAt - obs.t)}${recent !== null ? ` · ${recent}% served lately` : ''}</div>`;
+      // At a glance: level, this cycle's progress, and when the next cycle comes.
+      const prod = s.kind === 'producer';
+      html = `<b>${cap(prod ? n.source : n.shop)} ${at(l.id)}</b>`;
+      html += `<div class="tip-stats"><div><span>Level</span><b>${s.level}/${g.cfg.cycles.maxLevel}</b></div><div><span>${prod ? 'Shipped / made' : 'Received / needed'}</span><b>${s.served}/${s.cycleAmount}</b></div><div><span>Next cycle</span><b>${fmtClock(Math.max(0, s.nextCycleAt - obs.t))}</b></div></div>`;
+      html += prod
+        ? `<div class="muted">${s.stock} load${s.stock === 1 ? '' : 's'} of ${n.raw} waiting · a factory makes it into ${n.product}</div>`
+        : `<div class="muted">Pays ${cents(s.price)} a pallet${s.price > g.cfg.money.palletPrice ? ' (premium)' : ''}</div>`;
+      if (recent !== null) html += `<div class="muted">${recent}% served lately</div>`;
       if (s.closingIn !== null) html += `<div class="bad">Closing in ${s.closingIn} cycle${s.closingIn === 1 ? '' : 's'} unless served</div>`;
       const servers = [...new Set(obs.routes.filter((r) => r.producer === l.id || r.consumer === l.id).map((r) => r.company))];
       if (servers.length) html += `<div class="muted">Served by ${servers.map(coName).join(', ')}</div>`;

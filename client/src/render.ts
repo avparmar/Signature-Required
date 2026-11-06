@@ -344,6 +344,22 @@ export class Renderer {
         ctx.lineTo(this.X(b.x), this.Y(b.y));
       }
       ctx.stroke();
+      // The blocks it covers too: a building counts when the street it's on is in the zone. Blocks
+      // with a building go by its street; other blocks by the nearest street round them.
+      ctx.fillStyle = '#b08a1e';
+      ctx.globalAlpha = 0.2;
+      const inset = roadW / 2;
+      const built = new Map<string, number>();
+      for (const l of town.locations) built.set(`${Math.floor(l.x)},${Math.floor(l.y)}`, l.node);
+      const near = this.nodeAt();
+      for (let j = 0; j < town.cfg.blocksY; j++)
+        for (let i = 0; i < town.cfg.blocksX; i++) {
+          const own = built.get(`${i},${j}`);
+          const sides = [`${i + 0.5},${j}`, `${i + 1},${j + 0.5}`, `${i + 0.5},${j + 1}`, `${i},${j + 0.5}`].map((k) => near.get(k)).filter((n) => n !== undefined) as number[];
+          const dist = own !== undefined ? d[own] : Math.min(Infinity, ...sides.map((n) => d[n]));
+          if (dist > hl.district) continue;
+          ctx.fillRect(this.X(i) + inset, this.Y(j) + inset, this.scale - 2 * inset, this.scale - 2 * inset);
+        }
       ctx.globalAlpha = 1;
       label(ctx, 'subsidy zone', this.X(site.x), this.Y(site.y) - this.r * 1.9, '#7a5d10');
     }
@@ -610,6 +626,19 @@ export class Renderer {
         ctx.fillText('⚙', x + tw * 0.55, y - th * 0.9 + 0.5);
       }
     }
+  }
+
+  /** Road nodes by position ("x,y"), for finding the street at a block's side. Cached per town. */
+  private nodeAtCache: { town: Town; map: Map<string, number> } | null = null;
+  private nodeAt(): Map<string, number> {
+    if (this.nodeAtCache?.town === this.town) return this.nodeAtCache.map;
+    const map = new Map<string, number>();
+    const term = this.town.graph.terminal;
+    this.town.graph.nodes.forEach((n, id) => {
+      if (!term[id]) map.set(`${n.x},${n.y}`, id);
+    });
+    this.nodeAtCache = { town: this.town, map };
+    return map;
   }
 
   /** Parking spots each truck holds at a building or factory, kept while it waits there. */

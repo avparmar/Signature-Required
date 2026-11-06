@@ -91,8 +91,10 @@ describe('distancesFrom', () => {
 });
 
 describe('rivers', () => {
-  it('are off by default', () => {
-    const t = town(3);
+  it('one by default; none when turned off', () => {
+    expect(town(3).river.length).toBeGreaterThan(0);
+    expect(town(3).bridges.length).toBeGreaterThan(0);
+    const t = town(3, { rivers: 0 });
     expect(t.river).toEqual([]);
     expect(t.bridges).toEqual([]);
   });
@@ -162,7 +164,7 @@ describe('snowflake layout', () => {
     'is connected, has no ring roads, and keeps every street on the grid or a diagonal',
     () => {
       for (const seed of [1, 2, 3]) {
-        const t = town(seed, { layout: 'snowflake' });
+        const t = town(seed, { layout: 'snowflake', rivers: 0 });
         const { nodes, edges } = t.graph;
         expect(isConnected(nodes.length, edges.map((e) => [e.a, e.b]))).toBe(true);
         for (const e of edges) {

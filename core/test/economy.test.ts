@@ -182,7 +182,7 @@ describe('the town over a game', () => {
     const opened = evs.filter((e) => e.type === 'opened').length;
     // Level 3 -> 2 -> 1 -> closing -> closed takes about 4 windows of 4 cycles: ~12 minutes.
     expect(closed).toBeGreaterThan(original.size / 2);
-    expect(opened).toBeGreaterThanOrEqual(8); // roughly one a minute, minus the quiet start and end
+    expect(opened).toBeGreaterThanOrEqual(6); // roughly one a minute, minus the quiet start and end (fewer lots with a river)
     // Closed locations are empty lots again; opened ones are live.
     // Everything still live is on the map with the right kind; nothing closed is still live.
     const closedIds = new Set(evs.filter((e) => e.type === 'closed').map((e) => (e as { location: number }).location));

@@ -173,3 +173,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 @keyframes pay-float { from { opacity: 1; transform: translateY(8px); } to { opacity: 0; transform: translateY(-26px); } }
 @media (prefers-reduced-motion: reduce) { #phase.soon { animation: none; } }
 #tooltip.docked { max-width: 300px; box-shadow: 0 6px 20px rgba(0,0,0,0.25); }
+#tooltip .tip-stats { display: flex; gap: 6px; margin: 5px 0 4px; }
+#tooltip .tip-stats div { background: rgba(255,255,255,0.1); border-radius: 6px; padding: 3px 8px; display: flex; flex-direction: column; min-width: 58px; }
+#tooltip .tip-stats span { font-size: 10px; color: #c9c1b2; text-transform: uppercase; letter-spacing: 0.04em; }
+#tooltip .tip-stats b { font-size: 16px; font-variant-numeric: tabular-nums; }
+#tooltip { max-width: 320px; }
