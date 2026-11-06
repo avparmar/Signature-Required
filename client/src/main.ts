@@ -390,7 +390,6 @@ function refreshAuction(obs: Observation) {
   const box = $('auction');
   let html = '';
   if (a) {
-    const min = minimumBid(a, g.cfg.auctions);
     const leading = a.highBidder === obs.me;
     html += `<div class="row big"><span>${sw(a.company)}${coName(a.company)}</span><b>${Math.ceil(a.timeLeft)}s</b></div>`;
     html += `<div class="row muted small"><span>Selling</span><span>${a.seller === null ? 'a bank share' : `a share from ${playerName(a.seller, obs.me)}`}</span></div>`;
@@ -398,8 +397,6 @@ function refreshAuction(obs: Observation) {
     const c = obs.companies[a.company];
     html += `<div class="row muted small"><span>Treasury · trucks</span><span>${money(c.treasury)} · ${obs.trucks.filter((t) => t.company === c.id).length}</span></div>`;
     if (leading) html += '<div class="good small">You’re the high bidder.</div>';
-    const spendable = me.cash - me.held + (leading ? a.highBid : 0);
-    html += `<div class="bidrow"><button data-bid="${min}" ${spendable < min || leading ? 'disabled' : ''}>Bid ${money(min)}</button><button data-bid="${min + 5}" ${spendable < min + 5 || leading ? 'disabled' : ''}>${money(min + 5)}</button><button data-bid="${min + 20}" ${spendable < min + 20 || leading ? 'disabled' : ''}>${money(min + 20)}</button></div>`;
   } else html += '<div class="muted small">No auction running.</div>';
   if (obs.auctionQueue.length) html += `<div class="muted small">Next up: ${obs.auctionQueue.map((r) => coName(r.company)).join(', ')}</div>`;
   // Presidents can put a bank share up.
@@ -417,11 +414,34 @@ function refreshAuction(obs: Observation) {
     box.innerHTML = html;
     box.dataset.html = html;
   }
-  // The custom bid box stays put (it isn't re-rendered), so typing in it isn't interrupted.
+  // The bid row stays put (it isn't re-rendered), so adjusting or typing isn't interrupted. The
+  // amount starts at the minimum for each new auction and never sits below it.
   const form = $<HTMLFormElement>('bid-custom');
   form.hidden = !a || a.highBidder === obs.me;
-  if (a) $<HTMLInputElement>('bid-amount').min = String(minimumBid(a, g.cfg.auctions));
+  if (a) {
+    const min = minimumBid(a, g.cfg.auctions);
+    const input = $<HTMLInputElement>('bid-amount');
+    const fresh = form.dataset.auction !== `${a.company}:${obs.auctionQueue.length}` && document.activeElement !== input;
+    if (fresh) form.dataset.auction = `${a.company}:${obs.auctionQueue.length}`;
+    input.min = String(min);
+    if (document.activeElement !== input && (fresh || !(Number(input.value) >= min))) input.value = String(min);
+    const spendable = me.cash - me.held;
+    $<HTMLButtonElement>('bid-go').disabled = Number(input.value) > spendable;
+    $<HTMLButtonElement>('bid-down').disabled = Number(input.value) - 5 < min;
+    $<HTMLButtonElement>('bid-up').disabled = Number(input.value) + 5 > spendable;
+  }
 }
+
+$('bid-down').addEventListener('click', () => {
+  const input = $<HTMLInputElement>('bid-amount');
+  input.value = String(Math.max(Number(input.min), Math.floor(Number(input.value)) - 5));
+  refreshAuction(session.obs());
+});
+$('bid-up').addEventListener('click', () => {
+  const input = $<HTMLInputElement>('bid-amount');
+  input.value = String(Math.floor(Number(input.value) || Number(input.min)) + 5);
+  refreshAuction(session.obs());
+});
 
 // A bid of any amount: you may want to put more into a company than the minimum.
 $<HTMLFormElement>('bid-custom').addEventListener('submit', (e) => {
@@ -437,7 +457,6 @@ $<HTMLFormElement>('bid-custom').addEventListener('submit', (e) => {
   if (amount < min) return toast(`The lowest bid now is ${money(min)}.`, 'error');
   if (amount > spendable) return toast(`You have ${money(spendable)} to bid with.`, 'error');
   session.act({ type: 'bid', company: a.company, amount });
-  input.value = '';
   input.blur();
 });
 

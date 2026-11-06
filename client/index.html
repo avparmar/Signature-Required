@@ -50,7 +50,9 @@
           <h2>Auction</h2>
           <div id="auction"></div>
           <form id="bid-custom" hidden>
-            <span>$</span><input id="bid-amount" type="number" min="0" step="1" inputmode="numeric" placeholder="Your bid" />
+            <button id="bid-down" type="button" title="$5 less">−5</button>
+            <span class="amount">$<input id="bid-amount" type="number" min="0" step="1" inputmode="numeric" /></span>
+            <button id="bid-up" type="button" title="$5 more">+5</button>
             <button id="bid-go" type="submit">Bid</button>
           </form>
         </section>
