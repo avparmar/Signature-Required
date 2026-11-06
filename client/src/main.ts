@@ -9,7 +9,7 @@
  *   depots (affordable sites light up on the map with your price).
  * - Auction panel (#35): bid on the running auction; presidents can put bank-held shares up.
  */
-import { distancesFrom, minimumBid, stillBidding, type GameEvent, type Location, type Observation } from '@sr/core';
+import { distancesFrom, minimumBid, stillBidding, type GameConfigOverrides, type GameEvent, type Location, type Observation } from '@sr/core';
 import { Renderer, companyColor, coordOf, goodColor, type Highlights } from './render.js';
 import { Session } from './session.js';
 
@@ -31,12 +31,17 @@ const fmtClock = (sec: number) => {
 
 /**
  * Rule options from the page address, for trying settings out: ?via=none (direct routes, no
- * factory stop) or ?via=hub (the factory on both legs). The default is the loaded leg.
+ * factory stop) or ?via=hub (the factory on both legs; the default is the loaded leg), and
+ * ?rivers=1 or ?rivers=2 for a town with rivers.
  */
-function overridesFromUrl() {
-  const via = new URLSearchParams(location.search).get('via');
-  if (via === 'none' || via === 'loaded' || via === 'hub') return { trucks: { viaDepot: via } } as const;
-  return {};
+function overridesFromUrl(): GameConfigOverrides {
+  const q = new URLSearchParams(location.search);
+  const via = q.get('via');
+  const rivers = Number(q.get('rivers') ?? 0);
+  const o: GameConfigOverrides = {};
+  if (via === 'none' || via === 'loaded' || via === 'hub') o.trucks = { viaDepot: via };
+  if (rivers > 0) o.town = { rivers: Math.min(2, Math.floor(rivers)) };
+  return o;
 }
 
 let session = new Session({ overrides: overridesFromUrl() });

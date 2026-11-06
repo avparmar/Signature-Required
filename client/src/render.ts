@@ -124,7 +124,7 @@ export class Renderer {
 
   /** Road width on screen: most of the gap between blocks, room for two lanes. */
   get roadWidth() {
-    return Math.max(3, Math.min(30, this.scale * 0.38));
+    return Math.max(3, Math.min(24, this.scale * 0.31));
   }
 
   /** Building radius on screen. */
