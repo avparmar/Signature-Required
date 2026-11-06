@@ -15,7 +15,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #app {
   display: grid;
   grid-template-columns: 1fr minmax(260px, 300px);
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto auto 1fr auto;
   height: 100vh;
 }
 
@@ -38,9 +38,9 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 
 .side { overflow-y: auto; padding: 10px 12px; min-height: 0; }
 /* Companies: a strip of cards under the map, like a stock board. */
-#left { grid-column: 1; grid-row: 3; border-top: 1px solid var(--line); overflow: visible; padding: 8px 10px; position: relative; z-index: 10; }
-#map-wrap { grid-column: 1; grid-row: 2; }
-#right { grid-column: 2; grid-row: 2 / 4; border-left: 1px solid var(--line); }
+#left { grid-column: 1; grid-row: 4; border-top: 1px solid var(--line); overflow: visible; padding: 8px 10px; position: relative; z-index: 10; }
+#map-wrap { grid-column: 1; grid-row: 3; }
+#right { grid-column: 2; grid-row: 2 / 5; border-left: 1px solid var(--line); }
 #companies { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; }
 /* Each card sits at the bottom of its slot; folded it shows a summary, open (hovered or pinned) it grows upwards over the map. */
 #companies .slot { position: relative; height: 112px; }
@@ -53,7 +53,6 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #companies .co:not(:hover):not(:focus-within):not(.pinned) .row > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 #companies .co:not(:hover):not(:focus-within):not(.pinned) .chips { flex-wrap: nowrap; overflow: hidden; }
 #companies .chip { white-space: nowrap; flex: none; }
-#companies .co .spark { flex: 0 1 56px; min-width: 0; }
 #companies .co .row > span.value { flex: none; }
 #companies .co:is(:hover, :focus-within, .pinned) { z-index: 2; width: max(100%, 270px); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.16); }
 #companies .slot:nth-last-child(-n + 2) .co { left: auto; right: 0; }
@@ -65,7 +64,6 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #companies .co:first-child { padding-top: 7px; }
 #companies .row { font-size: 13px; padding: 1px 0; }
 #companies .chips { margin: 2px 0 1px; }
-.spark { display: block; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
 .panel h2 { margin: 0 0 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
 
@@ -255,3 +253,10 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 .chips .mini { margin-left: auto; font-size: 11px; padding: 1px 8px; line-height: 1.4; }
 .broker .order .place-buy:not(:disabled) { background: var(--ink); color: #fff; border-color: var(--ink); }
 .broker .order button[hidden] { display: none; }
+
+/* Other players: a slim strip along the top of the map. */
+#players { grid-column: 1; grid-row: 2; display: flex; gap: 18px; align-items: center; padding: 5px 14px; border-bottom: 1px solid var(--line); background: var(--panel); font-size: 13px; overflow: hidden; white-space: nowrap; }
+#players .pl { display: flex; align-items: center; gap: 6px; min-width: 0; }
+#players .cash { color: var(--muted); }
+#players .chips { display: flex; gap: 3px; margin: 0; flex-wrap: nowrap; }
+#companies .quick-stats > span { flex: none; }

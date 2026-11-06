@@ -285,6 +285,7 @@ window.addEventListener('mousemove', (e) => {
     if (drag.moved || Math.hypot(dx, dy) > 4) {
       drag.moved = true;
       renderer.pan(dx, dy);
+      viewMoved = true;
       drag.x = e.clientX;
       drag.y = e.clientY;
     }
@@ -310,10 +311,17 @@ canvas.addEventListener(
     e.preventDefault();
     const box = canvas.getBoundingClientRect();
     renderer.zoomAt(e.clientX - box.left, e.clientY - box.top, Math.exp(-e.deltaY * 0.0015));
+    viewMoved = true;
   },
   { passive: false },
 );
-canvas.addEventListener('dblclick', () => renderer.fit());
+canvas.addEventListener('dblclick', () => {
+  renderer.fit();
+  viewMoved = false;
+});
+/** Whether you've panned or zoomed (then a change in the map's size keeps your view). */
+let viewMoved = false;
+new ResizeObserver(() => renderer.resize(!viewMoved)).observe($('map-wrap'));
 
 // ------------------------------------------------------------------ tooltip
 
@@ -443,7 +451,7 @@ function refreshPanels(obs: Observation) {
           return holdingChip(c.id, n, c.presidents.includes(p.id));
         })
         .join('');
-      return `<div class="co"><div class="row"><span><b>${seatName(p.id)}</b></span><span>${money(p.cash)}</span></div><div class="chips">${shares || '<span class="muted small">No shares</span>'}</div></div>`;
+      return `<div class="pl"><b>${seatName(p.id)}</b><span class="cash">${money(p.cash)}</span><span class="chips">${shares || '<span class="muted small">no shares</span>'}</span></div>`;
     })
     .join('');
 
@@ -558,7 +566,7 @@ function refreshCompanies(obs: Observation) {
       saleBtn = `<button class="mini" data-startsale="${c.id}" ${cooldown > 0 ? 'disabled' : ''} title="Put one of the company's own shares up for sale. The best bid at the end gets it, if it's at least ${money(obs.minPrice[c.id])}; the money goes to the company.">${cooldown > 0 ? `Sale in ${Math.ceil(cooldown)}s` : 'Start a sale'}</button>`;
     }
     html += `<div class="chips">${chips}${saleBtn}</div>`;
-    html += `<div class="row small"><span class="value" title="Trucks and factories at what they cost, plus cash">Company value <b>${money(obs.value[c.id])}</b></span>${obs.phase === 'running' ? sparkline(c.id, c.shares.length, { t: obs.t, value: obs.value[c.id] }) : ''}</div>`;
+    html += `<div class="row small quick-stats"><span title="Company value: trucks and factories at what they cost, plus cash">Value <b>${money(obs.value[c.id])}</b></span><span title="Next dividend per share, so far">Div <b>${money(c.dividendPerShare)}</b></span><span title="${trucks} trucks, ${depots} factor${depots === 1 ? 'y' : 'ies'}">🚚 <b>${trucks}</b> 🏭 <b>${depots}</b></span></div>`;
     // Folded, the card stops here (plus a line for a running sale); hovering or pinning shows the rest.
     if (sale) {
       const best = book.bid;
@@ -859,28 +867,6 @@ function waiting(key: string): { share: number; saturated: boolean; where: 'prod
  * earnings over the last minute.
  */
 const history: { t: number; cash: number[]; value: number[]; earned: number[]; perMin: number[] }[] = [];
-/** Prices shares changed hands at, by company: sales, trades between players, and buy-backs. */
-const tradePrices = new Map<number, { t: number; price: number }[]>();
-
-/**
- * A company's price line: its value per share over time (the line) and the prices its shares
- * changed hands at (the dots), on one scale.
- */
-function sparkline(id: number, shares: number, now: { t: number; value: number }): string {
-  const W = 56;
-  const H = 16;
-  const pts = [...history.map((h) => ({ t: h.t, v: h.value[id] / shares })), { t: now.t, v: now.value / shares }];
-  const trades = tradePrices.get(id) ?? [];
-  if (pts.length < 2 && !trades.length) return '';
-  const t0 = 0;
-  const t1 = Math.max(60, now.t);
-  const vmax = Math.max(1, ...pts.map((p) => p.v), ...trades.map((x) => x.price));
-  const x = (t: number) => ((t - t0) / (t1 - t0)) * (W - 2) + 1;
-  const y = (v: number) => H - 1 - (v / vmax) * (H - 2);
-  const line = pts.map((p) => `${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ');
-  const dots = trades.map((d) => `<circle cx="${x(d.t).toFixed(1)}" cy="${y(d.price).toFixed(1)}" r="1.6" fill="${companyColor(id)}" />`).join('');
-  return `<svg class="spark" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><title>Line: company value per share. Dots: prices its shares changed hands at.</title><polyline points="${line}" fill="none" stroke="#b9b1a2" stroke-width="1.2" />${dots}</svg>`;
-}
 /** Delivery income so far, by company. */
 const earned = new Map<number, number>();
 let lastHistory = -Infinity;
@@ -984,11 +970,14 @@ function saturatedNote(key: string, good: number): string {
   return `<span class="wait" title="Trucks waiting ${where}. They spent ${Math.round(100 * w.share)}% of the last minute waiting, so another truck won't help: take one off, or put it on another route.">⏳ Too many trucks</span>`;
 }
 
+const logList = document.createElement('ol');
+
 function handleEvents(evs: GameEvent[]) {
   const obs = session.obs();
   const g = session.game;
   const mine = new Set(myCompanies(obs));
-  const ol = $('log');
+  // The log panel is gone; entries still go to an offscreen list (handy for debugging).
+  const ol = logList;
   const truckRoute = new Map(obs.trucks.map((t) => [t.id, t.route]));
   const paidNow: { company: number; amount: number; final: boolean }[] = [];
   let payoutSeen = false;
@@ -1024,11 +1013,6 @@ function handleEvents(evs: GameEvent[]) {
       if (e.paid[session.seat]) paidNow.push({ company: e.company, amount: e.paid[session.seat], final: !!e.final });
     }
     if (e.type === 'orderCancelled' && e.player === session.seat && e.reason === 'beaten' && !watching) toast(`Your ${e.side} for ${coName(e.company)} was ${e.side === 'bid' ? 'outbid' : 'undercut'}.`, 'error');
-    if ((e.type === 'saleWon' || e.type === 'trade') && e.t > 0) {
-      const list = tradePrices.get(e.company) ?? [];
-      list.push({ t: e.t, price: e.type === 'saleWon' ? e.amount : e.price });
-      tradePrices.set(e.company, list);
-    }
     if (e.type === 'saleWon') text = `${cap(playerName(e.player, obs.me))} bought a share of ${coName(e.company)} for ${money(e.amount)}`;
     else if (e.type === 'trade')
       text =
@@ -1309,7 +1293,6 @@ function beginMatch(m: Match) {
   knownBusiness.clear();
   lastDividend.clear();
   history.length = 0;
-  tradePrices.clear();
   earned.clear();
   lastHistory = -Infinity;
   waitLog.clear();
@@ -1327,7 +1310,8 @@ function beginMatch(m: Match) {
   renderer.processSec = session.cfg.trucks.signOffSec;
   renderer.palletPrice = session.cfg.money.palletPrice;
   renderer.resize(true);
-  $('log').innerHTML = '';
+  viewMoved = false;
+  logList.innerHTML = '';
   $('overlay').hidden = true;
   shown.clear();
   reachCache.clear();
