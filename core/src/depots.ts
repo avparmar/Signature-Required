@@ -54,7 +54,7 @@ export const DEFAULT_DEPOTS: DepotConfig = {
   subsidyWindowSec: 180,
   subsidyMinPallets: 6,
   subsidyTarget: 60,
-  newSiteEverySec: 180,
+  newSiteEverySec: 0,
   truckPriceStep: 0,
   depotFreeBlocks: 4,
   depotPerBlock: 10,

@@ -140,7 +140,7 @@ export class Session implements Match {
   private stepOnce() {
     const g = this.game;
     const thinkSteps = Math.max(1, Math.round(1 / this.cfg.tickSec));
-    const look = g.auction !== null || g.steps % thinkSteps === 0;
+    const look = g.sales.length > 0 || g.steps % thinkSteps === 0;
     // Shuffle who acts first so no bot always wins tied bids (as in the headless runner).
     for (const p of this.orderRng.shuffle([...this.bots.keys()])) {
       const evs = g.drainEvents(p);

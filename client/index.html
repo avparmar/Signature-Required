@@ -26,20 +26,10 @@
           <button id="btn-new" title="New game">New game</button>
         </div>
       </header>
-      <aside id="left" class="side">
-        <section class="panel">
-          <h2 id="me-title">You</h2>
-          <div id="me"></div>
-        </section>
-        <section class="panel">
-          <h2>Other players</h2>
-          <div id="players"></div>
-        </section>
-        <section class="panel">
-          <h2>Companies</h2>
-          <div id="companies"></div>
-        </section>
+      <aside id="left" class="side" aria-label="Companies">
+        <div id="companies"></div>
       </aside>
+      <div id="players" aria-label="Other players"></div>
       <main id="map-wrap">
         <canvas id="map"></canvas>
         <div id="hint"></div>
@@ -49,26 +39,13 @@
         <div id="overlay" hidden></div>
       </main>
       <aside id="right" class="side">
-        <section class="panel" id="auction-panel">
-          <h2>Auction</h2>
-          <div id="auction"></div>
-          <form id="bid-custom" hidden>
-            <button id="bid-down" type="button" title="Down to the previous $5">−5</button>
-            <button id="bid-down1" type="button" title="$1 less">−1</button>
-            <span class="amount">$<input id="bid-amount" type="number" min="0" step="1" inputmode="numeric" /></span>
-            <button id="bid-up1" type="button" title="$1 more">+1</button>
-            <button id="bid-up" type="button" title="Up to the next $5">+5</button>
-            <button id="bid-go" type="submit">Bid</button>
-            <button id="bid-pass" type="button" title="Done bidding (until someone else bids): the auction ends early once everyone but the high bidder has passed">Pass</button>
-          </form>
+        <section class="panel">
+          <h2 id="me-title">You</h2>
+          <div id="me"></div>
         </section>
         <section class="panel">
           <h2 id="mycos-title">Your companies</h2>
           <div id="mycos"></div>
-        </section>
-        <section class="panel">
-          <h2>Log</h2>
-          <ol id="log"></ol>
         </section>
       </aside>
     </div>

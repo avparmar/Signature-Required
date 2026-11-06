@@ -189,7 +189,7 @@ describe('buying', () => {
 
 describe('new factory sites', () => {
   it('appear every few minutes on empty lots, away from other factories', () => {
-    const g = newGame({ seed: 4, auctions: { openingRound: false } });
+    const g = newGame({ seed: 4, auctions: { openingRound: false }, town: { blocksX: 16, blocksY: 16 }, depots: { newSiteEverySec: 180 } });
     const before = g.town.locations.filter((l) => l.kind === 'depot').length;
     g.runToEnd();
     const opened = g.drainEvents(0).filter((e) => e.type === 'siteOpened') as { site: number }[];
