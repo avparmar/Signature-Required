@@ -367,6 +367,10 @@ export class RemoteMatch implements Match {
       // Businesses opening and closing change the town: mirror them on the local copy.
       for (const e of msg.events) {
         if (e.type === 'opened' && this.game.town.locations[e.location]?.kind === 'lot') openOnLot(this.game.town, e.location, e.kind, e.good);
+        if (e.type === 'siteOpened') {
+          const l = this.game.town.locations[e.site];
+          if (l) Object.assign(l, { kind: 'depot', good: null, level: 1, bays: 0, startCompany: null });
+        }
         if (e.type === 'closed') {
           const l = this.game.town.locations[e.location];
           if (l && (l.kind === 'producer' || l.kind === 'consumer')) clearToLot(this.game.town, e.location);

@@ -34,6 +34,8 @@ export interface DepotConfig {
   /** Subsidy pricing: recent pickups and deliveries in the district for the full discount. Each company
    *  earns its own discount, so several can max out at once. */
   subsidyTarget: number;
+  /** A new unclaimed factory site appears this often (seconds; 0 for never), from that long in until the last two minutes. */
+  newSiteEverySec: number;
   /** Drive distance (blocks) from your nearest depot that still costs only the base price. */
   depotFreeBlocks: number;
   /** Extra price per block beyond that. */
@@ -50,6 +52,7 @@ export const DEFAULT_DEPOTS: DepotConfig = {
   subsidyWindowSec: 180,
   subsidyMinPallets: 6,
   subsidyTarget: 60,
+  newSiteEverySec: 180,
   depotFreeBlocks: 4,
   depotPerBlock: 10,
 };

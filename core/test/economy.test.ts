@@ -192,7 +192,8 @@ describe('the town over a game', () => {
     }
     const liveIds = new Set(g.locations.map((l) => l.id));
     // A lot can close and later host a new opening, so only check the ones that stayed closed.
-    for (const id of closedIds) if (!liveIds.has(id)) expect(g.town.locations[id].kind).toBe('lot');
+    // (or a new factory site).
+    for (const id of closedIds) if (!liveIds.has(id)) expect(['lot', 'depot']).toContain(g.town.locations[id].kind);
   });
 
   it('openings avoid lots right next to live locations', () => {

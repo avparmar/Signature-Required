@@ -94,6 +94,8 @@ export type GameEvent =
   | TruckEvent
   | AuctionEvent
   | { type: 'open'; t: number }
+  /** A new unclaimed factory site, on what was an empty lot. */
+  | { type: 'siteOpened'; t: number; site: number }
   | { type: 'start'; t: number }
   | { type: 'boughtTruck'; t: number; company: number; truck: number; depot: number; price: number }
   | { type: 'boughtDepot'; t: number; company: number; site: number; price: number }
@@ -279,6 +281,7 @@ export class Game {
       if (e.type === 'closed') this.removeLocation(e.location);
     }
     this.maybeOpen();
+    this.maybeNewSite();
     this.trucks.update(this.t, this.cfg.tickSec, (id) => this.town.locations[id].bays);
     // (Issues #6–#7 add depots and money here.)
 
@@ -613,6 +616,38 @@ export class Game {
     this.locations.push(state);
     this.locById.set(state.id, state);
     this.emit('all', { type: 'opened', t: this.t, location: loc.id, kind: choice.kind, good: choice.good });
+  }
+
+  /**
+   * Every `newSiteEverySec` (from that long in, until the last two minutes), a new unclaimed factory
+   * site appears on an empty lot in the worst-served part of town: where the most businesses are
+   * far from every factory. Turns dead zones into something to race for.
+   */
+  private maybeNewSite() {
+    const every = this.cfg.depots.newSiteEverySec;
+    if (every <= 0 || this.t > this.cfg.durationSec - 120) return;
+    const k = Math.round(this.t / this.cfg.tickSec);
+    const period = Math.round(every / this.cfg.tickSec);
+    if (k === 0 || k % period !== 0) return;
+    const depots = this.town.locations.filter((l) => l.kind === 'depot');
+    const nearestDepot = (x: number, y: number) => Math.min(...depots.map((d) => Math.hypot(d.x - x, d.y - y)));
+    const far = this.locations.map((st) => this.town.locations[st.id]).filter((l) => nearestDepot(l.x, l.y) > 4);
+    let best: { id: number; score: number; room: number } | null = null;
+    for (const lot of this.town.locations) {
+      if (lot.kind !== 'lot') continue;
+      const room = nearestDepot(lot.x, lot.y);
+      if (room < this.town.cfg.depotGap) continue;
+      const score = far.filter((l) => Math.hypot(l.x - lot.x, l.y - lot.y) <= 4).length;
+      if (!best || score > best.score || (score === best.score && room > best.room)) best = { id: lot.id, score, room };
+    }
+    if (!best) return;
+    const site = this.town.locations[best.id];
+    site.kind = 'depot';
+    site.good = null;
+    site.level = 1;
+    site.bays = 0;
+    site.startCompany = null;
+    this.emit('all', { type: 'siteOpened', t: this.t, site: site.id });
   }
 
   /** Trucks based at a depot site (where they wait when free). */
