@@ -570,7 +570,7 @@ function refreshCompanies(obs: Observation) {
     // Folded, the card stops here (plus a line for a running sale); hovering or pinning shows the rest.
     if (sale) {
       const best = book.bid;
-      html += `<div class="row small sale-line fold-only"><b>${sale.opening ? 'Opening sale' : 'Sale'} ${Math.ceil(sale.timeLeft)}s</b><span>${best ? `best ${money(best.price)} (${who(best.player)})` : 'no bids yet'}</span></div>`;
+      html += `<div class="row small sale-line fold-only"><b>${sale.opening ? 'Opening sale' : 'Sale'} ${Math.ceil(sale.timeLeft)}s</b><span>${best ? `highest bid ${money(best.price)} (${who(best.player)})` : 'no bids yet'}</span></div>`;
     }
     html += '<div class="more">';
     html += `<div class="row small muted"><span>${trucks} trucks · ${depots} factor${depots === 1 ? 'y' : 'ies'} · ${routes} route${routes === 1 ? '' : 's'}</span></div>`;
@@ -581,7 +581,7 @@ function refreshCompanies(obs: Observation) {
       const enough = best !== null && best.price >= obs.minPrice[c.id];
       const last = sale.age + sale.timeLeft >= session.cfg.auctions.maxSec - 0.05 && sale.timeLeft < session.cfg.auctions.softCloseSec;
       html += `<div class="sale"><div class="row"><b>${sale.opening ? 'Opening sale' : 'Selling a company share'}</b><b>${Math.ceil(sale.timeLeft)}s</b></div>`;
-      html += `<div class="row small"><span>Best bid</span><span>${best ? `${money(best.price)} (${who(best.player)})` : 'none yet'}</span></div>`;
+      html += `<div class="row small"><span>Highest bid</span><span>${best ? `${money(best.price)} (${who(best.player)})` : 'none yet'}</span></div>`;
       if (obs.minPrice[c.id] > 0) html += `<div class="row small muted"><span>Sells for at least</span><span>${money(obs.minPrice[c.id])}${best && !enough ? ' · not met yet' : ''}</span></div>`;
       if (best?.player === obs.me && !watching) html += `<div class="good small">${enough ? 'You’re winning it.' : 'Your bid is below the minimum.'}</div>`;
       if (last) html += `<div class="muted small">Final seconds: bids no longer add time.</div>`;
@@ -606,6 +606,7 @@ function refreshCompanies(obs: Observation) {
       k.info.dataset.html = html;
     }
     k.root.classList.toggle('selling', !!sale);
+    k.root.classList.toggle('yours', c.presidents.includes(obs.me) && !watching);
     // Open: pinned, or the opening round's company being sold (nothing else is happening then).
     k.root.classList.toggle('pinned', pinned || (sale?.opening === true && acting));
     // The broker box: always there once the market is open; in the opening round, only on the company being sold.
@@ -622,15 +623,20 @@ function refreshCompanies(obs: Observation) {
     const cb = obs.companyBid[c.id];
     // Buy now (at the standing ask) and sell now (to the best of a player's bid and the company's).
     k.quick.hidden = obs.phase !== 'running';
-    k.buyNow.innerHTML = otherAsk !== null ? `Buy now <b>${money(otherAsk)}</b>` : 'Buy now <b>—</b>';
-    k.buyNow.disabled = otherAsk === null || free < otherAsk;
-    k.buyNow.title = otherAsk === null ? 'Nobody is selling a share right now' : free < otherAsk ? 'Not enough cash' : `Buy ${who(book.ask!.player)}'s share`;
+    // Buttons only for what you can do; otherwise a plain note of the price (or that there's none).
+    const canBuy = otherAsk !== null && free >= otherAsk;
+    k.buyNow.innerHTML = otherAsk === null ? 'Nobody selling' : canBuy ? `Buy for <b>${money(otherAsk)}</b>` : `Sells for <b>${money(otherAsk)}</b>`;
+    k.buyNow.disabled = !canBuy;
+    k.buyNow.classList.toggle('note', !canBuy);
+    k.buyNow.title = otherAsk === null ? 'Nobody is selling a share right now' : !canBuy ? 'Not enough cash to buy it' : `Buy ${who(book.ask!.player)}'s share at once`;
     const toCompany = cb !== null && (otherBid === null || cb >= otherBid);
     const sellAt = toCompany ? cb : otherBid;
     k.sellNow.dataset.to = toCompany ? 'company' : 'bid';
-    k.sellNow.innerHTML = sellAt !== null ? `Sell now <b>${money(sellAt)}</b>` : 'Sell now <b>—</b>';
-    k.sellNow.disabled = sellAt === null || !mine;
-    k.sellNow.title = sellAt === null ? 'Nobody is buying right now' : !mine ? "You don't own a share" : toCompany ? 'Sell a share back to the company' : `Sell a share to ${who(book.bid!.player)}`;
+    const canSell = sellAt !== null && mine > 0;
+    k.sellNow.innerHTML = sellAt === null ? 'Nobody buying' : canSell ? `Sell for <b>${money(sellAt)}</b>` : `Buyers pay <b>${money(sellAt)}</b>`;
+    k.sellNow.disabled = !canSell;
+    k.sellNow.classList.toggle('note', !canSell);
+    k.sellNow.title = sellAt === null ? 'Nobody is buying right now' : !mine ? "What you'd get for a share, if you had one" : toCompany ? 'Sell one of your shares back to the company at once' : `Sell one of your shares to ${who(book.bid!.player)} at once`;
     // The slider runs from the least buy order that would stand to just below the standing ask
     // (or, with nobody selling, well above the company's worth per share).
     const low = leastBid(obs, c.id);
