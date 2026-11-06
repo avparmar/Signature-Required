@@ -332,9 +332,11 @@ export class Renderer {
     const site = hl.hover !== null ? town.locations[hl.hover] : null;
     if (site && site.kind === 'depot' && obs.depots[site.id] === undefined) {
       const d = this.districtOf(site.node);
+      // Its streets, kept to the road itself so nothing spills onto blocks outside the zone.
       ctx.strokeStyle = '#b08a1e';
-      ctx.globalAlpha = 0.28;
-      ctx.lineWidth = roadW * 2.4;
+      ctx.globalAlpha = 0.3;
+      ctx.lineWidth = roadW;
+      ctx.lineCap = 'butt';
       ctx.beginPath();
       for (const e of town.graph.edges) {
         if (d[e.a] > hl.district || d[e.b] > hl.district || term[e.a] || term[e.b]) continue;
@@ -344,16 +346,19 @@ export class Renderer {
         ctx.lineTo(this.X(b.x), this.Y(b.y));
       }
       ctx.stroke();
-      // The blocks it covers too: a building counts when the street it's on is in the zone. Blocks
-      // with a building go by its street; other blocks by the nearest street round them.
+      // The blocks it covers, filled edge to edge: a building counts when the street it's on is in
+      // the zone. Blocks with a building go by its street; other blocks by the nearest street round them.
+      ctx.lineCap = 'round';
       ctx.fillStyle = '#b08a1e';
-      ctx.globalAlpha = 0.2;
+      ctx.globalAlpha = 0.3;
       const inset = roadW / 2;
       const built = new Map<string, number>();
       for (const l of town.locations) built.set(`${Math.floor(l.x)},${Math.floor(l.y)}`, l.node);
       const near = this.nodeAt();
+      const water = new Set(town.river.map(({ i, j }) => `${i},${j}`));
       for (let j = 0; j < town.cfg.blocksY; j++)
         for (let i = 0; i < town.cfg.blocksX; i++) {
+          if (water.has(`${i},${j}`)) continue;
           const own = built.get(`${i},${j}`);
           const sides = [`${i + 0.5},${j}`, `${i + 1},${j + 0.5}`, `${i + 0.5},${j + 1}`, `${i},${j + 0.5}`].map((k) => near.get(k)).filter((n) => n !== undefined) as number[];
           const dist = own !== undefined ? d[own] : Math.min(Infinity, ...sides.map((n) => d[n]));
