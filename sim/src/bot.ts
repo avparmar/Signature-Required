@@ -115,6 +115,11 @@ export class Bot {
     const out: Action[] = [];
     const bid = this.bid(obs);
     if (bid) out.push(bid);
+    else {
+      // Not bidding at this price: say so, so the auction can end early.
+      const a = obs.auction;
+      if (a && a.highBidder !== this.me && a.seller !== this.me && !a.passed.includes(this.me)) out.push({ type: 'pass', company: a.company });
+    }
     if (obs.elapsed - this.lastThink < this.thinkEverySec) return out;
     this.lastThink = obs.elapsed;
     if (obs.phase === 'running') {

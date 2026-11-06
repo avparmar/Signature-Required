@@ -42,6 +42,13 @@ export interface Highlights {
   spotlight: number | null;
   /** A free factory site's subsidy district (drive distance, blocks), shaded when it's hovered. */
   district: number;
+  /** Company whose subsidy meters show on free factory sites (the one you're running), or null. */
+  meterFor: number | null;
+  /** Full price of a factory site and the biggest discount, for the meters. */
+  siteBase: number;
+  maxSubsidy: number;
+  /** Free sites to flash (site id -> game-clock time of the last pickup or delivery in its zone). */
+  flash: Map<number, number>;
 }
 
 export class Renderer {
@@ -287,10 +294,18 @@ export class Renderer {
       const picked = hl.picked.includes(l.id);
       const hovered = hl.hover === l.id;
       if (l.kind === 'lot') {
-        ctx.fillStyle = '#d8d1c2';
-        ctx.beginPath();
-        ctx.arc(x, y, Math.max(1.5, r * 0.22), 0, Math.PI * 2);
-        ctx.fill();
+        // An empty lot: a staked-out plot where a business may open (with a little sign).
+        const s = r * 0.95;
+        ctx.strokeStyle = '#c9c0ae';
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([2, 3]);
+        ctx.strokeRect(x - s, y - s, 2 * s, 2 * s);
+        ctx.setLineDash([]);
+        if (detail) {
+          ctx.fillStyle = '#b8ae99';
+          ctx.fillRect(x - 0.6, y - s * 0.2, 1.2, s * 0.75);
+          ctx.fillRect(x - s * 0.38, y - s * 0.55, s * 0.76, s * 0.4);
+        }
         continue;
       }
       if (l.kind === 'depot') {
@@ -307,6 +322,28 @@ export class Renderer {
           ctx.stroke();
           ctx.setLineDash([]);
           if (price !== undefined) label(ctx, `$${price}`, x, y - s - 7, '#7a5d10');
+          // Subsidy meter: a ring that fills with the discount the company you run has earned
+          // here, and blinks when one of its pickups or deliveries lands in the zone.
+          if (hl.meterFor !== null) {
+            const p = obs.depotPrices[l.id]?.[hl.meterFor];
+            if (p !== undefined) {
+              const frac = Math.max(0, Math.min(1, (1 - p / hl.siteBase) / hl.maxSubsidy));
+              const rr = s * 1.55;
+              ctx.lineWidth = 3;
+              ctx.strokeStyle = 'rgba(176,138,30,0.18)';
+              ctx.beginPath();
+              ctx.arc(x, y, rr, 0, Math.PI * 2);
+              ctx.stroke();
+              if (frac > 0) {
+                ctx.strokeStyle = '#c99a1a';
+                ctx.beginPath();
+                ctx.arc(x, y, rr, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+                ctx.stroke();
+              }
+              const since = obs.t - (hl.flash.get(l.id) ?? -99);
+              if (since >= 0 && since < 0.6) ring(ctx, x, y, rr + 2 + since * 10, `rgba(201,154,26,${0.8 * (1 - since / 0.6)})`, 2);
+            }
+          }
         } else {
           ctx.fillStyle = companyColor(owner);
           ctx.strokeStyle = INK;

@@ -4,7 +4,7 @@
  * Same config + same actions at the same ticks = same game, every time.
  */
 import { makeGameConfig, type GameConfig, type GameConfigOverrides } from './config.js';
-import { minimumBid, type Auction, type AuctionEvent, type AuctionRequest } from './auctions.js';
+import { minimumBid, stillBidding, type Auction, type AuctionEvent, type AuctionRequest } from './auctions.js';
 import { depotPrice, subsidisedPrice } from './depots.js';
 import { assignPrices, investCost, payPerShare } from './money.js';
 import { chooseOpening } from './openings.js';
@@ -76,6 +76,8 @@ export type Action =
   | { type: 'invest'; location: number }
   /** Bid on the current auction (company must match, so a late bid can't land on the next one). */
   | { type: 'bid'; company: number; amount: number }
+  /** Done bidding on the current auction (until someone else bids). */
+  | { type: 'pass'; company: number }
   /**
    * Put a share up for auction: a bank-held share (presidents only), or, once all of a company's
    * shares are out, one of your own. Queues if another auction is running.
@@ -390,8 +392,20 @@ export class Game {
         p.held += action.amount;
         a.highBid = action.amount;
         a.highBidder = player;
+        a.passed = []; // everyone else may answer the new bid
         if (a.timeLeft < this.cfg.auctions.softCloseSec) a.timeLeft = this.cfg.auctions.softCloseSec;
         this.emit('all', { type: 'bid', t: this.t, company: a.company, player, amount: action.amount, timeLeft: a.timeLeft });
+        break;
+      }
+      case 'pass': {
+        const a = this.auction;
+        if (!a || a.company !== action.company) return reject(`no auction for company ${action.company} right now`);
+        if (a.highBidder === player) return reject("you're the high bidder");
+        if (a.passed.includes(player)) return;
+        a.passed.push(player);
+        this.emit('all', { type: 'pass', t: this.t, company: a.company, player });
+        // Everyone who could still bid has passed: it ends now.
+        if (stillBidding(a, this.players.length).length === 0) a.timeLeft = 0;
         break;
       }
       case 'startAuction': {
@@ -474,6 +488,7 @@ export class Game {
       highBidder: null,
       timeLeft: opening ? cfg.openingClockSec : cfg.clockSec,
       opening,
+      passed: [],
     };
     this.emit('all', { type: 'auctionStart', t: this.t, company: next.company, seller: next.seller, opening, timeLeft: this.auction.timeLeft });
   }

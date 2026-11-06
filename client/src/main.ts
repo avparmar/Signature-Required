@@ -9,7 +9,7 @@
  *   depots (affordable sites light up on the map with your price).
  * - Auction panel (#35): bid on the running auction; presidents can put bank-held shares up.
  */
-import { distancesFrom, minimumBid, type GameEvent, type Location, type Observation } from '@sr/core';
+import { distancesFrom, minimumBid, stillBidding, type GameEvent, type Location, type Observation } from '@sr/core';
 import { Renderer, companyColor, coordOf, goodColor, type Highlights } from './render.js';
 import { Session } from './session.js';
 
@@ -47,7 +47,18 @@ let lastUi = 0;
 
 // ------------------------------------------------------------------ selection and input state
 
-const hl: Highlights = { hover: null, picked: [], hoverRoute: null, buyFor: null, spotlight: null, district: session.cfg.depots.districtBlocks };
+const hl: Highlights = {
+  hover: null,
+  picked: [],
+  hoverRoute: null,
+  buyFor: null,
+  spotlight: null,
+  district: session.cfg.depots.districtBlocks,
+  meterFor: null,
+  siteBase: session.cfg.depots.depotBase,
+  maxSubsidy: session.cfg.depots.maxSubsidy,
+  flash: new Map(),
+};
 /** Company the player last acted for (route clicks default to it). */
 let activeCompany: number | null = null;
 /** Smoothed on-screen truck positions (town coordinates). */
@@ -370,8 +381,24 @@ function refreshPanels(obs: Observation) {
     .map((c) => {
       const trucks = obs.trucks.filter((t) => t.company === c.id).length;
       const depots = Object.values(obs.depots).filter((o) => o === c.id).length;
-      const owners = c.shares.map((s) => (s === null ? '·' : s === obs.me ? '<b>Y</b>' : `${s + 1}`)).join(' ');
-      return `<div class="co"><div class="row"><span>${sw(c.id)}<b>${coName(c.id)}</b></span><span>${money(c.treasury)}</span></div><div class="row muted small"><span>${trucks} trucks · ${depots} factor${depots === 1 ? 'y' : 'ies'} · ${obs.routes.filter((r) => r.company === c.id).length} routes</span><span title="Share owners (Y = you, · = bank)">${owners}</span></div><div class="row muted small"><span>Next dividend</span><span>${money(c.dividendPerShare)}/share</span></div></div>`;
+      // One chip per share: you, another player (by number), or still with the bank. Presidents'
+      // chips are outlined, with a crown on the first.
+      // One chip per shareholder with how many shares they hold (you first, presidents crowned),
+      // then the shares still with the bank.
+      const holders = new Map<number, number>();
+      for (const sh of c.shares) if (sh !== null) holders.set(sh, (holders.get(sh) ?? 0) + 1);
+      const order = [...holders.keys()].sort((a, b) => (a === obs.me ? -1 : b === obs.me ? 1 : holders.get(b)! - holders.get(a)! || a - b));
+      const bank = c.shares.filter((sh) => sh === null).length;
+      const chips =
+        order
+          .map((pl) => {
+            const pres = c.presidents.includes(pl);
+            const n = holders.get(pl)!;
+            return `<span class="chip${pl === obs.me ? ' you' : ''}${pres ? ' pres' : ''}" title="${pl === obs.me ? 'You' : `Player ${pl + 1}`}: ${n} share${n === 1 ? '' : 's'}${pres ? ', president' : ''}">${pres ? '♔ ' : ''}${pl === obs.me ? 'You' : `P${pl + 1}`} ×${n}</span>`;
+          })
+          .join('') + (bank ? `<span class="chip bank" title="Still with the bank">bank ×${bank}</span>` : '');
+      const routes = obs.routes.filter((r) => r.company === c.id).length;
+      return `<div class="co"><div class="row"><span>${sw(c.id)}<b>${coName(c.id)}</b></span><span>${money(c.treasury)}</span></div><div class="chips">${chips}</div><div class="row muted small"><span>${trucks} trucks · ${depots} factor${depots === 1 ? 'y' : 'ies'} · ${routes} route${routes === 1 ? '' : 's'}</span></div><div class="row muted small"><span>Next dividend</span><span>${money(c.dividendPerShare)}/share</span></div></div>`;
     })
     .join('');
 
@@ -397,6 +424,10 @@ function refreshAuction(obs: Observation) {
     const c = obs.companies[a.company];
     html += `<div class="row muted small"><span>Treasury · trucks</span><span>${money(c.treasury)} · ${obs.trucks.filter((t) => t.company === c.id).length}</span></div>`;
     if (leading) html += '<div class="good small">You’re the high bidder.</div>';
+    // Who's still in: it ends early once everyone but the high bidder has passed.
+    const still = stillBidding(a, obs.players.length);
+    const passed = a.passed.map((p) => (p === obs.me ? 'you' : `P${p + 1}`));
+    html += `<div class="row muted small"><span>${passed.length ? `Passed: ${passed.join(', ')}` : 'Nobody has passed'}</span><span>${still.length} still in</span></div>`;
   } else html += '<div class="muted small">No auction running.</div>';
   if (obs.auctionQueue.length) html += `<div class="muted small">Next up: ${obs.auctionQueue.map((r) => coName(r.company)).join(', ')}</div>`;
   // Presidents can put a bank share up.
@@ -427,12 +458,20 @@ function refreshAuction(obs: Observation) {
     if (document.activeElement !== input && (fresh || !(Number(input.value) >= min))) input.value = String(min);
     const spendable = me.cash - me.held;
     $<HTMLButtonElement>('bid-go').disabled = Number(input.value) > spendable;
+    const pass = $<HTMLButtonElement>('bid-pass');
+    pass.disabled = a.passed.includes(obs.me);
+    pass.textContent = a.passed.includes(obs.me) ? 'Passed' : 'Pass';
     $<HTMLButtonElement>('bid-down').disabled = Number(input.value) <= min;
     $<HTMLButtonElement>('bid-down1').disabled = Number(input.value) <= min;
     $<HTMLButtonElement>('bid-up1').disabled = Number(input.value) + 1 > spendable;
     $<HTMLButtonElement>('bid-up').disabled = Math.floor(Number(input.value) / 5) * 5 + 5 > spendable;
   }
 }
+
+$('bid-pass').addEventListener('click', () => {
+  const a = session.obs().auction;
+  if (a) session.act({ type: 'pass', company: a.company });
+});
 
 $('bid-down').addEventListener('click', () => {
   const input = $<HTMLInputElement>('bid-amount');
@@ -574,6 +613,12 @@ function handleEvents(evs: GameEvent[]) {
   for (const e of evs) {
     let text: string | null = null;
     let cls = '';
+    // A pickup or delivery by the company you're running: blink the free sites whose zone it's in.
+    if ((e.type === 'loaded' || e.type === 'delivered') && e.company === currentCompany(obs)) {
+      const node = g.town.locations[e.location].node;
+      for (const site of Object.keys(obs.depotPrices).map(Number))
+        if (siteReach(site)[node] <= g.cfg.depots.districtBlocks) hl.flash.set(site, e.t);
+    }
     if (e.type === 'rejected') {
       toast(cap(e.reason) + '.', 'error');
       continue;
@@ -655,6 +700,7 @@ function frame(now: number) {
   }
   tooltip(obs);
   hl.spotlight = obs.auction ? obs.auction.company : null;
+  hl.meterFor = currentCompany(obs);
   renderer.draw(
     obs,
     [...targets.keys()].map((id) => ({ id, ...shown.get(id)! })),
@@ -689,6 +735,9 @@ function newGame() {
   activeCompany = null;
   shownEnd = false;
   hl.district = session.cfg.depots.districtBlocks;
+  hl.siteBase = session.cfg.depots.depotBase;
+  hl.maxSubsidy = session.cfg.depots.maxSubsidy;
+  hl.flash.clear();
 }
 
 $('btn-pause').onclick = togglePause;

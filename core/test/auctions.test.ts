@@ -209,3 +209,53 @@ describe('determinism with auctions', () => {
     expect(g.companies.some((c) => c.shares.some((s) => s !== null))).toBe(true);
   });
 });
+
+describe('passing', () => {
+  it('ends the auction at once when everyone but the high bidder has passed', () => {
+    const g = newGame({ seed: 3, auctions: { openingBid: 0 } });
+    g.step();
+    expect(g.auction?.company).toBe(0);
+    g.act(0, { type: 'bid', company: 0, amount: 10 });
+    g.act(1, { type: 'pass', company: 0 });
+    g.act(2, { type: 'pass', company: 0 });
+    g.step();
+    expect(g.auction?.company).toBe(0); // player 3 hasn't passed yet
+    g.act(3, { type: 'pass', company: 0 });
+    g.step();
+    g.step();
+    expect(g.auction?.company).toBe(1); // sold; the next one started
+    expect(g.companies[0].shares).toContain(0);
+    expect(of(g.drainEvents(0), 'auctionWon')).toHaveLength(1);
+  });
+
+  it('a new bid clears the passes, so the others can answer it', () => {
+    const g = newGame({ seed: 3, auctions: { openingBid: 0 } });
+    g.step();
+    g.act(0, { type: 'bid', company: 0, amount: 10 });
+    g.act(1, { type: 'pass', company: 0 });
+    g.act(2, { type: 'pass', company: 0 });
+    g.step();
+    g.act(3, { type: 'bid', company: 0, amount: 12 });
+    g.step();
+    expect(g.auction?.passed).toEqual([]);
+    g.act(1, { type: 'pass', company: 0 });
+    g.act(2, { type: 'pass', company: 0 });
+    g.step();
+    expect(g.auction?.company).toBe(0); // player 0 may still answer
+  });
+
+  it("the high bidder can't pass, and everyone passing with no bids ends it unsold", () => {
+    const g = newGame({ seed: 3, auctions: { openingBid: 0 } });
+    g.step();
+    g.act(0, { type: 'bid', company: 0, amount: 5 });
+    g.act(0, { type: 'pass', company: 0 });
+    g.step();
+    expect(of(g.drainEvents(0), 'rejected')).toHaveLength(1);
+    const h = newGame({ seed: 3, auctions: { openingBid: 0 } });
+    h.step();
+    for (let p = 0; p < h.cfg.players; p++) h.act(p, { type: 'pass', company: 0 });
+    h.step();
+    h.step();
+    expect(of(h.drainEvents(0), 'auctionNoBids')).toHaveLength(1);
+  });
+});
