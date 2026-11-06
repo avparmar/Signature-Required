@@ -29,6 +29,9 @@ export interface TruckConfig {
   viaDepot: 'none' | 'loaded' | 'hub';
   /** Seconds processing a load at the factory takes. */
   signOffSec: number;
+  /** Trucks pull out of a building (or factory) one at a time, at least this many seconds apart,
+   *  so trucks sent out together don't drive stacked on top of each other. */
+  departGapSec: number;
 }
 
 export const DEFAULT_TRUCKS: TruckConfig = {
@@ -37,6 +40,7 @@ export const DEFAULT_TRUCKS: TruckConfig = {
   takeTurns: true,
   viaDepot: 'loaded',
   signOffSec: 3,
+  departGapSec: 1.5,
 };
 
 export interface Stop {
@@ -284,7 +288,16 @@ export class TruckSystem {
     for (const location of [...this.queues.keys()].sort((a, b) => a - b)) this.serve(location, now, baysOf(location));
   }
 
+  /** When a truck last pulled out of each building node (for departGapSec). */
+  private leftAt = new Map<number, number>();
+
   private drive(truck: Truck, distance: number, now: number) {
+    // Pulling out of a building: wait for the truck ahead to get going first.
+    if (truck.progress === 0 && truck.path.length && this.graph.terminal[truck.node]) {
+      const last = this.leftAt.get(truck.node);
+      if (last !== undefined && now - last < this.cfg.departGapSec - 1e-9) return;
+      this.leftAt.set(truck.node, now);
+    }
     let left = distance;
     while (left > 0 && truck.path.length) {
       const next = truck.path[0];

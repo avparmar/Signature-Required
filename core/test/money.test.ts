@@ -154,3 +154,17 @@ describe('final bonus based on earnings', () => {
     expect(g.players[0].cash - before).toBeCloseTo(30 + 2 * 30);
   });
 });
+
+describe('pulling out', () => {
+  it('trucks sent out together leave their factory one at a time, not stacked', () => {
+    const { g, home, producer, consumer } = setup();
+    g.companies[0].shares = [0, null, null, null, null];
+    g.addTruck(0);
+    g.addTruck(0);
+    g.act(0, { type: 'assignRoute', depot: home.id, producer: producer.id, consumer: consumer.id });
+    g.act(0, { type: 'assignRoute', depot: home.id, producer: producer.id, consumer: consumer.id });
+    runFor(g, 1);
+    const [a, b] = g.observe(0).trucks.filter((t) => t.company === 0);
+    expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeGreaterThan(0.2);
+  });
+});
