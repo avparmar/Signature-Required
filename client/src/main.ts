@@ -293,7 +293,7 @@ function tooltip(obs: Observation) {
     } else {
       const routes = obs.routes.filter((r) => r.depot === l.id);
       const n = routes.reduce((a, r) => a + r.trucks, 0);
-      html = `<b>${coName(owner)} factory ${at(l.id)}</b><div>${routes.length} route${routes.length === 1 ? '' : 's'}, ${n} truck${n === 1 ? '' : 's'} through here</div><div class="muted">Adds ${g.cfg.depots.capacity} to the company's truck limit · shaded: streets within ${g.cfg.town.fairRadius} blocks</div>`;
+      html = `<b>${coName(owner)} factory ${at(l.id)}</b><div>${routes.length} route${routes.length === 1 ? '' : 's'}, ${n} truck${n === 1 ? '' : 's'} through here</div><div class="muted">Adds ${g.cfg.depots.capacity} to the company's truck limit</div>`;
     }
   } else if (l && l.kind === 'lot') {
     html = '<span class="muted">Empty lot: a business may open here.</span>';

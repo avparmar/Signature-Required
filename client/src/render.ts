@@ -9,7 +9,7 @@
  * - Trucks move smoothly between ticks, show the pallet they carry (empty = hollow), queue
  *   neatly beside a building, and show breakdowns and repairs.
  */
-import { distancesFrom, routeVia, type Location, type Observation, type Route, type Town } from '@sr/core';
+import { routeVia, type Location, type Observation, type Route, type Town } from '@sr/core';
 
 // Company colours stay clear of the goods' colours (wood brown, wheat gold, oil slate).
 export const COMPANY_COLORS = ['#d1452f', '#2a7ab0', '#3f9a54', '#8a5cc2', '#d24f93', '#1f9e9a'];
@@ -38,7 +38,7 @@ export interface Highlights {
   hoverRoute: string | null;
   /** Free depot sites to highlight with this company's prices (buy-depot mode). */
   buyFor: number | null;
-  /** Company being auctioned: its factories are ringed and their surroundings shaded. */
+  /** Company being auctioned: its factories get a pulsing ring. */
   spotlight: number | null;
 }
 
@@ -62,7 +62,6 @@ export class Renderer {
   setTown(town: Town) {
     this.town = town;
     this.paths.clear();
-    this.reach.clear();
   }
 
   /** Match the canvas to its box and fit the whole town. */
@@ -185,12 +184,6 @@ export class Renderer {
     });
   }
 
-  private reach = new Map<number, Float64Array>();
-  private reachOf(node: number): Float64Array {
-    const d = this.reach.get(node) ?? distancesFrom(this.town.graph, node);
-    this.reach.set(node, d);
-    return d;
-  }
 
   draw(obs: Observation, trucks: { id: number; x: number; y: number; dx: number; dy: number }[], hl: Highlights, now: number) {
     const { ctx } = this;
@@ -232,39 +225,6 @@ export class Renderer {
         ctx.lineTo(this.X(b.x), this.Y(b.y));
       }
       ctx.stroke();
-    }
-
-    // The area around a factory: the streets within the start-fairness radius (where its routes
-    // will mostly come from). Shown for the company up for auction, and for a hovered factory or
-    // free factory site.
-    const shade = (sites: number[], color: string) => {
-      const radius = town.cfg.fairRadius;
-      ctx.strokeStyle = color;
-      ctx.globalAlpha = 0.28;
-      ctx.lineWidth = roadW * 2.4;
-      ctx.beginPath();
-      for (const site of sites) {
-        const d = this.reachOf(town.locations[site].node);
-        for (const e of town.graph.edges) {
-          if (d[e.a] > radius || d[e.b] > radius || term[e.a] || term[e.b]) continue;
-          const a = town.graph.nodes[e.a];
-          const b = town.graph.nodes[e.b];
-          ctx.moveTo(this.X(a.x), this.Y(a.y));
-          ctx.lineTo(this.X(b.x), this.Y(b.y));
-        }
-      }
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-    };
-    if (hl.spotlight !== null)
-      shade(
-        Object.entries(obs.depots).filter(([, o]) => o === hl.spotlight).map(([site]) => Number(site)),
-        companyColor(hl.spotlight),
-      );
-    const hovered = hl.hover !== null ? town.locations[hl.hover] : null;
-    if (hovered && hovered.kind === 'depot') {
-      const owner = obs.depots[hovered.id];
-      if (owner !== hl.spotlight || owner === undefined) shade([hovered.id], owner === undefined ? '#8a8273' : companyColor(owner));
     }
 
     // Routes, along the streets.
