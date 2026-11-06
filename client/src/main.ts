@@ -458,6 +458,8 @@ function refreshPanels(obs: Observation) {
 const sw = (c: number) => `<span class="swatch" style="background:${companyColor(c)}"></span>`;
 
 interface Card {
+  /** Its place in the strip (the card sits at its bottom and grows upwards when open). */
+  slot: HTMLElement;
   root: HTMLElement;
   info: HTMLElement;
   /** The broker box: buy or sell at once, or place your own order at a price on the slider. */
@@ -475,21 +477,26 @@ interface Card {
   key: string;
 }
 const cards = new Map<number, Card>();
+/** Cards you've pinned open. */
+const pinnedCards = new Set<number>();
 
 /** A company's card: the info part re-renders; the broker box is built once, so dragging isn't interrupted. */
 function card(id: number): Card {
   let k = cards.get(id);
   if (k) return k;
+  const slot = document.createElement('div');
+  slot.className = 'slot';
   const root = document.createElement('div');
   root.className = 'co';
   root.dataset.cohover = String(id);
+  slot.append(root);
   const info = document.createElement('div');
   const form = document.createElement('div');
   form.className = 'broker';
   form.innerHTML = `<div class="quick"><button type="button" class="buy-now"></button><button type="button" class="sell-now"></button></div><div class="slide"><span class="lo"></span><input type="range" min="1" max="2" step="1" aria-label="Price for your order" /><span class="hi"></span></div><div class="order"><b class="px"></b><button type="button" class="place-buy"></button><button type="button" class="place-sell"></button></div>`;
   root.append(info, form);
   const q = <T extends HTMLElement>(sel: string) => form.querySelector<T>(sel)!;
-  k = { root, info, form, quick: q('.quick'), buyNow: q('.buy-now'), sellNow: q('.sell-now'), slider: q('input'), price: q('.px'), lo: q('.lo'), hi: q('.hi'), placeBuy: q('.place-buy'), placeSell: q('.place-sell'), key: '' };
+  k = { slot, root, info, form, quick: q('.quick'), buyNow: q('.buy-now'), sellNow: q('.sell-now'), slider: q('input'), price: q('.px'), lo: q('.lo'), hi: q('.hi'), placeBuy: q('.place-buy'), placeSell: q('.place-sell'), key: '' };
   cards.set(id, k);
   const kk = k;
   kk.slider.addEventListener('input', () => refreshCompanies(session.obs()));
@@ -520,7 +527,7 @@ function refreshCompanies(obs: Observation) {
   const acting = !watching && obs.phase !== 'ended';
   obs.companies.forEach((c, i) => {
     const k = card(c.id);
-    if (box.children[i] !== k.root) box.insertBefore(k.root, box.children[i] ?? null);
+    if (box.children[i] !== k.slot) box.insertBefore(k.slot, box.children[i] ?? null);
     const trucks = obs.trucks.filter((t) => t.company === c.id).length;
     const depots = Object.values(obs.depots).filter((o) => o === c.id).length;
     const routes = obs.routes.filter((r) => r.company === c.id).length;
@@ -543,15 +550,26 @@ function refreshCompanies(obs: Observation) {
     const sale = obs.sales.find((x) => x.company === c.id);
     const book = obs.books[c.id];
     const who = (p: number) => (p === obs.me && !watching ? 'you' : seatShort(p));
-    let html = `<div class="row"><span>${sw(c.id)}<b>${coName(c.id)}</b></span><span title="Treasury">${money(c.treasury)}</span></div>`;
+    const pinned = pinnedCards.has(c.id);
+    let html = `<div class="row head"><span>${sw(c.id)}<b>${coName(c.id)}</b></span><span><button class="pin${pinned ? ' on' : ''}" data-pin="${c.id}" title="${pinned ? 'Unpin: fold this card back down' : 'Pin this card open'}">${pinned ? 'Unpin' : 'Pin'}</button><span title="Treasury">${money(c.treasury)}</span></span></div>`;
     let saleBtn = '';
     if (acting && obs.phase === 'running' && own && !sale && c.presidents.length) {
       const cooldown = obs.saleCooldownUntil[c.id] - obs.elapsed;
       saleBtn = `<button class="mini" data-startsale="${c.id}" ${cooldown > 0 ? 'disabled' : ''} title="Put one of the company's own shares up for sale. The best bid at the end gets it, if it's at least ${money(obs.minPrice[c.id])}; the money goes to the company.">${cooldown > 0 ? `Sale in ${Math.ceil(cooldown)}s` : 'Start a sale'}</button>`;
     }
     html += `<div class="chips">${chips}${saleBtn}</div>`;
-    html += `<div class="row muted small"><span>${trucks} trucks · ${depots} factor${depots === 1 ? 'y' : 'ies'} · ${routes} route${routes === 1 ? '' : 's'}</span></div>`;
-    html += `<div class="row small"><span title="Trucks and factories at what they cost, plus cash">Company value <b>${money(obs.value[c.id])}</b></span><span class="muted" title="Dividend per share: the last one paid, and the next one so far">Dividend ${lastDividend.has(c.id) ? money(lastDividend.get(c.id)!) : '—'} → ${money(c.dividendPerShare)}</span></div>`;
+    html += `<div class="row small"><span class="value" title="Trucks and factories at what they cost, plus cash">Company value <b>${money(obs.value[c.id])}</b></span>${obs.phase === 'running' ? sparkline(c.id, c.shares.length, { t: obs.t, value: obs.value[c.id] }) : ''}</div>`;
+    // Folded, the card stops here (plus a line for a running sale); hovering or pinning shows the rest.
+    if (sale) {
+      const best = book.bid;
+      html += `<div class="row small sale-line"><b>${sale.opening ? 'Opening sale' : 'Sale'} ${Math.ceil(sale.timeLeft)}s</b><span>${best ? `best ${money(best.price)} (${who(best.player)})` : 'no bids yet'}</span></div>`;
+    } else if (obs.phase === 'running') {
+      const ask = book.ask?.price;
+      const bid = Math.max(book.bid?.price ?? 0, obs.companyBid[c.id] ?? 0);
+      html += `<div class="row small muted fold-only"><span>Buy ${ask !== undefined ? money(ask) : '—'} · Sell ${bid > 0 ? money(bid) : '—'}</span><span>Div ${money(c.dividendPerShare)}</span></div>`;
+    }
+    html += '<div class="more">';
+    html += `<div class="row small muted"><span>${trucks} trucks · ${depots} factor${depots === 1 ? 'y' : 'ies'} · ${routes} route${routes === 1 ? '' : 's'}</span><span title="Dividend per share: the last one paid → the next one so far">Div ${lastDividend.has(c.id) ? money(lastDividend.get(c.id)!) : '—'} → ${money(c.dividendPerShare)}</span></div>`;
     // A sale running: the share goes to the best bid at the end, if it's at least the minimum.
     if (sale) {
       const best = book.bid;
@@ -577,11 +595,14 @@ function refreshCompanies(obs: Observation) {
       if (cb !== null) rows.push(`<div class="row small"><span title="Half the company value per share, while its cash covers that">Company buys back at ${money(cb)}</span></div>`);
       html += rows.join('');
     }
+    html += '</div>';
     if (k.info.dataset.html !== html) {
       k.info.innerHTML = html;
       k.info.dataset.html = html;
     }
     k.root.classList.toggle('selling', !!sale);
+    // Open: pinned, or the opening round's company being sold (nothing else is happening then).
+    k.root.classList.toggle('pinned', pinned || (sale?.opening === true && acting));
     // The broker box: always there once the market is open; in the opening round, only on the company being sold.
     const show = acting && (obs.phase === 'running' || (sale !== undefined && obs.sales[0]?.company === c.id));
     k.form.hidden = !show;
@@ -706,7 +727,11 @@ document.addEventListener('pointerdown', (e) => {
   const b = (e.target as HTMLElement).closest<HTMLButtonElement>('.side button');
   if (!b || b.disabled) return;
   const obs = session.obs();
-  if (b.dataset.startsale) {
+  if (b.dataset.pin) {
+    const id = Number(b.dataset.pin);
+    if (pinnedCards.has(id)) pinnedCards.delete(id);
+    else pinnedCards.add(id);
+  } else if (b.dataset.startsale) {
     session.act({ type: 'startSale', company: Number(b.dataset.startsale) });
   } else if (b.dataset.sell) {
     const [c, to] = b.dataset.sell.split(':');
@@ -837,6 +862,28 @@ function waiting(key: string): { share: number; saturated: boolean; where: 'prod
  * earnings over the last minute.
  */
 const history: { t: number; cash: number[]; value: number[]; earned: number[]; perMin: number[] }[] = [];
+/** Prices shares changed hands at, by company: sales, trades between players, and buy-backs. */
+const tradePrices = new Map<number, { t: number; price: number }[]>();
+
+/**
+ * A company's price line: its value per share over time (the line) and the prices its shares
+ * changed hands at (the dots), on one scale.
+ */
+function sparkline(id: number, shares: number, now: { t: number; value: number }): string {
+  const W = 56;
+  const H = 16;
+  const pts = [...history.map((h) => ({ t: h.t, v: h.value[id] / shares })), { t: now.t, v: now.value / shares }];
+  const trades = tradePrices.get(id) ?? [];
+  if (pts.length < 2 && !trades.length) return '';
+  const t0 = 0;
+  const t1 = Math.max(60, now.t);
+  const vmax = Math.max(1, ...pts.map((p) => p.v), ...trades.map((x) => x.price));
+  const x = (t: number) => ((t - t0) / (t1 - t0)) * (W - 2) + 1;
+  const y = (v: number) => H - 1 - (v / vmax) * (H - 2);
+  const line = pts.map((p) => `${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ');
+  const dots = trades.map((d) => `<circle cx="${x(d.t).toFixed(1)}" cy="${y(d.price).toFixed(1)}" r="1.6" fill="${companyColor(id)}" />`).join('');
+  return `<svg class="spark" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><title>Line: company value per share. Dots: prices its shares changed hands at.</title><polyline points="${line}" fill="none" stroke="#b9b1a2" stroke-width="1.2" />${dots}</svg>`;
+}
 /** Delivery income so far, by company. */
 const earned = new Map<number, number>();
 let lastHistory = -Infinity;
@@ -980,6 +1027,11 @@ function handleEvents(evs: GameEvent[]) {
       if (e.paid[session.seat]) paidNow.push({ company: e.company, amount: e.paid[session.seat], final: !!e.final });
     }
     if (e.type === 'orderCancelled' && e.player === session.seat && e.reason === 'beaten' && !watching) toast(`Your ${e.side} for ${coName(e.company)} was ${e.side === 'bid' ? 'outbid' : 'undercut'}.`, 'error');
+    if ((e.type === 'saleWon' || e.type === 'trade') && e.t > 0) {
+      const list = tradePrices.get(e.company) ?? [];
+      list.push({ t: e.t, price: e.type === 'saleWon' ? e.amount : e.price });
+      tradePrices.set(e.company, list);
+    }
     if (e.type === 'saleWon') text = `${cap(playerName(e.player, obs.me))} bought a share of ${coName(e.company)} for ${money(e.amount)}`;
     else if (e.type === 'trade')
       text =
@@ -1260,6 +1312,7 @@ function beginMatch(m: Match) {
   knownBusiness.clear();
   lastDividend.clear();
   history.length = 0;
+  tradePrices.clear();
   earned.clear();
   lastHistory = -Infinity;
   waitLog.clear();

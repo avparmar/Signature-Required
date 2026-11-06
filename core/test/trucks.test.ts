@@ -267,7 +267,7 @@ describe('trucks on routes', () => {
 describe('routes through the depot', () => {
   for (const via of ['loaded', 'hub'] as const) {
     it(`${via}: every load is signed off at the depot before it's delivered`, () => {
-      const { g, depot, producer, consumer } = setup({ trucks: { viaDepot: via } });
+      const { g, depot, producer, consumer } = setup({ trucks: { viaDepot: via }, town: { blocksX: 16, blocksY: 16 } });
       g.addTruck(0);
       g.act(0, { type: 'assignRoute', depot: depot.id, producer: producer.id, consumer: consumer.id });
       runFor(g, 600);

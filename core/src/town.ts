@@ -93,8 +93,8 @@ export interface TownConfig {
 
 export const DEFAULT_TOWN: TownConfig = {
   seed: 1,
-  blocksX: 16,
-  blocksY: 16,
+  blocksX: 18,
+  blocksY: 14,
   layout: 'grid',
   removeFrac: 0.12,
   mainRoadEvery: 4,
