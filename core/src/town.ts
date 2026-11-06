@@ -96,7 +96,7 @@ export const DEFAULT_TOWN: TownConfig = {
   goods: ['furniture', 'bread', 'fuel'],
   raws: ['timber', 'wheat', 'crude oil'],
   sources: ['sawmill', 'farm', 'oil well'],
-  shops: ['furniture store', 'bakery', 'gas station'],
+  shops: ['furniture store', 'grocery store', 'gas station'],
   producersPerGood: [4, 5],
   consumersPerGood: [7, 11],
   bays: 2,
