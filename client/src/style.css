@@ -172,3 +172,4 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 .pay-float { position: absolute; right: 8px; top: 0; font-weight: 800; color: #2f8a3e; font-size: 18px; animation: pay-float 1.8s ease-out forwards; pointer-events: none; }
 @keyframes pay-float { from { opacity: 1; transform: translateY(8px); } to { opacity: 0; transform: translateY(-26px); } }
 @media (prefers-reduced-motion: reduce) { #phase.soon { animation: none; } }
+#tooltip.docked { max-width: 300px; box-shadow: 0 6px 20px rgba(0,0,0,0.25); }

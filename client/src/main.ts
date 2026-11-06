@@ -289,6 +289,8 @@ function tooltip(obs: Observation) {
   hl.hover = l && l.kind !== 'lot' ? l.id : null;
   hl.hoverRoute = route?.key ?? null;
   let html = '';
+  // A free site's card goes in a corner of the map, away from the site, so it doesn't hide the zone.
+  let docked = false;
   if (l && (l.kind === 'producer' || l.kind === 'consumer')) {
     const s = obs.locations.find((x) => x.id === l.id);
     if (s) {
@@ -307,6 +309,7 @@ function tooltip(obs: Observation) {
   } else if (l && l.kind === 'depot') {
     const owner = obs.depots[l.id];
     if (owner === undefined) {
+      docked = true;
       html = `<b>Unclaimed factory site ${at(l.id)}</b><div>Serving the producers and shops in the <b>gold zone</b> cuts a company's price here.</div><div class="muted">The zone is only for the discount: a factory here can run routes anywhere.</div>`;
       const prices = obs.depotPrices[l.id];
       const dc = g.cfg.depots;
@@ -337,8 +340,14 @@ function tooltip(obs: Observation) {
   tip.innerHTML = html;
   tip.hidden = false;
   const wrap = $('map-wrap').getBoundingClientRect();
-  const x = Math.min(mouse.x + 16, wrap.width - tip.offsetWidth - 8);
-  const y = Math.min(mouse.y + 16, wrap.height - tip.offsetHeight - 8);
+  let x = Math.min(mouse.x + 16, wrap.width - tip.offsetWidth - 8);
+  let y = Math.min(mouse.y + 16, wrap.height - tip.offsetHeight - 8);
+  if (docked) {
+    // The corner furthest from the pointer.
+    x = mouse.x < wrap.width / 2 ? wrap.width - tip.offsetWidth - 12 : 12;
+    y = mouse.y < wrap.height / 2 ? wrap.height - tip.offsetHeight - 56 : 12; // clear of the hint at the bottom
+  }
+  tip.classList.toggle('docked', docked);
   tip.style.left = `${x}px`;
   tip.style.top = `${y}px`;
 }
