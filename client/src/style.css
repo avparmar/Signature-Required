@@ -152,3 +152,4 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 .garrow { font-size: 26px; color: var(--muted); }
 .card .guide-nav button.go { background: var(--ink); color: #fff; }
 .card button.link { background: none; color: var(--muted); padding: 0; font-size: 13px; text-decoration: underline; }
+.guide-step .hl { background: linear-gradient(transparent 55%, #f6dd8a 55%); padding: 0 2px; font-weight: 600; }

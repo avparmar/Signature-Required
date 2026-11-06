@@ -709,54 +709,54 @@ type GuideIcons = 'producers' | 'shops' | 'chain';
 const GUIDE: { img?: string[]; icons?: GuideIcons; title: string; text: string }[] = [
   {
     img: ['overview'],
-    title: 'Welcome to Signature Required',
-    text: `<p>You're an <b>investor</b>. Trucking companies move goods around town, and you buy shares in them. Their deliveries pay dividends to whoever holds the shares. After 15 minutes, the richest player wins.</p>
+    title: 'Welcome to Signature Required!',
+    text: `<p>You're an <b>investor</b> in a busy little town. Trucking companies haul goods from producers to shops, and you <span class="hl">buy shares in them</span>. Every delivery fills their dividend pots, and the pots get paid out to shareholders. After 15 minutes, the <b>richest player wins</b>.</p>
       <p>The next pages show you how to:</p>
       <ol class="guide-list"><li>take control of a company</li><li>set up a route: producer, factory, shop</li><li>run your routes from the sidebar</li><li>buy more factories</li><li>get paid</li></ol>`,
   },
   {
     img: ['auction'],
-    title: 'Take control of a company',
-    text: `<p>The game starts with an auction for one share of each company. Whoever holds the most shares of a company <b>controls</b> it (its president) and runs its trucks. You're an investor, not the company: you can hold shares in several.</p>
-      <p>The money you bid goes to the company. That's how companies pay for their trucks and factories, so winning a share for next to nothing leaves your company with nothing to build with.</p>`,
+    title: 'Take control of a company!',
+    text: `<p>The game opens with an <b>auction</b> for one share of each company. Whoever holds the most shares of a company <span class="hl">controls it</span>: they're its president and run its trucks. You're an investor, not the company, so spread your bets across several if you like.</p>
+      <p>Your bid goes <b>straight into the company</b>. That's how companies pay for trucks and factories, so a share won for next to nothing leaves your company with nothing to build with. Bid like you mean it!</p>`,
   },
   {
     img: ['route-1'],
     icons: 'producers',
-    title: 'Pick a producer',
-    text: '<p>Click a producer: the round buildings that make raw materials. It gets a ring, and the hint at the bottom of the map says what to pick next.</p>',
+    title: 'Pick a producer!',
+    text: '<p>Click a <b>producer</b>: the round buildings that make raw materials. It gets a ring, and the hint at the bottom of the map tells you what to pick next.</p>',
   },
   {
     img: ['route-2'],
     icons: 'shops',
-    title: 'Then a shop that buys the final product',
-    text: "<p>Click a shop that sells what your producer's material is made into: timber becomes furniture, wheat becomes bread, crude oil becomes fuel.</p>",
+    title: 'Then a shop that buys the final product!',
+    text: "<p>Now click a <b>shop</b> that sells what your producer's material becomes: <span class=\"hl\">timber → furniture, wheat → bread, crude oil → fuel</span>.</p>",
   },
   {
     img: ['route-3'],
     icons: 'chain',
-    title: 'The route is now in',
-    text: "<p>A free truck picks up the raw material, takes it through your company's factory to be made into the product, delivers it to the shop, and goes round again. The number on the route is how many trucks run it.</p>",
+    title: 'The route is now in!',
+    text: "<p>Off it goes! A truck picks up the raw material, takes it through your company's <b>factory</b> to be made into the product, delivers it to the shop, and goes round again. <span class=\"hl\">Every delivery earns money</span>. The number on the route is how many trucks run it.</p>",
   },
   {
     img: ['sidebar'],
-    title: 'Run your routes from the sidebar',
-    text: "<p>Your companies panel lists each company's routes. <b>+</b> puts another truck on a route and <b>−</b> takes one off. Hover over a row to light up its route on the map. If no truck is free, use <b>Buy truck</b>.</p><p>On the map, you can also click a route to add a truck, or right-click it to take one off.</p>",
+    title: 'Run your routes from the sidebar!',
+    text: "<p>Your companies panel lists each company's routes. <b>+</b> puts another truck on a route and <b>−</b> takes one off. Hover over a row to light up its route on the map. If no truck is free, use <b>Buy truck</b>: more trucks, more deliveries.</p><p>On the map, you can also click a route to add a truck, or right-click it to take one off.</p>",
   },
   {
     img: ['factory'],
-    title: 'Unclaimed factories',
-    text: `<p>The white factories are <b>unclaimed</b>: any company can buy one, at full price $${session.cfg.depots.depotBase}. A company gets a discount on a site by serving the producers and shops near it, up to ${Math.round(100 * session.cfg.depots.maxSubsidy)}% off.</p><p>Hover over a site, or over a company card, to see each company's progress. A star means the full discount.</p>`,
+    title: 'Unclaimed factories!',
+    text: `<p>The white factories are <b>unclaimed</b>: any company can buy one, at full price $${session.cfg.depots.depotBase}. But a company that <span class="hl">serves the producers and shops nearby</span> gets a discount, up to ${Math.round(100 * session.cfg.depots.maxSubsidy)}% off.</p><p>Hover over a site, or over a company card, to see how close each company is. A <b>★</b> means the full discount.</p>`,
   },
   {
     img: ['buy'],
-    title: 'Buy another factory',
-    text: `<p>Each factory lets your company run ${session.cfg.depots.capacity} more trucks, and opens up routes near it. When your company is at its truck limit, or you want routes in another part of town, buy one: in your company's card, click <b>Pick on map…</b>. The sites you can afford light up with your price. Click one, and new trucks can start from it.</p>`,
+    title: 'Buy another factory!',
+    text: `<p>Each factory lets your company run <b>${session.cfg.depots.capacity} more trucks</b> and opens up routes near it. When your company is at its truck limit, or you want to move into another part of town, buy one: in your company's card, click <b>Pick on map…</b>. The sites you can afford light up with your price. Click one and <span class="hl">start sending trucks from it</span>.</p>`,
   },
   {
     img: ['shares', 'company'],
-    title: 'Get paid',
-    text: "<p>Half of each delivery goes to the company, half to its dividend pot, paid to shareholders every 3 minutes. Your shares and the next payout show at the top left. Need money? A president can auction one of the bank's shares. After 15 minutes, the richest player wins.</p>",
+    title: 'Get paid!',
+    text: "<p>Half of each delivery goes to the company and half to its <b>dividend pot</b>, which is <span class=\"hl\">paid to shareholders every 3 minutes</span>. Your shares and your next payout show at the top left. Short on cash for your company? A president can auction one of the bank's shares. After 15 minutes, the richest player wins. Good luck!</p>",
   },
 ];
 
