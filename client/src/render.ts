@@ -42,13 +42,13 @@ export interface Highlights {
   spotlight: number | null;
   /** A free factory site's subsidy district (drive distance, blocks), shaded when it's hovered. */
   district: number;
-  /** Company whose subsidy meters show on free factory sites (the one you're running), or null. */
-  meterFor: number | null;
+  /** Companies whose subsidy meters show on free factory sites (the ones you run). */
+  meterFor: number[];
   /** Full price of a factory site and the biggest discount, for the meters. */
   siteBase: number;
   maxSubsidy: number;
-  /** Free sites to flash (site id -> game-clock time of the last pickup or delivery in its zone). */
-  flash: Map<number, number>;
+  /** Free sites to flash: site id -> company -> game-clock time of its last pickup or delivery there. */
+  flash: Map<number, Map<number, number>>;
 }
 
 export class Renderer {
@@ -215,7 +215,8 @@ export class Renderer {
     for (const { i, j } of town.river) ctx.fillRect(this.X(i) - 1, this.Y(j) - 1, this.scale + 2, this.scale + 2);
 
     // Roads.
-    const roadW = Math.max(2, Math.min(9, this.scale * 0.13));
+    // Two-lane roads: wide enough for trucks to pass on either side of a centre line.
+    const roadW = Math.max(3, Math.min(16, this.scale * 0.24));
     const bridges = new Set(town.bridges.map(([a, b]) => (a < b ? `${a}-${b}` : `${b}-${a}`)));
     ctx.lineCap = 'round';
     ctx.strokeStyle = ROAD;
@@ -230,6 +231,22 @@ export class Renderer {
       ctx.lineTo(this.X(b.x), this.Y(b.y));
     }
     ctx.stroke();
+    // Centre lines, when zoomed in enough to see the lanes.
+    if (this.scale >= 30) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 5]);
+      ctx.beginPath();
+      for (const e of town.graph.edges) {
+        if (term[e.a] || term[e.b]) continue;
+        const a = town.graph.nodes[e.a];
+        const b = town.graph.nodes[e.b];
+        ctx.moveTo(this.X(a.x), this.Y(a.y));
+        ctx.lineTo(this.X(b.x), this.Y(b.y));
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
     if (bridges.size) {
       ctx.strokeStyle = '#a07c55';
       ctx.lineWidth = roadW * 1.3;
@@ -322,26 +339,31 @@ export class Renderer {
           ctx.stroke();
           ctx.setLineDash([]);
           if (price !== undefined) label(ctx, `$${price}`, x, y - s - 7, '#7a5d10');
-          // Subsidy meter: a ring that fills with the discount the company you run has earned
-          // here, and blinks when one of its pickups or deliveries lands in the zone.
-          if (hl.meterFor !== null) {
-            const p = obs.depotPrices[l.id]?.[hl.meterFor];
-            if (p !== undefined) {
-              const frac = Math.max(0, Math.min(1, (1 - p / hl.siteBase) / hl.maxSubsidy));
-              const rr = s * 1.55;
-              ctx.lineWidth = 3;
-              ctx.strokeStyle = 'rgba(176,138,30,0.18)';
+          // Subsidy meters: for each company you run, an arc from 12 o'clock, clockwise, in its
+          // colour, filled with the discount it has earned here (a full circle is the biggest
+          // discount). Bigger arcs are drawn first so every company's stays visible. An arc blinks
+          // when one of that company's pickups or deliveries lands in the zone.
+          const prices = obs.depotPrices[l.id];
+          if (prices && hl.meterFor.length) {
+            const rr = s * 1.55;
+            ctx.lineWidth = 3.5;
+            ctx.strokeStyle = 'rgba(120,110,90,0.15)';
+            ctx.beginPath();
+            ctx.arc(x, y, rr, 0, Math.PI * 2);
+            ctx.stroke();
+            const arcs = hl.meterFor
+              .map((c) => ({ c, frac: Math.max(0, Math.min(1, (1 - prices[c] / hl.siteBase) / hl.maxSubsidy)) }))
+              .filter((m) => m.frac > 0)
+              .sort((a, b) => b.frac - a.frac);
+            for (const { c, frac } of arcs) {
+              ctx.strokeStyle = companyColor(c);
               ctx.beginPath();
-              ctx.arc(x, y, rr, 0, Math.PI * 2);
+              ctx.arc(x, y, rr, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
               ctx.stroke();
-              if (frac > 0) {
-                ctx.strokeStyle = '#c99a1a';
-                ctx.beginPath();
-                ctx.arc(x, y, rr, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
-                ctx.stroke();
-              }
-              const since = obs.t - (hl.flash.get(l.id) ?? -99);
-              if (since >= 0 && since < 0.6) ring(ctx, x, y, rr + 2 + since * 10, `rgba(201,154,26,${0.8 * (1 - since / 0.6)})`, 2);
+            }
+            for (const [c, t] of hl.flash.get(l.id) ?? []) {
+              const since = obs.t - t;
+              if (since >= 0 && since < 0.6) ring(ctx, x, y, rr + 2 + since * 10, hexAlpha(companyColor(c), 0.8 * (1 - since / 0.6)), 2);
             }
           }
         } else {
@@ -523,6 +545,8 @@ export class Renderer {
     const park = (cx: number, cy: number, ids: number[]) => {
       const truckLen = Math.max(8, Math.min(18, this.scale * 0.4)) / this.scale;
       const spacing = truckLen * 1.5;
+      // The lane nearest the block: half a block out, less a quarter of the road's width.
+      const kerb = 0.5 - Math.min(16, this.scale * 0.24) / this.scale / 4;
       const ordered = [...ids].sort((a, b) => tById.get(a)!.company - tById.get(b)!.company || ids.indexOf(a) - ids.indexOf(b));
       let pos = spacing / 2;
       let ring = 0;
@@ -531,13 +555,13 @@ export class Renderer {
         const c = tById.get(id)!.company;
         if (prevCompany !== null && c !== prevCompany) pos += spacing * 0.8; // gap between companies
         prevCompany = c;
-        const o = 0.5 + ring * truckLen * 1.1; // kerb distance from the building's centre
+        const o = kerb + ring * truckLen * 1.1; // the kerbside lane, out from the building's centre
         const perim = 8 * o;
         if (pos > perim - spacing / 2) {
           ring++;
           pos = spacing / 2;
         }
-        const side = 2 * (0.5 + ring * truckLen * 1.1);
+        const side = 2 * (kerb + ring * truckLen * 1.1);
         const along = pos % side;
         const k = Math.floor(pos / side);
         const h = side / 2;
@@ -563,8 +587,15 @@ export class Renderer {
         atDepot.set(t.node, [...(atDepot.get(t.node) ?? []), t.id]);
         continue;
       }
+      // Keep right: shift the truck a quarter of the road's width to the right of its heading.
       const next = t.path.length ? this.town.graph.nodes[t.path[0]] : null;
-      out.set(t.id, { x: t.x, y: t.y, dx: next ? next.x - t.x : 0, dy: next ? next.y - t.y : 0 });
+      const dx = next ? next.x - t.x : 0;
+      const dy = next ? next.y - t.y : 0;
+      const len = Math.hypot(dx, dy);
+      const lane = Math.min(16, this.scale * 0.24) / this.scale / 4;
+      const ox = len > 1e-9 ? (-dy / len) * lane : 0;
+      const oy = len > 1e-9 ? (dx / len) * lane : 0;
+      out.set(t.id, { x: t.x + ox, y: t.y + oy, dx, dy });
     }
     for (const [node, ids] of atDepot) {
       const n = this.town.graph.nodes[node];
@@ -617,6 +648,12 @@ function label(ctx: CanvasRenderingContext2D, text: string, x: number, y: number
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(text, x, y);
+}
+
+/** A #rrggbb colour with an alpha. */
+function hexAlpha(hex: string, a: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
 }
 
 function midpoint(pts: { x: number; y: number }[]) {

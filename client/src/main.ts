@@ -54,7 +54,7 @@ const hl: Highlights = {
   buyFor: null,
   spotlight: null,
   district: session.cfg.depots.districtBlocks,
-  meterFor: null,
+  meterFor: [],
   siteBase: session.cfg.depots.depotBase,
   maxSubsidy: session.cfg.depots.maxSubsidy,
   flash: new Map(),
@@ -613,11 +613,15 @@ function handleEvents(evs: GameEvent[]) {
   for (const e of evs) {
     let text: string | null = null;
     let cls = '';
-    // A pickup or delivery by the company you're running: blink the free sites whose zone it's in.
-    if ((e.type === 'loaded' || e.type === 'delivered') && e.company === currentCompany(obs)) {
+    // A pickup or delivery by a company you run: blink its arc on the free sites whose zone it's in.
+    if ((e.type === 'loaded' || e.type === 'delivered') && mine.has(e.company)) {
       const node = g.town.locations[e.location].node;
       for (const site of Object.keys(obs.depotPrices).map(Number))
-        if (siteReach(site)[node] <= g.cfg.depots.districtBlocks) hl.flash.set(site, e.t);
+        if (siteReach(site)[node] <= g.cfg.depots.districtBlocks) {
+          const m = hl.flash.get(site) ?? new Map<number, number>();
+          m.set(e.company, e.t);
+          hl.flash.set(site, m);
+        }
     }
     if (e.type === 'rejected') {
       toast(cap(e.reason) + '.', 'error');
@@ -700,7 +704,7 @@ function frame(now: number) {
   }
   tooltip(obs);
   hl.spotlight = obs.auction ? obs.auction.company : null;
-  hl.meterFor = currentCompany(obs);
+  hl.meterFor = myCompanies(obs);
   renderer.draw(
     obs,
     [...targets.keys()].map((id) => ({ id, ...shown.get(id)! })),
