@@ -122,9 +122,15 @@ export class Renderer {
     this.oy += dy;
   }
 
+  /** Road width on screen: most of the gap between blocks, room for two lanes. */
+  get roadWidth() {
+    return Math.max(3, Math.min(30, this.scale * 0.38));
+  }
+
   /** Building radius on screen. */
   get r() {
-    return Math.max(4, Math.min(22, this.scale * 0.27));
+    // Small enough to leave room in the block, now that roads take most of the gap.
+    return Math.max(4, Math.min(19, this.scale * 0.22));
   }
 
   /** The location under a screen point, if any. */
@@ -216,7 +222,7 @@ export class Renderer {
 
     // Roads.
     // Two-lane roads: wide enough for trucks to pass on either side of a centre line.
-    const roadW = Math.max(3, Math.min(16, this.scale * 0.24));
+    const roadW = this.roadWidth;
     const bridges = new Set(town.bridges.map(([a, b]) => (a < b ? `${a}-${b}` : `${b}-${a}`)));
     ctx.lineCap = 'round';
     ctx.strokeStyle = ROAD;
@@ -345,25 +351,28 @@ export class Renderer {
           // when one of that company's pickups or deliveries lands in the zone.
           const prices = obs.depotPrices[l.id];
           if (prices && hl.meterFor.length) {
-            const rr = s * 1.55;
+            const h = s + 4; // the meter's square, just outside the site's outline
             ctx.lineWidth = 3.5;
+            ctx.lineCap = 'butt';
             ctx.strokeStyle = 'rgba(120,110,90,0.15)';
-            ctx.beginPath();
-            ctx.arc(x, y, rr, 0, Math.PI * 2);
-            ctx.stroke();
+            ctx.strokeRect(x - h, y - h, 2 * h, 2 * h);
             const arcs = hl.meterFor
               .map((c) => ({ c, frac: Math.max(0, Math.min(1, (1 - prices[c] / hl.siteBase) / hl.maxSubsidy)) }))
               .filter((m) => m.frac > 0)
               .sort((a, b) => b.frac - a.frac);
             for (const { c, frac } of arcs) {
               ctx.strokeStyle = companyColor(c);
-              ctx.beginPath();
-              ctx.arc(x, y, rr, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
-              ctx.stroke();
+              squareArc(ctx, x, y, h, frac);
             }
+            ctx.lineCap = 'round';
             for (const [c, t] of hl.flash.get(l.id) ?? []) {
               const since = obs.t - t;
-              if (since >= 0 && since < 0.6) ring(ctx, x, y, rr + 2 + since * 10, hexAlpha(companyColor(c), 0.8 * (1 - since / 0.6)), 2);
+              if (since >= 0 && since < 0.6) {
+                const g = h + 2 + since * 10;
+                ctx.strokeStyle = hexAlpha(companyColor(c), 0.8 * (1 - since / 0.6));
+                ctx.lineWidth = 2;
+                ctx.strokeRect(x - g, y - g, 2 * g, 2 * g);
+              }
             }
           }
         } else {
@@ -431,7 +440,7 @@ export class Renderer {
           const gap = Math.max(4, r * 0.42);
           for (let k = 0; k < n; k++) {
             ctx.beginPath();
-            ctx.arc(x + (k - (n - 1) / 2) * gap, y + r * 1.45, Math.max(1.3, r * 0.14), 0, Math.PI * 2);
+            ctx.arc(x + (k - (n - 1) / 2) * gap, y + r * 1.35, Math.max(1.3, r * 0.14), 0, Math.PI * 2);
             ctx.fillStyle = k < st.level ? INK : 'rgba(0,0,0,0.13)';
             ctx.fill();
           }
@@ -546,7 +555,7 @@ export class Renderer {
       const truckLen = Math.max(8, Math.min(18, this.scale * 0.4)) / this.scale;
       const spacing = truckLen * 1.5;
       // The lane nearest the block: half a block out, less a quarter of the road's width.
-      const kerb = 0.5 - Math.min(16, this.scale * 0.24) / this.scale / 4;
+      const kerb = 0.5 - this.roadWidth / this.scale / 4;
       const ordered = [...ids].sort((a, b) => tById.get(a)!.company - tById.get(b)!.company || ids.indexOf(a) - ids.indexOf(b));
       let pos = spacing / 2;
       let ring = 0;
@@ -592,7 +601,7 @@ export class Renderer {
       const dx = next ? next.x - t.x : 0;
       const dy = next ? next.y - t.y : 0;
       const len = Math.hypot(dx, dy);
-      const lane = Math.min(16, this.scale * 0.24) / this.scale / 4;
+      const lane = this.roadWidth / this.scale / 4;
       const ox = len > 1e-9 ? (-dy / len) * lane : 0;
       const oy = len > 1e-9 ? (dx / len) * lane : 0;
       out.set(t.id, { x: t.x + ox, y: t.y + oy, dx, dy });
@@ -648,6 +657,31 @@ function label(ctx: CanvasRenderingContext2D, text: string, x: number, y: number
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(text, x, y);
+}
+
+/**
+ * Stroke part of a square's outline, like a clock hand sweeping it: from the middle of the top
+ * edge, clockwise, `frac` of the way round.
+ */
+function squareArc(ctx: CanvasRenderingContext2D, x: number, y: number, h: number, frac: number) {
+  const pts: [number, number][] = [
+    [x, y - h],
+    [x + h, y - h],
+    [x + h, y + h],
+    [x - h, y + h],
+    [x - h, y - h],
+    [x, y - h],
+  ];
+  const lens = [h, 2 * h, 2 * h, 2 * h, h];
+  let left = frac * 8 * h;
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 0; i < 5 && left > 0; i++) {
+    const f = Math.min(1, left / lens[i]);
+    ctx.lineTo(pts[i][0] + (pts[i + 1][0] - pts[i][0]) * f, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * f);
+    left -= lens[i];
+  }
+  ctx.stroke();
 }
 
 /** A #rrggbb colour with an alpha. */
