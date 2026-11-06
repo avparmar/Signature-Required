@@ -96,6 +96,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #mycos .co.active { box-shadow: inset 3px 0 0 var(--ink); padding-left: 8px; }
 .row.big { font-size: 15px; }
 .small { font-size: 12px; }
+.sub.fold { display: block; background: none; border: 0; padding: 0; cursor: pointer; font: inherit; font-size: 11px; text-align: left; }
+.sub.fold:hover { color: var(--ink, #222); }
 .sub { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 6px 0 2px; }
 .tag { font-size: 10px; background: var(--ink); color: #fff; border-radius: 4px; padding: 0 4px; margin-left: 4px; vertical-align: 1px; }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; border: 1px solid var(--ink); margin-right: 5px; vertical-align: middle; }

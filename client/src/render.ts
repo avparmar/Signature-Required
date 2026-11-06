@@ -128,8 +128,8 @@ export class Renderer {
   /** Road width on screen: most of the gap between blocks, room for two lanes. */
   /** Truck size on screen (pixels): long enough that the company colour shows around the load. */
   get truckSize() {
-    const w = Math.max(11, Math.min(26, this.scale * 0.52));
-    return { w, h: w * 0.42 };
+    const w = Math.max(11, Math.min(26, this.scale * 0.5));
+    return { w, h: w * 0.5 };
   }
 
   get roadWidth() {
@@ -645,27 +645,29 @@ export class Renderer {
     const out = new Map<number, { x: number; y: number; dx: number; dy: number }>();
     const tById = new Map(obs.trucks.map((t) => [t.id, t]));
     // Trucks waiting or loading at a building park along the kerbs around its block, grouped by
-    // company (a gap between companies), going clockwise from the top-left corner.
+    // company (a gap between companies), going clockwise from the top-left corner. When the kerbside
+    // lane is full they double-park in the far lane of the same streets, and beyond that bunch up
+    // there (never further out, which would put them on the next block).
     const park = (cx: number, cy: number, ids: number[]) => {
       const truckLen = this.truckSize.w / this.scale;
-      const spacing = truckLen * 1.5;
-      // The lane nearest the block: half a block out, less a quarter of the road's width.
+      const spacing = truckLen * 1.2;
+      // The lane nearest the block (half a block out, less a quarter of the road's width), then the far lane.
       const kerb = 0.5 - this.roadWidth / this.scale / 4;
+      const lanes = [kerb, 0.5 + this.roadWidth / this.scale / 4];
       const ordered = [...ids].sort((a, b) => tById.get(a)!.company - tById.get(b)!.company || ids.indexOf(a) - ids.indexOf(b));
       let pos = spacing / 2;
       let ring = 0;
       let prevCompany: number | null = null;
       for (const id of ordered) {
         const c = tById.get(id)!.company;
-        if (prevCompany !== null && c !== prevCompany) pos += spacing * 0.8; // gap between companies
+        if (prevCompany !== null && c !== prevCompany) pos += spacing * 0.5; // gap between companies
         prevCompany = c;
-        const o = kerb + ring * truckLen * 1.1; // the kerbside lane, out from the building's centre
-        const perim = 8 * o;
+        const perim = 8 * lanes[Math.min(ring, 1)];
         if (pos > perim - spacing / 2) {
           ring++;
-          pos = spacing / 2;
+          pos = ring >= 2 ? spacing * (0.5 + 0.5 * (ring - 1)) : spacing / 2; // bunching up: offset each pass
         }
-        const side = 2 * (kerb + ring * truckLen * 1.1);
+        const side = 2 * lanes[Math.min(ring, 1)];
         const along = pos % side;
         const k = Math.floor(pos / side);
         const h = side / 2;

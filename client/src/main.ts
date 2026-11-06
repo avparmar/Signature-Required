@@ -559,10 +559,20 @@ function refreshMyCompanies(obs: Observation) {
       }
       html += '</div>';
     } else html += '<div class="row small muted"><span>No free factory sites left</span></div>';
-    const routes = obs.routes.filter((r) => r.company === id);
+    const routes = obs.routes
+      .filter((r) => r.company === id)
+      .sort((a, b) => g.town.locations[a.producer].good! - g.town.locations[b.producer].good! || a.key.localeCompare(b.key));
     if (routes.length) {
-      html += '<div class="sub">Routes</div>';
-      for (const r of routes) {
+      // Long lists fold away (into a count per good) until you open them; short ones stay open.
+      const open = routesOpen.get(id) ?? routes.length <= ROUTES_FOLD_AT;
+      const total = routes.reduce((n, r) => n + r.trucks, 0);
+      html += `<button class="sub fold" data-fold="${id}">${open ? '▾' : '▸'} Routes · ${routes.length} · ${total} truck${total === 1 ? '' : 's'}</button>`;
+      if (!open) {
+        const byGood = new Map<number, number>();
+        for (const r of routes) byGood.set(g.town.locations[r.producer].good!, (byGood.get(g.town.locations[r.producer].good!) ?? 0) + 1);
+        html += `<div class="row small muted"><span>${[...byGood].map(([good, n]) => `<span class="dot" style="background:${goodColor(good)}"></span>${cap(names(good).product)} ×${n}`).join(' &nbsp; ')}</span></div>`;
+      }
+      if (open) for (const r of routes) {
         const p = g.town.locations[r.producer];
         html += `<div class="row small"><span><span class="dot" style="background:${goodColor(p.good!)}"></span>${cap(names(p.good!).product)} ${at(r.producer)} → ${at(r.depot)} → ${at(r.consumer)}</span><span><button data-unroute="${r.key}">−</button> ${r.trucks} <button data-route="${r.key}" ${freeTrucks(obs, id) ? '' : 'disabled'}>+</button></span></div>`;
       }
@@ -574,6 +584,10 @@ function refreshMyCompanies(obs: Observation) {
     box.dataset.html = html;
   }
 }
+
+/** Which companies' route lists you've opened or folded (otherwise: open while short). */
+const routesOpen = new Map<number, boolean>();
+const ROUTES_FOLD_AT = 5;
 
 // Panel buttons (delegated, since the panels re-render). They act on press rather than click:
 // a panel can re-render between press and release, which would swallow a click.
@@ -601,6 +615,10 @@ document.addEventListener('pointerdown', (e) => {
     const c = Number(b.dataset.depot);
     hl.buyFor = hl.buyFor === c ? null : c;
     activeCompany = c;
+  } else if (b.dataset.fold) {
+    const c = Number(b.dataset.fold);
+    const n = obs.routes.filter((r) => r.company === c).length;
+    routesOpen.set(c, !(routesOpen.get(c) ?? n <= ROUTES_FOLD_AT));
   } else if (b.dataset.route || b.dataset.unroute) {
     const key = (b.dataset.route ?? b.dataset.unroute)!;
     const r = obs.routes.find((x) => x.key === key);
