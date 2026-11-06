@@ -292,3 +292,23 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
   #companies .broker .quick .from { padding-left: 3px; }
   #companies .chip { font-size: 10.5px; padding: 0 5px; }
 }
+
+/* Open cards: a top row with Pin and the treasury, then the full name and ticker. */
+#companies .co:not(:hover):not(:focus-within):not(.pinned) .head-open { display: none; }
+#companies .co:is(:hover, :focus-within, .pinned) .head .treasury { display: none; }
+#companies .co:is(:hover, :focus-within, .pinned) .head > span:first-child { white-space: normal; }
+#companies .head-open { align-items: center; }
+#companies .ticker { font-size: 10px; font-weight: 700; color: var(--muted); letter-spacing: 0.04em; }
+#companies .co:not(:hover):not(:focus-within):not(.pinned) .ticker { display: none; }
+/* Picking your icon in the opening round. */
+.icons { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 4px; }
+.side button.icon-pick { font-size: 17px; padding: 1px 4px; line-height: 1.2; background: transparent; border-color: transparent; }
+.side button.icon-pick.on { background: #fff1c2; border-color: #d4b048; }
+.side button.icon-pick:disabled { opacity: 0.25; }
+
+/* Share boxes: one per share. */
+#companies .shares { display: inline-flex; gap: 3px; }
+#companies .share { width: 22px; height: 20px; border-radius: 5px; border: 1.5px solid #d8d0bf; background: #f3eee3; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; line-height: 1; flex: none; }
+#companies .share.empty { background: transparent; border-style: dashed; }
+#companies .share.pres { border-color: #c99a1a; background: #fff1c2; }
+#companies .share.you { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); }

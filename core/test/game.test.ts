@@ -28,6 +28,24 @@ describe('Game loop', () => {
     expect(g.players.every((p) => p.cash === g.cfg.startingCash)).toBe(true);
   });
 
+  it('players pick their icon during the opening round, each a different one', () => {
+    const g = newGame({ seed: 3 });
+    expect(g.players.map((p) => p.icon)).toEqual([0, 1, 2, 3]);
+    g.act(0, { type: 'setIcon', icon: 7 });
+    g.act(1, { type: 'setIcon', icon: 7 }); // taken
+    g.act(2, { type: 'setIcon', icon: 99 }); // no such icon
+    g.step();
+    expect(g.players.map((p) => p.icon)).toEqual([7, 1, 2, 3]);
+    expect(g.drainEvents(1).some((e) => e.type === 'rejected')).toBe(true);
+    g.act(0, { type: 'setIcon', icon: 0 }); // can change your mind, and free up 7
+    g.step();
+    expect(g.players[0].icon).toBe(0);
+    while (g.phase === 'opening') g.step();
+    g.act(0, { type: 'setIcon', icon: 5 });
+    g.step();
+    expect(g.players[0].icon).toBe(0); // not once the game is running
+  });
+
   it('treats tied largest shareholders as co-presidents', () => {
     const g = newGame({ players: 3 });
     g.companies[0].shares = [0, 0, 1, 1, 2];

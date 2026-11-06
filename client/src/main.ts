@@ -51,8 +51,10 @@ const playerName = (p: number, me: number) => (p === me && !watching ? 'you' : s
 /** A seat's name: the person's name online, otherwise Player N. */
 const seatName = (p: number) => session.names[p] || `Player ${p + 1}`;
 /** Each seat's icon, so players are easy to tell apart wherever they appear (names alone aren't, online). */
-const SEAT_ICONS = ['🦊', '🐻', '🐸', '🐧', '🦉', '🐙', '🐯', '🐨'];
-const seatIcon = (p: number) => SEAT_ICONS[p % SEAT_ICONS.length];
+const SEAT_ICONS = ['🦊', '🐻', '🐸', '🐧', '🦉', '🐙', '🐯', '🐨', '🐼', '🦁', '🐢', '🐝'];
+/** Each seat's icon as the game has it (players pick theirs in the opening round). */
+let seatIcons: number[] = [];
+const seatIcon = (p: number) => SEAT_ICONS[(seatIcons[p] ?? p) % SEAT_ICONS.length];
 /** A short label: icon plus their name (trimmed) online, otherwise PN. */
 const seatShort = (p: number) => `${seatIcon(p)} ${session.names[p] ? session.names[p].slice(0, 8) : `P${p + 1}`}`;
 const fmtClock = (sec: number) => {
@@ -437,8 +439,13 @@ function refreshPanels(obs: Observation) {
   // The last 10 seconds before a payout: the countdown lights up.
   $('phase').classList.toggle('soon', obs.phase === 'running' && obs.nextPayoutAt - obs.t <= 10);
 
-  // You: cash and shares.
+  seatIcons = obs.players.map((p) => p.icon);
+  // You: cash and shares, and in the opening round, your icon to pick.
   let html = `<div class="row big"><span>Cash</span><b>${money(me.cash)}</b></div>`;
+  if (obs.phase === 'opening' && !watching) {
+    const taken = new Set(obs.players.filter((p) => p.id !== obs.me).map((p) => p.icon));
+    html += `<div class="sub">Your icon</div><div class="icons">${SEAT_ICONS.map((ic, i) => `<button class="icon-pick${me.icon === i ? ' on' : ''}" data-icon="${i}" ${taken.has(i) ? 'disabled title="Taken"' : ''}>${ic}</button>`).join('')}</div>`;
+  }
   if (me.held) html += `<div class="row muted"><span>Held for your bids</span><span>${money(me.held)}</span></div>`;
   const holdings = obs.companies.filter((c) => c.shares.includes(obs.me));
   if (holdings.length) {
@@ -558,20 +565,27 @@ function refreshCompanies(obs: Observation) {
     const order = [...holders.keys()].sort((a, b) => (a === obs.me ? -1 : b === obs.me ? 1 : holders.get(b)! - holders.get(a)! || a - b));
     const own = c.shares.filter((sh) => sh === null).length;
     const mine = holders.get(obs.me) ?? 0;
-    const chips =
+    // Five boxes, one per share: empty while the company owns it, filled with the owner's icon once
+    // bought (you first, then the biggest holders; presidents' boxes in gold).
+    const boxes =
       order
-        .map((pl) => {
+        .flatMap((pl) => {
           const pres = c.presidents.includes(pl);
           const n = holders.get(pl)!;
           const you = pl === obs.me && !watching;
-          return `<span class="chip${you ? ' you' : ''}${pres ? ' pres' : ''}" title="${you ? 'You' : seatName(pl)}: ${n} share${n === 1 ? '' : 's'}${pres ? ', president' : ''}">${pres ? '♔ ' : ''}${you ? `${seatIcon(pl)} You` : seatIcon(pl)} ×${n}</span>`;
+          const tip = `${you ? 'You' : seatName(pl)}: ${n} share${n === 1 ? '' : 's'}${pres ? ', president' : ''}`;
+          return Array.from({ length: n }, () => `<span class="share${you ? ' you' : ''}${pres ? ' pres' : ''}" title="${tip}">${seatIcon(pl)}</span>`);
         })
-        .join('') + (own ? `<span class="chip bank" title="Shares the company owns itself: sold in sales">company ×${own}</span>` : '');
+        .join('') + Array.from({ length: own }, () => '<span class="share empty" title="Owned by the company: sold in sales"></span>').join('');
+    const chips = `<span class="shares">${boxes}</span>`;
     const sale = obs.sales.find((x) => x.company === c.id);
     const book = obs.books[c.id];
     const who = (p: number) => (p === obs.me && !watching ? 'you' : seatShort(p));
     const pinned = pinnedCards.has(c.id);
-    let html = `<div class="row head"><span>${sw(c.id)}<b>${coName(c.id)}</b></span><span><button class="pin${pinned ? ' on' : ''}" data-pin="${c.id}" title="${pinned ? 'Unpin: fold this card back down' : 'Pin this card open'}">${pinned ? 'Unpin' : 'Pin'}</button><span title="Treasury">${money(c.treasury)}</span></span></div>`;
+    const pinBtn = `<button class="pin${pinned ? ' on' : ''}" data-pin="${c.id}" title="${pinned ? 'Unpin: fold this card back down' : 'Pin this card open'}">${pinned ? 'Unpin' : 'Pin'}</button>`;
+    // Open, the card has a top row (Pin and treasury) so the name gets its own line, with its ticker.
+    let html = `<div class="row head-open"><span>${pinBtn}</span><span title="Treasury">Treasury <b>${money(c.treasury)}</b></span></div>`;
+    html += `<div class="row head"><span>${sw(c.id)}<b>${coName(c.id)}</b> <span class="ticker">${COMPANY_NAMES[companySlot(c.id)][1]}</span></span><span class="treasury" title="Treasury">${money(c.treasury)}</span></div>`;
     let saleBtn = '';
     if (acting && obs.phase === 'running' && own && !sale && c.presidents.length) {
       const cooldown = obs.saleCooldownUntil[c.id] - obs.elapsed;
@@ -766,7 +780,9 @@ document.addEventListener('pointerdown', (e) => {
   const b = (e.target as HTMLElement).closest<HTMLButtonElement>('.side button');
   if (!b || b.disabled) return;
   const obs = session.obs();
-  if (b.dataset.pin) {
+  if (b.dataset.icon) {
+    session.act({ type: 'setIcon', icon: Number(b.dataset.icon) });
+  } else if (b.dataset.pin) {
     const id = Number(b.dataset.pin);
     if (pinnedCards.has(id)) pinnedCards.delete(id);
     else pinnedCards.add(id);
@@ -1155,7 +1171,7 @@ const GUIDE: { img?: string[]; icons?: GuideIcons; title: string; text: string }
     img: ['route-2'],
     icons: 'shops',
     title: 'Then a shop that buys the final product!',
-    text: "<p>Now click a <b>shop</b> that sells what your producer's material becomes: <span class=\"hl\">timber → furniture, wheat → bread, crude oil → fuel</span>.</p><p>Shops with a gold <b>$</b> coin are premium: they pay half as much again for each pallet.</p>",
+    text: "<p>Now click a <b>shop</b> that sells what your producer's material becomes: <span class=\"hl\">timber → furniture, wheat → bread, crude oil → fuel</span>.</p><p>Shops with a gold <b>$</b> coin are premium: they <span class=\"hl\">pay 50% more</span> for each pallet.</p>",
   },
   {
     img: ['route-3'],
@@ -1176,7 +1192,7 @@ const GUIDE: { img?: string[]; icons?: GuideIcons; title: string; text: string }
   {
     img: ['buy'],
     title: 'Buy another factory!',
-    text: `<p>Each factory lets your company run <b>${session.cfg.depots.capacity} more trucks</b> and opens up routes near it. When your company is at its truck limit, or you want to move into another part of town, buy one: in your company's card, click <b>Pick on map…</b>. The sites you can afford light up with your price. Click one and <span class="hl">start sending trucks from it</span>.</p>`,
+    text: `<p>Each factory lets your company run <b>${session.cfg.depots.capacity} more trucks</b>. When your company is at its truck limit, or you want to move into another part of town, buy one: in your company's card, click <b>Pick on map…</b>. The sites you can afford light up with your price. Click one and <span class="hl">start sending trucks from it</span>.</p>`,
   },
   {
     img: ['shares', 'company'],
@@ -1335,6 +1351,7 @@ function beginMatch(m: Match) {
   if (session.multiplayer) speedSel.value = '1';
   session.speed = Number(speedSel.value);
   ($('btn-pause') as HTMLButtonElement).disabled = !session.canControlTime;
+  $('btn-pause').textContent = session.paused ? '▶' : '⏸';
   renderer.setTown(session.game.town);
   renderer.via = session.cfg.trucks.viaDepot;
   renderer.serviceSec = session.cfg.trucks.serviceSec;

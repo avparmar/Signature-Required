@@ -21,7 +21,12 @@ export interface Player {
   cash: number;
   /** Part of `cash` held for this player's leading bid (can't be spent until released). */
   held: number;
+  /** Which icon they picked (the client has the list); each player's is different. */
+  icon: number;
 }
+
+/** How many icons players can pick from. */
+export const PLAYER_ICONS = 12;
 
 export interface Company {
   id: number;
@@ -84,6 +89,8 @@ export type Action =
   | { type: 'buy'; company: number }
   /** Sell one of your shares at once: to the standing bid, or back to the company at its bid price. */
   | { type: 'sell'; company: number; to: 'bid' | 'company' }
+  /** Pick your icon (during the opening round; not one another player has). */
+  | { type: 'setIcon'; icon: number }
   /** Done bidding in a company's sale (until someone bids again). */
   | { type: 'pass'; company: number }
   /** Start a sale of one of a company's own shares. Anyone may. */
@@ -211,7 +218,7 @@ export class Game {
     if (cfg.companies < cfg.players) throw new Error('need at least one company per player');
     this.town = generateTown(cfg.town);
     this.rng = new Rng(cfg.seed * 2654435761 + 17);
-    this.players = Array.from({ length: cfg.players }, (_, id) => ({ id, cash: cfg.startingCash, held: 0 }));
+    this.players = Array.from({ length: cfg.players }, (_, id) => ({ id, cash: cfg.startingCash, held: 0, icon: id % PLAYER_ICONS }));
     // Every company starts fully owned by the bank, with an empty treasury: shares are sold at
     // auction (pre-game, then during play), and that money is what gets companies going.
     this.companies = Array.from({ length: cfg.companies }, (_, id) => ({
@@ -493,6 +500,13 @@ export class Game {
           this.emit('all', { type: 'trade', t: this.t, company: c.id, buyer: bid.player, seller: player, price: bid.price });
         }
         this.afterSale(c.id, player);
+        break;
+      }
+      case 'setIcon': {
+        if (this.phase !== 'opening') return reject('icons are picked during the opening round');
+        if (!Number.isInteger(action.icon) || action.icon < 0 || action.icon >= PLAYER_ICONS) return reject('no such icon');
+        if (this.players.some((p) => p.id !== player && p.icon === action.icon)) return reject('another player has that one');
+        this.players[player].icon = action.icon;
         break;
       }
       case 'pass': {
