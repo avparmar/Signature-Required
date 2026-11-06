@@ -7,9 +7,10 @@
  *   it to take one off. Esc or right-click on the map clears the selection.
  * - Company panel (#34): treasury, fleet, depots and routes for companies you run; buy trucks and
  *   depots (affordable sites light up on the map with your price).
- * - Auction panel (#35): bid on the running auction; presidents can put bank-held shares up.
+ * - The share market lives in the company cards: each company's sale (when one is running), its
+ *   standing bid and ask, what the company pays to buy a share back, and a box to bid or ask.
  */
-import { distancesFrom, makeGameConfig, minimumBid, stillBidding, type GameConfig, type GameConfigOverrides, type GameEvent, type Location, type Observation } from '@sr/core';
+import { distancesFrom, makeGameConfig, minimumBid, type GameConfig, type GameConfigOverrides, type GameEvent, type Location, type Observation } from '@sr/core';
 import { Renderer, type Spot, companyColor, companySlot, coordOf, drawBusiness, drawFactory, goodColor, pickCompanySlots, type Highlights } from './render.js';
 import { Session } from './session.js';
 import type { Match } from './match.js';
@@ -149,7 +150,7 @@ function updateHint(obs: Observation) {
     return;
   }
   if (obs.phase === 'opening') {
-    hint.textContent = 'Opening round: bid for shares on the right. The president of a company runs it.';
+    hint.textContent = 'Opening round: bid for shares in the company cards on the left. The president of a company runs it.';
     return;
   }
   const picks = hl.picked.map((id) => g.town.locations[id]);
@@ -158,7 +159,7 @@ function updateHint(obs: Observation) {
   if (p && !c) hint.textContent = `${cap(names(p.good!).source)} picked: now a ${names(p.good!).shop} to sell the ${names(p.good!).product} to.`;
   else if (c && !p) hint.textContent = `${cap(names(c.good!).shop)} picked: now a ${names(c.good!).source} to supply it.`;
   else if (picks.length) hint.textContent = 'Factory picked: now a producer and a shop.';
-  else if (myCompanies(obs).length === 0) hint.textContent = 'You run no company yet: win a share auction to become a president.';
+  else if (myCompanies(obs).length === 0) hint.textContent = 'You run no company yet: own the most shares of one to become its president.';
   else hint.textContent = 'Click a producer and a shop of the same good to send a truck. Right-click a route to take one off.';
 }
 
@@ -245,7 +246,7 @@ function click(sx: number, sy: number, right: boolean) {
     } else toast('Click a free (dashed) factory site, or Esc to cancel.', 'error');
     return;
   }
-  if (obs.phase === 'opening' && l && l.kind !== 'lot') return toast('Routes open when the clock starts, after the opening auctions.', 'info');
+  if (obs.phase === 'opening' && l && l.kind !== 'lot') return toast('Routes open when the clock starts, after the opening sales.', 'info');
   if (obs.phase !== 'running') return;
   if (route && !l) {
     if (!obs.companies[route.company].presidents.includes(obs.me)) return toast(`That route belongs to ${coName(route.company)}.`, 'error');
@@ -410,7 +411,7 @@ function refreshPanels(obs: Observation) {
   $('clock').textContent = obs.phase === 'opening' ? 'Opening' : fmtClock(obs.timeLeft);
   $('phase').textContent =
     obs.phase === 'opening'
-      ? 'Opening auctions: one share of each company, before the clock starts'
+      ? 'Opening sales: one share of each company, before the clock starts'
       : obs.phase === 'ended'
         ? 'Game over'
         : `Next payout in ${fmtClock(obs.nextPayoutAt - obs.t)}`;
@@ -419,7 +420,7 @@ function refreshPanels(obs: Observation) {
 
   // You: cash and shares.
   let html = `<div class="row big"><span>Cash</span><b>${money(me.cash)}</b></div>`;
-  if (me.held) html += `<div class="row muted"><span>Held for your bid</span><span>${money(me.held)}</span></div>`;
+  if (me.held) html += `<div class="row muted"><span>Held for your bids</span><span>${money(me.held)}</span></div>`;
   const holdings = obs.companies.filter((c) => c.shares.includes(obs.me));
   if (holdings.length) {
     html += '<div class="sub">Your shares</div>';
@@ -446,44 +447,9 @@ function refreshPanels(obs: Observation) {
     })
     .join('');
 
-  // Companies: everyone's at a glance.
-  $('companies').innerHTML = obs.companies
-    .map((c) => {
-      const trucks = obs.trucks.filter((t) => t.company === c.id).length;
-      const depots = Object.values(obs.depots).filter((o) => o === c.id).length;
-      // One chip per share: you, another player (by number), or still with the bank. Presidents'
-      // chips are outlined, with a crown on the first.
-      // One chip per shareholder with how many shares they hold (you first, presidents crowned),
-      // then the shares still with the bank.
-      const holders = new Map<number, number>();
-      for (const sh of c.shares) if (sh !== null) holders.set(sh, (holders.get(sh) ?? 0) + 1);
-      const order = [...holders.keys()].sort((a, b) => (a === obs.me ? -1 : b === obs.me ? 1 : holders.get(b)! - holders.get(a)! || a - b));
-      const bank = c.shares.filter((sh) => sh === null).length;
-      const chips =
-        order
-          .map((pl) => {
-            const pres = c.presidents.includes(pl);
-            const n = holders.get(pl)!;
-            const you = pl === obs.me && !watching;
-            return `<span class="chip${you ? ' you' : ''}${pres ? ' pres' : ''}" title="${you ? 'You' : seatName(pl)}: ${n} share${n === 1 ? '' : 's'}${pres ? ', president' : ''}">${pres ? '♔ ' : ''}${you ? 'You' : seatShort(pl)} ×${n}</span>`;
-          })
-          .join('') + (bank ? `<span class="chip bank" title="Still with the bank">bank ×${bank}</span>` : '');
-      const routes = obs.routes.filter((r) => r.company === c.id).length;
-      // Anyone can put one of its bank shares up for auction (a company nobody owns, the bank re-offers itself).
-      let sell = '';
-      if (obs.phase === 'running' && !watching && bank && c.presidents.length) {
-        const a = obs.auction;
-        const queued = (a && a.company === c.id) || obs.auctionQueue.some((r) => r.company === c.id);
-        const cooldown = obs.auctionCooldownUntil[c.id] - obs.elapsed;
-        const label = a && a.company === c.id ? 'On now' : queued ? 'Up next' : cooldown > 0 ? `Wait ${Math.ceil(cooldown)}s` : 'Auction a share';
-        const tip = c.presidents.includes(obs.me) ? 'Sell one of its bank shares to raise money for the company' : 'Put one of its bank shares up for auction. Its president can outbid you to keep control; the money goes to the company either way.';
-        sell = `<button class="mini" data-auction="${c.id}" title="${tip}" ${queued || cooldown > 0 ? 'disabled' : ''}>${label}</button>`;
-      }
-      return `<div class="co" data-cohover="${c.id}"><div class="row"><span>${sw(c.id)}<b>${coName(c.id)}</b></span><span>${money(c.treasury)}</span></div><div class="chips">${chips}${sell}</div><div class="row muted small"><span>${trucks} trucks · ${depots} factor${depots === 1 ? 'y' : 'ies'} · ${routes} route${routes === 1 ? '' : 's'}</span></div><div class="row muted small"><span>Last dividend</span><span>${lastDividend.has(c.id) ? `${money(lastDividend.get(c.id)!)} / share` : 'none yet'}</span></div><div class="row muted small"><span>Next dividend</span><span>${money(c.dividendPerShare)} / share</span></div></div>`;
-    })
-    .join('');
+  // Companies: everyone's at a glance, with the share market in each card.
+  refreshCompanies(obs);
 
-  refreshAuction(obs);
   refreshMyCompanies(obs);
   updateHint(obs);
   void g;
@@ -491,103 +457,163 @@ function refreshPanels(obs: Observation) {
 
 const sw = (c: number) => `<span class="swatch" style="background:${companyColor(c)}"></span>`;
 
-function refreshAuction(obs: Observation) {
-  const g = session.game;
-  const a = obs.auction;
-  const me = obs.players[obs.me];
-  const box = $('auction');
-  let html = '';
-  if (a) {
-    const leading = a.highBidder === obs.me && !watching;
-    html += `<div class="row big"><span>${sw(a.company)}${coName(a.company)}</span><b>${Math.ceil(a.timeLeft)}s</b></div>`;
-    html += `<div class="row muted small"><span>Selling</span><span>${a.seller === null ? 'a bank share' : `a share from ${playerName(a.seller, obs.me)}`}</span></div>`;
-    html += `<div class="row"><span>High bid</span><span>${a.highBidder === null ? 'none yet' : `${money(a.highBid)} (${playerName(a.highBidder, obs.me)})`}</span></div>`;
-    const c = obs.companies[a.company];
-    html += `<div class="row muted small"><span>Treasury · trucks</span><span>${money(c.treasury)} · ${obs.trucks.filter((t) => t.company === c.id).length}</span></div>`;
-    // What a share paid last time: about the least to expect from the next payout.
-    html += `<div class="row small"><span>Last dividend</span><b>${lastDividend.has(c.id) ? `${money(lastDividend.get(c.id)!)}/share` : 'none yet'}</b></div>`;
-    if (leading) html += '<div class="good small">You’re the high bidder.</div>';
-    if (a.age + a.timeLeft >= g.cfg.auctions.maxSec - 0.05 && a.timeLeft < g.cfg.auctions.softCloseSec)
-      html += `<div class="muted small">Final seconds: bids no longer add time (${g.cfg.auctions.maxSec}s limit).</div>`;
-    // Who's still in: it ends early once everyone but the high bidder has passed.
-    const still = stillBidding(a, obs.players.length);
-    const passed = a.passed.map((p) => (p === obs.me ? 'you' : `P${p + 1}`));
-    html += `<div class="row muted small"><span>${passed.length ? `Passed: ${passed.join(', ')}` : 'Nobody has passed'}</span><span>${still.length} still in</span></div>`;
-  } else html += '<div class="muted small">No auction running.</div>';
-  if (obs.auctionQueue.length) html += `<div class="muted small">Next up: ${obs.auctionQueue.map((r) => coName(r.company)).join(', ')}</div>`;
-  if (box.dataset.html !== html) {
-    box.innerHTML = html;
-    box.dataset.html = html;
-  }
-  // The bid row stays put (it isn't re-rendered), so adjusting or typing isn't interrupted. The
-  // amount starts at the minimum for each new auction and never sits below it.
-  const form = $<HTMLFormElement>('bid-custom');
-  form.hidden = !a || a.highBidder === obs.me;
-  if (a) {
-    const min = minimumBid(a, g.cfg.auctions);
-    const input = $<HTMLInputElement>('bid-amount');
-    const fresh = form.dataset.auction !== `${a.company}:${obs.auctionQueue.length}` && document.activeElement !== input;
-    if (fresh) form.dataset.auction = `${a.company}:${obs.auctionQueue.length}`;
-    input.min = String(min);
-    if (document.activeElement !== input && (fresh || !(Number(input.value) >= min))) input.value = String(min);
-    const spendable = me.cash - me.held;
-    $<HTMLButtonElement>('bid-go').disabled = Number(input.value) > spendable;
-    const pass = $<HTMLButtonElement>('bid-pass');
-    pass.disabled = a.passed.includes(obs.me);
-    pass.textContent = a.passed.includes(obs.me) ? 'Passed' : 'Pass';
-    $<HTMLButtonElement>('bid-down').disabled = Number(input.value) <= min;
-    $<HTMLButtonElement>('bid-down1').disabled = Number(input.value) <= min;
-    $<HTMLButtonElement>('bid-up1').disabled = Number(input.value) + 1 > spendable;
-    $<HTMLButtonElement>('bid-up').disabled = Math.floor(Number(input.value) / 5) * 5 + 5 > spendable;
-  }
+interface Card {
+  root: HTMLElement;
+  info: HTMLElement;
+  form: HTMLFormElement;
+  input: HTMLInputElement;
+  bid: HTMLButtonElement;
+  ask: HTMLButtonElement;
+  /** What the amount was last set for (a sale starting resets it to that sale's minimum). */
+  key: string;
+}
+const cards = new Map<number, Card>();
+/** Companies whose trade box you've opened (it's always open while the company holds a sale). */
+const tradeOpen = new Set<number>();
+
+/** A company's card: the info part re-renders; the trade box is built once, so typing isn't interrupted. */
+function card(id: number): Card {
+  let k = cards.get(id);
+  if (k) return k;
+  const root = document.createElement('div');
+  root.className = 'co';
+  root.dataset.cohover = String(id);
+  const info = document.createElement('div');
+  const form = document.createElement('form');
+  form.className = 'trade';
+  form.innerHTML = `<button type="button" data-step="-5" title="Down to the previous $5">−5</button><button type="button" data-step="-1" title="$1 less">−1</button><span class="amount">$<input type="number" min="0" step="1" inputmode="numeric" /></span><button type="button" data-step="1" title="$1 more">+1</button><button type="button" data-step="5" title="Up to the next $5">+5</button><button type="submit" class="go" data-side="bid">Bid</button><button type="button" class="go2" data-side="ask">Ask</button>`;
+  root.append(info, form);
+  const input = form.querySelector('input')!;
+  k = { root, info, form, input, bid: form.querySelector('[data-side=bid]')!, ask: form.querySelector('[data-side=ask]')!, key: '' };
+  cards.set(id, k);
+  form.addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-step]');
+    if (!b) return;
+    const v = Math.floor(Number(input.value) || 0);
+    const step = Number(b.dataset.step);
+    // ±5 goes to round amounts ($33 -> $35 -> $40); ±1 goes a dollar.
+    input.value = String(Math.max(0, Math.abs(step) === 5 ? (step > 0 ? Math.floor(v / 5) * 5 + 5 : Math.ceil(v / 5) * 5 - 5) : v + step));
+    refreshCompanies(session.obs());
+  });
+  const send = (side: 'bid' | 'ask') => {
+    const amount = Math.floor(Number(input.value));
+    if (!Number.isFinite(amount)) return;
+    if (side === 'bid') session.act({ type: 'bid', company: id, amount });
+    else session.act({ type: 'ask', company: id, price: amount });
+    input.blur();
+  };
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    send('bid');
+  });
+  k.ask.addEventListener('click', () => send('ask'));
+  return k;
 }
 
-$('bid-pass').addEventListener('click', () => {
-  const a = session.obs().auction;
-  if (a) session.act({ type: 'pass', company: a.company });
-});
+/** The least a bid could be now to stand (and, in a sale, to count). */
+function leastBid(obs: Observation, id: number): number {
+  const book = obs.books[id];
+  const min = minimumBid(book, obs.me, session.cfg.auctions);
+  return obs.sales.some((x) => x.company === id) ? Math.max(min, obs.minPrice[id]) : Math.max(1, min);
+}
 
-$('bid-down').addEventListener('click', () => {
-  const input = $<HTMLInputElement>('bid-amount');
-  // Down to the previous multiple of 5, but never below the minimum bid.
-  const v = Math.floor(Number(input.value));
-  input.value = String(Math.max(Number(input.min), Math.ceil(v / 5) * 5 - 5));
-  refreshAuction(session.obs());
-});
-$('bid-down1').addEventListener('click', () => {
-  const input = $<HTMLInputElement>('bid-amount');
-  input.value = String(Math.max(Number(input.min), Math.floor(Number(input.value)) - 1));
-  refreshAuction(session.obs());
-});
-$('bid-up1').addEventListener('click', () => {
-  const input = $<HTMLInputElement>('bid-amount');
-  input.value = String(Math.floor(Number(input.value) || Number(input.min)) + 1);
-  refreshAuction(session.obs());
-});
-$('bid-up').addEventListener('click', () => {
-  const input = $<HTMLInputElement>('bid-amount');
-  // Up to the next multiple of 5 ($33 -> $35 -> $40), so round amounts are a click away.
-  const v = Math.floor(Number(input.value) || Number(input.min));
-  input.value = String(Math.floor(v / 5) * 5 + 5);
-  refreshAuction(session.obs());
-});
-
-// A bid of any amount: you may want to put more into a company than the minimum.
-$<HTMLFormElement>('bid-custom').addEventListener('submit', (e) => {
-  e.preventDefault();
-  const obs = session.obs();
-  const a = obs.auction;
-  const input = $<HTMLInputElement>('bid-amount');
-  const amount = Math.floor(Number(input.value));
-  if (!a || !Number.isFinite(amount)) return;
-  const min = minimumBid(a, session.cfg.auctions);
+function refreshCompanies(obs: Observation) {
+  const box = $('companies');
   const me = obs.players[obs.me];
-  const spendable = me.cash - me.held;
-  if (amount < min) return toast(`The lowest bid now is ${money(min)}.`, 'error');
-  if (amount > spendable) return toast(`You have ${money(spendable)} to bid with.`, 'error');
-  session.act({ type: 'bid', company: a.company, amount });
-  input.blur();
-});
+  const free = me.cash - me.held;
+  const acting = !watching && obs.phase !== 'ended';
+  obs.companies.forEach((c, i) => {
+    const k = card(c.id);
+    if (box.children[i] !== k.root) box.insertBefore(k.root, box.children[i] ?? null);
+    const trucks = obs.trucks.filter((t) => t.company === c.id).length;
+    const depots = Object.values(obs.depots).filter((o) => o === c.id).length;
+    const routes = obs.routes.filter((r) => r.company === c.id).length;
+    // One chip per shareholder with how many shares they hold (you first, presidents crowned),
+    // then the shares the company owns itself.
+    const holders = new Map<number, number>();
+    for (const sh of c.shares) if (sh !== null) holders.set(sh, (holders.get(sh) ?? 0) + 1);
+    const order = [...holders.keys()].sort((a, b) => (a === obs.me ? -1 : b === obs.me ? 1 : holders.get(b)! - holders.get(a)! || a - b));
+    const own = c.shares.filter((sh) => sh === null).length;
+    const mine = holders.get(obs.me) ?? 0;
+    const chips =
+      order
+        .map((pl) => {
+          const pres = c.presidents.includes(pl);
+          const n = holders.get(pl)!;
+          const you = pl === obs.me && !watching;
+          return `<span class="chip${you ? ' you' : ''}${pres ? ' pres' : ''}" title="${you ? 'You' : seatName(pl)}: ${n} share${n === 1 ? '' : 's'}${pres ? ', president' : ''}">${pres ? '♔ ' : ''}${you ? 'You' : seatShort(pl)} ×${n}</span>`;
+        })
+        .join('') + (own ? `<span class="chip bank" title="Shares the company owns itself: sold in sales">company ×${own}</span>` : '');
+    const sale = obs.sales.find((x) => x.company === c.id);
+    const book = obs.books[c.id];
+    const who = (p: number) => (p === obs.me && !watching ? 'you' : seatShort(p));
+    let html = `<div class="row"><span>${sw(c.id)}<b>${coName(c.id)}</b></span><span title="Treasury">${money(c.treasury)}</span></div>`;
+    html += `<div class="chips">${chips}</div>`;
+    html += `<div class="row muted small"><span>${trucks} trucks · ${depots} factor${depots === 1 ? 'y' : 'ies'} · ${routes} route${routes === 1 ? '' : 's'}</span></div>`;
+    html += `<div class="row small"><span title="Trucks and factories at what they cost, plus cash">Worth <b>${money(obs.value[c.id])}</b></span><span class="muted" title="Dividend per share: the last one paid, and the next one so far">Dividend ${lastDividend.has(c.id) ? money(lastDividend.get(c.id)!) : '—'} → ${money(c.dividendPerShare)}</span></div>`;
+    // A sale running: the share goes to the best bid at the end, if it's at least the minimum.
+    if (sale) {
+      const best = book.bid;
+      const enough = best !== null && best.price >= obs.minPrice[c.id];
+      const last = sale.age + sale.timeLeft >= session.cfg.auctions.maxSec - 0.05 && sale.timeLeft < session.cfg.auctions.softCloseSec;
+      html += `<div class="sale"><div class="row"><b>${sale.opening ? 'Opening sale' : 'Selling a company share'}</b><b>${Math.ceil(sale.timeLeft)}s</b></div>`;
+      html += `<div class="row small"><span>Best bid</span><span>${best ? `${money(best.price)} (${who(best.player)})` : 'none yet'}</span></div>`;
+      if (obs.minPrice[c.id] > 0) html += `<div class="row small muted"><span>Sells for at least</span><span>${money(obs.minPrice[c.id])}${best && !enough ? ' · not met yet' : ''}</span></div>`;
+      if (best?.player === obs.me && !watching) html += `<div class="good small">${enough ? 'You’re winning it.' : 'Your bid is below the minimum.'}</div>`;
+      if (last) html += `<div class="muted small">Final seconds: bids no longer add time.</div>`;
+      html += `</div>`;
+    }
+    // The market: standing orders, the company's buy-back price, and starting a sale.
+    if (obs.phase === 'running') {
+      const rows: string[] = [];
+      if (book.bid && !sale) {
+        const yours = book.bid.player === obs.me && !watching;
+        rows.push(`<div class="row small"><span>Bid ${money(book.bid.price)} (${who(book.bid.player)})</span>${!acting ? '' : yours ? `<button class="mini" data-cancel="${c.id}:bid">Withdraw</button>` : `<button class="mini" data-sell="${c.id}:bid" ${mine ? '' : 'disabled'} title="Sell one of your shares to them">Sell</button>`}</div>`);
+      }
+      if (book.ask) {
+        const yours = book.ask.player === obs.me && !watching;
+        rows.push(`<div class="row small"><span>Ask ${money(book.ask.price)} (${who(book.ask.player)})</span>${!acting ? '' : yours ? `<button class="mini" data-cancel="${c.id}:ask">Withdraw</button>` : `<button class="mini" data-buy="${c.id}" ${free >= book.ask.price ? '' : 'disabled'}>Buy</button>`}</div>`);
+      }
+      const cb = obs.companyBid[c.id];
+      if (cb !== null)
+        rows.push(`<div class="row small"><span title="Half its worth per share, while its cash covers that">Company buys back at ${money(cb)}</span>${acting ? `<button class="mini" data-sell="${c.id}:company" ${mine ? '' : 'disabled'}>Sell</button>` : ''}</div>`);
+      if (acting) {
+        const cooldown = obs.saleCooldownUntil[c.id] - obs.elapsed;
+        const saleBtn =
+          own && !sale && c.presidents.length
+            ? `<button class="mini" data-startsale="${c.id}" ${cooldown > 0 ? 'disabled' : ''} title="Put one of the company's own shares up for sale. The best bid at the end gets it, if it's at least ${money(obs.minPrice[c.id])}; the money goes to the company.">${cooldown > 0 ? `Sale in ${Math.ceil(cooldown)}s` : 'Start a sale'}</button>`
+            : '';
+        const open = tradeOpen.has(c.id);
+        const tradeBtn = sale ? '' : `<button class="mini${open ? ' on' : ''}" data-trade="${c.id}">${open ? 'Done' : 'Bid / ask…'}</button>`;
+        if (saleBtn || tradeBtn) rows.push(`<div class="row small actions">${saleBtn}${tradeBtn}</div>`);
+      }
+      html += rows.join('');
+    }
+    if (k.info.dataset.html !== html) {
+      k.info.innerHTML = html;
+      k.info.dataset.html = html;
+    }
+    k.root.classList.toggle('selling', !!sale);
+    // The trade box: open while the company holds a sale you could bid in, or when you've opened it.
+    const show = acting && ((sale && (!sale.opening || obs.sales[0]?.company === c.id)) || (obs.phase === 'running' && tradeOpen.has(c.id)));
+    k.form.hidden = !show;
+    if (!show) k.key = '';
+    if (show) {
+      const least = leastBid(obs, c.id);
+      // A new sale (or opening the box) starts the amount at the least bid that would count.
+      const key = sale ? `sale@${Math.round(obs.elapsed - sale.age)}` : 'open';
+      const fresh = key !== k.key;
+      k.key = key;
+      if (document.activeElement !== k.input && (fresh || (sale && !(Number(k.input.value) >= least)))) k.input.value = String(least);
+      const v = Math.floor(Number(k.input.value));
+      const yoursBid = book.bid?.player === obs.me;
+      k.bid.textContent = yoursBid ? 'Raise bid' : 'Bid';
+      k.bid.disabled = !(v >= least) || v - (yoursBid ? book.bid!.price : 0) > free;
+      k.ask.hidden = !!sale || !mine;
+      k.ask.disabled = !(v >= 1);
+    }
+  });
+}
 
 function refreshMyCompanies(obs: Observation) {
   const g = session.game;
@@ -658,12 +684,20 @@ document.addEventListener('pointerdown', (e) => {
   const b = (e.target as HTMLElement).closest<HTMLButtonElement>('.side button');
   if (!b || b.disabled) return;
   const obs = session.obs();
-  if (b.dataset.bid) {
-    session.act({ type: 'bid', company: obs.auction!.company, amount: Number(b.dataset.bid) });
-  } else if (b.dataset.auction) {
-    const id = Number(b.dataset.auction);
-    session.act({ type: 'startAuction', company: id });
-    activeCompany = id;
+  if (b.dataset.startsale) {
+    session.act({ type: 'startSale', company: Number(b.dataset.startsale) });
+  } else if (b.dataset.trade) {
+    const id = Number(b.dataset.trade);
+    if (tradeOpen.has(id)) tradeOpen.delete(id);
+    else tradeOpen.add(id);
+  } else if (b.dataset.sell) {
+    const [c, to] = b.dataset.sell.split(':');
+    session.act({ type: 'sell', company: Number(c), to: to as 'bid' | 'company' });
+  } else if (b.dataset.buy) {
+    session.act({ type: 'buy', company: Number(b.dataset.buy) });
+  } else if (b.dataset.cancel) {
+    const [c, side] = b.dataset.cancel.split(':');
+    session.act({ type: 'cancelOrder', company: Number(c), side: side as 'bid' | 'ask' });
   } else if (b.dataset.truck) {
     const [c, s] = b.dataset.truck.split(':').map(Number);
     session.act({ type: 'buyTruck', company: c, depot: s });
@@ -927,7 +961,14 @@ function handleEvents(evs: GameEvent[]) {
       lastDividend.set(e.company, e.perShare + e.bonusPerShare);
       if (e.paid[session.seat]) paidNow.push({ company: e.company, amount: e.paid[session.seat], final: !!e.final });
     }
-    if (e.type === 'auctionWon') text = `${cap(playerName(e.player, obs.me))} bought a share of ${coName(e.company)} for ${money(e.amount)}`;
+    if (e.type === 'orderCancelled' && e.player === session.seat && e.reason === 'beaten' && !watching) toast(`Your ${e.side} for ${coName(e.company)} was ${e.side === 'bid' ? 'outbid' : 'undercut'}.`, 'error');
+    if (e.type === 'saleWon') text = `${cap(playerName(e.player, obs.me))} bought a share of ${coName(e.company)} for ${money(e.amount)}`;
+    else if (e.type === 'trade')
+      text =
+        e.buyer === 'company'
+          ? `${cap(playerName(e.seller, obs.me))} sold a share of ${coName(e.company)} back to it for ${money(e.price)}`
+          : `${cap(playerName(e.buyer, obs.me))} bought a share of ${coName(e.company)} from ${playerName(e.seller, obs.me)} for ${money(e.price)}`;
+    else if (e.type === 'askPosted') text = `${cap(playerName(e.player, obs.me))} ${e.player === obs.me && !watching ? 'offer' : 'offers'} a share of ${coName(e.company)} for ${money(e.price)}`;
     else if (e.type === 'payout' && e.paid[session.seat]) {
       text = `Dividend from ${coName(e.company)}: ${money(e.paid[session.seat])}${e.final ? ' (final)' : ''}`;
       cls = 'good';
@@ -1016,7 +1057,7 @@ const GUIDE: { img?: string[]; icons?: GuideIcons; title: string; text: string }
   {
     img: ['auction'],
     title: 'Take control of a company!',
-    text: `<p>The game opens with an <b>auction</b> for one share of each company. Whoever holds the most shares of a company <span class="hl">controls it</span>: they're its president and run its trucks. You're an investor, not the company, so spread your bets across several if you like.</p>
+    text: `<p>The game opens with a <b>sale</b> of one share of each company: bid in its card, and the best bid gets it. Whoever holds the most shares of a company <span class="hl">controls it</span>: they're its president and run its trucks. You're an investor, not the company, so spread your bets across several if you like.</p>
       <p>Your bid goes <b>straight into the company</b>. That's how companies pay for trucks and factories, so a share won for next to nothing leaves your company with nothing to build with. Bid like you mean it!</p>`,
   },
   {
@@ -1055,7 +1096,7 @@ const GUIDE: { img?: string[]; icons?: GuideIcons; title: string; text: string }
   {
     img: ['shares', 'company'],
     title: 'Get paid!',
-    text: "<p>Half of each delivery goes to the company and half to its <b>dividend pot</b>, which is <span class=\"hl\">paid to shareholders every 3 minutes</span>. Your shares and your next payout show at the top left. Short on cash for your company? A president can auction one of the bank's shares. After 15 minutes, the richest player wins. Good luck!</p>",
+    text: "<p>Half of each delivery goes to the company and half to its <b>dividend pot</b>, which is <span class=\"hl\">paid to shareholders every 3 minutes</span>. Your shares and your next payout show at the top left. Shares trade in the company cards: bid, ask, or start a sale of the company's own shares to raise money. Late on, a company with cash buys shares back. After 15 minutes, the richest player wins. Good luck!</p>",
   },
 ];
 
@@ -1164,7 +1205,7 @@ function frame(now: number) {
   }
 
   tooltip(obs);
-  hl.spotlight = obs.auction ? obs.auction.company : null;
+  hl.spotlight = obs.sales.length ? obs.sales[0].company : null;
   hl.meterFor = obs.companies.map((c) => c.id); // public: everyone sees every company's progress
   renderer.draw(
     obs,

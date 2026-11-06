@@ -4,10 +4,9 @@
  * - Each consumer pays one price per pallet. Every delivery puts that amount into the company's
  *   treasury immediately and the same amount into its dividend pot.
  * - Every few minutes each company pays out its pot, split into one equal part per share. Parts
- *   for shares the bank still holds aren't paid. Dividends (printed by the bank) are players'
- *   only income.
- * - The final payout also includes part of each company's assets, so shares keep their value
- *   to the end.
+ *   for shares the company owns itself go into its treasury.
+ * - The last payout is at the end of the game. It can add part of each company's assets (off by
+ *   default: shares are worth what they pay and what they sell for, see auctions.ts).
  * - Any player can pay to raise a producer or consumer one level.
  */
 import type { Rng } from './rng.js';
@@ -51,7 +50,7 @@ export const DEFAULT_MONEY: MoneyConfig = {
   deliveryToPot: 0.5,
   payoutEverySec: 180,
   finalBonus: 'assets',
-  finalAssetShare: 0.1,
+  finalAssetShare: 0,
   finalEarningsMultiple: 2,
   investBase: 60,
   investGrowth: 1.5,
@@ -76,7 +75,7 @@ export function investCost(cfg: MoneyConfig, level: number, startLevel = 1): num
 
 /**
  * Split an amount into one equal part per share and pay the owners.
- * Returns what each player received; parts for bank-held shares are simply not paid.
+ * Returns what each player received; parts for company-owned shares aren't in it (the game puts them in the treasury).
  */
 export function payPerShare(shares: (number | null)[], amount: number): Map<number, number> {
   const part = amount / shares.length;

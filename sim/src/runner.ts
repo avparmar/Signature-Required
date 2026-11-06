@@ -22,8 +22,10 @@ export interface GameResult {
     /** Average winning bid for this company's shares. */
     avgPrice: number;
   }[];
-  /** Winning bids, in order. */
+  /** Company shares sold in sales (winning bids), in order. */
   auctions: { t: number; company: number; amount: number; opening: boolean }[];
+  /** Shares traded at once: between players, or sold back to the company. */
+  trades: { t: number; company: number; price: number; toCompany: boolean }[];
   /** Dividends paid in total, per payout (5 entries for a 15-minute game). */
   payouts: number[];
   /** Minute by which all 25 shares had been sold, or null. */
@@ -92,6 +94,7 @@ export function runGame(overrides: GameConfigOverrides, personalities: BotPerson
   let sampledTrucks = 0;
   const bonusPerShare = new Array(cfg.companies).fill(0);
   const auctions: GameResult['auctions'] = [];
+  const trades: GameResult['trades'] = [];
   const payouts: number[] = [];
   let soldOutAt: number | null = null;
   let payoutRound = -1;
@@ -119,7 +122,8 @@ export function runGame(overrides: GameConfigOverrides, personalities: BotPerson
         investSpent += e.price;
       }
       if (e.type === 'closed') closed++;
-      if (e.type === 'auctionWon') auctions.push({ t: e.t, company: e.company, amount: e.amount, opening: phase === 'opening' });
+      if (e.type === 'saleWon') auctions.push({ t: e.t, company: e.company, amount: e.amount, opening: e.opening });
+      if (e.type === 'trade') trades.push({ t: e.t, company: e.company, price: e.price, toCompany: e.buyer === 'company' });
       if (e.type === 'payout') {
         if (e.t !== lastPayoutT) {
           payoutRound++;
@@ -141,8 +145,8 @@ export function runGame(overrides: GameConfigOverrides, personalities: BotPerson
     // Shuffle who acts first each step, so no seat systematically wins ties (e.g. two bots bidding
     // the same minimum in the same step).
     const order = orderRng.shuffle([...bots]);
-    // Bots answer auctions every step; otherwise they look once a second (much faster).
-    const look = g.auction !== null || g.steps % thinkSteps === 0;
+    // Bots answer sales every step; otherwise they look once a second (much faster).
+    const look = g.sales.length > 0 || g.steps % thinkSteps === 0;
     for (const bot of order) {
       const fresh = g.drainEvents(bot.me);
       if (bot.me === 0) record(fresh, phase); // stats come from one player's (public) events
@@ -211,6 +215,7 @@ export function runGame(overrides: GameConfigOverrides, personalities: BotPerson
       owners: [...c.shares],
     })),
     auctions,
+    trades,
     payouts,
     soldOutAt,
     locationsGrown: g.locations.filter((l) => l.level > cfg.cycles.startLevel).length,

@@ -10,21 +10,25 @@ let gameRows: { c: number; k: string; i: number; v: number }[] = [];
 const addRaw = (k: string, i: number, v: number) => ((acc[k] ??= new Array(MARKS + 1).fill(0))[i] += v);
 let curCo = -1;
 const add = (k: string, i: number, v: number) => { addRaw(k, i, v); gameRows.push({ c: curCo, k, i, v }); };
-const salesByMin: { bank: number[]; resale: number[]; bankPrice: number[]; resalePrice: number[] } = {
-  bank: new Array(16).fill(0), resale: new Array(16).fill(0), bankPrice: new Array(16).fill(0), resalePrice: new Array(16).fill(0),
-};
+const z16 = () => new Array(16).fill(0);
+const salesByMin = { bank: z16(), resale: z16(), bankPrice: z16(), resalePrice: z16(), buyback: z16(), buybackPrice: z16() };
 let companyGames = 0;
 let outsiderBuys = 0;
 let runningSales = 0;
 let firstFullControl: number[] = [];
 
-let current: { income: number[]; auction: number[]; trucks: number[]; depots: number[]; truckSpend: number[]; depotSpend: number[] } | null = null;
+let current: { income: number[]; auction: number[]; buyback: number[]; trucks: number[]; depots: number[]; truckSpend: number[]; depotSpend: number[] } | null = null;
 const proto = Game.prototype as unknown as { emit: (to: unknown, e: any) => void };
 const orig = proto.emit;
 proto.emit = function (this: Game, to, e) {
   if (current && to === 'all') {
     if (e.type === 'delivered') current.income[e.company] += e.price * this.cfg.money.deliveryToTreasury;
-    if (e.type === 'auctionWon') {
+    if (e.type === 'trade') {
+      const m = Math.min(15, Math.floor(this.elapsed / 60));
+      if (e.buyer === 'company') { current.buyback[e.company] += e.price; salesByMin.buyback[m]++; salesByMin.buybackPrice[m] += e.price; }
+      else { salesByMin.resale[m]++; salesByMin.resalePrice[m] += e.price; }
+    }
+    if (e.type === 'saleWon') {
       current.auction[e.company] += e.amount;
       const m = Math.min(15, Math.floor(this.elapsed / 60));
       if (this.phase === 'running') {
@@ -36,8 +40,8 @@ proto.emit = function (this: Game, to, e) {
         const lead = Math.max(0, ...cnt.values());
         if ((cnt.get(e.player) ?? 0) < lead || lead === 0) outsiderBuys++;
         runningSales++;
-        if (e.seller === null) { salesByMin.bank[m]++; salesByMin.bankPrice[m] += e.amount; }
-        else { salesByMin.resale[m]++; salesByMin.resalePrice[m] += e.amount; }
+        salesByMin.bank[m]++;
+        salesByMin.bankPrice[m] += e.amount;
       }
     }
     if (e.type === 'boughtTruck') { current.trucks[e.company]++; current.truckSpend[e.company] += e.price; }
@@ -50,7 +54,7 @@ for (let s = 0; s < games; s++) {
   const cfg = makeGameConfig({ seed: 1000 + s });
   const n = cfg.companies;
   const z = () => new Array(n).fill(0);
-  current = { income: z(), auction: z(), trucks: z(), depots: z(), truckSpend: z(), depotSpend: z() };
+  current = { income: z(), auction: z(), buyback: z(), trucks: z(), depots: z(), truckSpend: z(), depotSpend: z() };
   const payTicks = Math.round(cfg.money.payoutEverySec / cfg.tickSec);
   let mark = 0;
   const fullAt = new Array(n).fill(-1);
@@ -67,6 +71,7 @@ for (let s = 0; s < games; s++) {
       add('pot', i, c.pot);
       add('income', i, c0.income[c.id]);
       add('auction', i, c0.auction[c.id]);
+      add('buyback', i, c0.buyback[c.id]);
       add('truckSpend', i, c0.truckSpend[c.id]);
       add('depotSpend', i, c0.depotSpend[c.id]);
       add('truckBuys', i, c0.trucks[c.id]);
@@ -110,6 +115,7 @@ console.log('| | 3 | 6 | 9 | 12 | 15 |\n|---|---|---|---|---|---|');
 row('Treasury at the mark ($)', 'treasury');
 row('Earned from deliveries since the last mark ($)', 'income');
 row('Raised from share sales since the last mark ($)', 'auction');
+row('Paid buying shares back since the last mark ($)', 'buyback');
 row('Spent on trucks ($)', 'truckSpend');
 row('Spent on factories ($)', 'depotSpend');
 row('Trucks bought', 'truckBuys');
@@ -119,15 +125,15 @@ row('Factories owned', 'depotsOwned');
 row('Unclaimed factory sites in town', 'freeSites');
 row('Cheapest site for this company ($)', 'cheapest');
 row('Share that could afford a site (%)', 'canAfford', companyGames / 100);
-row('Shares still with the bank', 'bank');
+row('Shares the company owns', 'bank');
 row('Shares held by the biggest holder', 'top');
 row('Different shareholders', 'holders');
 row('Owned outright by one player (%)', 'ownedOutright', companyGames / 100);
 row('Average player cash ($)', 'playerCash', games * makeGameConfig({}).companies / makeGameConfig({}).players);
 row('Richest player cash ($)', 'playerCashMax', games * makeGameConfig({}).companies / makeGameConfig({}).players);
-console.log('\nShare sales by minute (all games): bank-held / resold by a player, and average price');
+console.log('\nShares changing hands by minute (all games): company sales / between players / bought back by the company, with average price');
 for (let m = 0; m < 15; m++)
-  console.log(`min ${m}: bank ${salesByMin.bank[m]} @ $${f(salesByMin.bankPrice[m] / Math.max(1, salesByMin.bank[m]))}, resale ${salesByMin.resale[m]} @ $${f(salesByMin.resalePrice[m] / Math.max(1, salesByMin.resale[m]))}`);
+  console.log(`min ${m}: sold by companies ${salesByMin.bank[m]} @ $${f(salesByMin.bankPrice[m] / Math.max(1, salesByMin.bank[m]))}, between players ${salesByMin.resale[m]} @ $${f(salesByMin.resalePrice[m] / Math.max(1, salesByMin.resale[m]))}, bought back ${salesByMin.buyback[m]} @ $${f(salesByMin.buybackPrice[m] / Math.max(1, salesByMin.buyback[m]))}`);
 const sold = firstFullControl.filter((x) => x >= 0).sort((a, b) => a - b);
 console.log(`\nIn-game share sales: ${(runningSales / games).toFixed(1)} a game; won by someone who wasn't leading that company: ${(outsiderBuys / games).toFixed(1)} a game`);
 console.log(`\nCompanies whose shares all left the bank: ${sold.length}/${companyGames}; median minute ${f(sold[Math.floor(sold.length / 2)] ?? NaN)}`);

@@ -108,21 +108,11 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 .sites { display: flex; gap: 4px; flex-wrap: wrap; margin: 2px 0 4px; }
 .holding { display: inline-flex; align-items: center; margin-right: 6px; white-space: nowrap; }
 .holding .tag { margin-left: 3px; }
-#bid-custom { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 8px; font-size: 14px; }
-#bid-custom[hidden] { display: none; }
-#bid-custom .amount { flex: 1; min-width: 52px; display: flex; align-items: center; gap: 2px; font-weight: 700; }
-#bid-custom input { flex: 1; min-width: 0; width: 100%; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; font-size: 14px; font-weight: 700; text-align: center; -moz-appearance: textfield; }
-#bid-custom input::-webkit-outer-spin-button, #bid-custom input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
-#bid-custom button { padding: 5px 7px; font-size: 13px; font-weight: 600; }
-#bid-go { background: var(--ink) !important; color: #fff !important; border-color: var(--ink) !important; padding: 5px 16px !important; }
 .chips { display: flex; flex-wrap: wrap; gap: 3px; margin: 4px 0 2px; }
 .chip { font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 999px; background: #e8e2d4; color: var(--ink); border: 1.5px solid transparent; }
-.chips .mini { margin-left: auto; font-size: 11px; padding: 1px 8px; line-height: 1.4; }
 .chip.you { background: var(--ink); color: #fff; }
 .chip.pres { border-color: #c99a1a; }
 .chip.bank { background: transparent; color: var(--muted); border: 1.5px dashed #cfc7b6; font-weight: 500; }
-#bid-go, #bid-pass { flex: 1 1 45%; }
-#bid-custom .amount { flex-basis: 30%; }
 
 /* A route row lights up while its route is hovered on the map (and vice versa). */
 .route-row { border-radius: 4px; margin: 0 -4px; padding: 0 4px; }
@@ -219,3 +209,18 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 .card .plain { background: #f0ebe0; color: var(--ink); }
 #payout.show { pointer-events: auto; }
 #payout .pay-close { font-size: 11px; color: var(--muted); margin-top: 6px; }
+
+/* The share market, in the company cards. */
+.co.selling { background: #fff7dc; box-shadow: inset 3px 0 0 #d4b048; margin: 0 -12px; padding-left: 12px; padding-right: 12px; }
+.co .sale { margin: 4px 0 2px; }
+.co .actions { justify-content: flex-end; gap: 4px; }
+.co .row .mini { font-size: 11px; padding: 1px 8px; line-height: 1.4; }
+.trade { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 6px; font-size: 13px; }
+.trade[hidden] { display: none; }
+.trade .amount { flex: 1 1 30%; min-width: 52px; display: flex; align-items: center; gap: 2px; font-weight: 700; }
+.trade input { flex: 1; min-width: 0; width: 100%; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; font-size: 13px; font-weight: 700; text-align: center; -moz-appearance: textfield; }
+.trade input::-webkit-outer-spin-button, .trade input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.trade button { padding: 4px 7px; font-size: 12px; font-weight: 600; }
+.trade .go { flex: 1 1 40%; background: var(--ink) !important; color: #fff !important; border-color: var(--ink) !important; }
+.trade .go2 { flex: 1 1 40%; }
+.trade .go2[hidden] { display: none; }

@@ -4,7 +4,7 @@
  * Same config + same actions at the same ticks = same game, every time.
  */
 import { makeGameConfig, type GameConfig, type GameConfigOverrides } from './config.js';
-import { minimumBid, stillBidding, type Auction, type AuctionEvent, type AuctionRequest } from './auctions.js';
+import { minimumBid, shareFloor, type AuctionEvent, type Book, type CancelReason, type Sale } from './auctions.js';
 import { depotPrice, subsidisedPrice } from './depots.js';
 import { assignPrices, investCost, payPerShare } from './money.js';
 import { chooseOpening } from './openings.js';
@@ -30,11 +30,11 @@ export interface Company {
   pot: number;
   /** What the company has spent on trucks and depots (counts towards the final payout). */
   assets: number;
-  /** Owner (player id) of each share, or null while the bank still holds it. */
+  /** Owner (player id) of each share, or null while the company owns it itself. */
   shares: (number | null)[];
 }
 
-/** opening: the opening share auctions, before the game clock starts. */
+/** opening: the opening share sales, before the game clock starts. */
 export type Phase = 'opening' | 'running' | 'ended';
 
 // ------------------------------------------------------------------ routes
@@ -74,15 +74,18 @@ export type Action =
   | { type: 'buyDepot'; company: number; site: number }
   /** Pay (from your own cash) to raise a producer or consumer one level. Anyone may. */
   | { type: 'invest'; location: number }
-  /** Bid on the current auction (company must match, so a late bid can't land on the next one). */
+  /** Post a bid for a share of a company, or raise your own (holds the cash). In a sale, this is how you bid. */
   | { type: 'bid'; company: number; amount: number }
-  /** Done bidding on the current auction (until someone else bids). */
-  | { type: 'pass'; company: number }
-  /**
-   * Put a share up for auction: a bank-held share (presidents only), or, once all of a company's
-   * shares are out, one of your own. Queues if another auction is running.
-   */
-  | { type: 'startAuction'; company: number };
+  /** Offer one of your shares of a company for sale at a price. */
+  | { type: 'ask'; company: number; price: number }
+  /** Withdraw your standing bid or ask. */
+  | { type: 'cancelOrder'; company: number; side: 'bid' | 'ask' }
+  /** Buy at the standing ask, at once. */
+  | { type: 'buy'; company: number }
+  /** Sell one of your shares at once: to the standing bid, or back to the company at its bid price. */
+  | { type: 'sell'; company: number; to: 'bid' | 'company' }
+  /** Start a sale of one of a company's own shares. Anyone may. */
+  | { type: 'startSale'; company: number };
 
 export interface QueuedAction {
   player: number;
@@ -110,7 +113,7 @@ export type GameEvent =
       company: number;
       /** Dividend paid per share from the pot. */
       perShare: number;
-      /** Final payout only: the end-of-game bonus paid per share. */
+      /** Final payout only: the end-of-game bonus paid per share (0 unless the config adds one). */
       bonusPerShare: number;
       final: boolean;
       /** What each shareholder received (player id -> amount). */
@@ -149,12 +152,18 @@ export interface Observation {
   depots: Record<number, number>;
   /** What each free depot site costs each company right now (site location id -> price per company). */
   depotPrices: Record<number, number[]>;
-  /** The auction running now, if any. */
-  auction: Auction | null;
-  /** Auctions waiting to start, in order. */
-  auctionQueue: AuctionRequest[];
-  /** Earliest time (seconds since the start, opening round included) each company may auction again. */
-  auctionCooldownUntil: number[];
+  /** Sales of companies' own shares, counting down. */
+  sales: Sale[];
+  /** Each company's standing bid and ask. */
+  books: Book[];
+  /** What each company would pay for a share now, or null if its cash doesn't cover that. */
+  companyBid: (number | null)[];
+  /** Lowest price each company will sell one of its own shares for (its bid price, affordable or not). */
+  minPrice: number[];
+  /** Each company's value: trucks and factories at what they cost, plus cash. */
+  value: number[];
+  /** Earliest time (seconds since the start, opening round included) each company may hold another sale. */
+  saleCooldownUntil: number[];
 }
 
 // ------------------------------------------------------------------ game
@@ -168,12 +177,10 @@ export class Game {
   /** Every step taken, opening round included. */
   steps = 0;
   phase: Phase;
-  auction: Auction | null = null;
-  readonly auctionQueue: AuctionRequest[] = [];
-  readonly auctionCooldownUntil: number[];
-  /** Whether a company's cooldown follows a sale (rather than an auction nobody bid in). */
-  private readonly lastAuctionSold: boolean[];
-  /** Next company to auction in the opening round. */
+  readonly sales: Sale[] = [];
+  readonly books: Book[];
+  readonly saleCooldownUntil: number[];
+  /** Next company to sell a share of in the opening round. */
   private openingNext = 0;
   readonly players: Player[];
   readonly companies: Company[];
@@ -236,8 +243,8 @@ export class Game {
       },
     );
     this.events = Array.from({ length: cfg.players }, () => []);
-    this.auctionCooldownUntil = this.companies.map(() => 0);
-    this.lastAuctionSold = this.companies.map(() => false);
+    this.saleCooldownUntil = this.companies.map(() => 0);
+    this.books = this.companies.map(() => ({ bid: null, ask: null }));
     this.phase = cfg.auctions.openingRound ? 'opening' : 'running';
     this.emit('all', { type: 'start', t: 0 });
     if (this.phase === 'running') this.emit('all', { type: 'open', t: 0 });
@@ -273,7 +280,7 @@ export class Game {
     this.queue = [];
     for (const q of queued) this.apply(q);
     this.steps++;
-    this.updateAuctions();
+    this.updateSales();
     if (this.phase === 'opening') return; // the town waits until the opening round is over
 
     for (const e of updateCycles(this.locations, this.t, this.cfg.cycles, this.rng)) {
@@ -386,50 +393,112 @@ export class Game {
         break;
       }
       case 'bid': {
-        const a = this.auction;
-        if (!a || a.company !== action.company) return reject(`no auction for company ${action.company} right now`);
-        if (a.seller === player) return reject("you can't bid on your own share");
-        const min = minimumBid(a, this.cfg.auctions);
-        if (!(action.amount >= min)) return reject(`the lowest bid now is $${min}`);
-        const p = this.players[player];
-        const available = p.cash - p.held + (a.highBidder === player ? a.highBid : 0);
-        if (available < action.amount) return reject(`you only have $${available.toFixed(2)} to bid with`);
-        if (a.highBidder !== null) this.players[a.highBidder].held -= a.highBid; // release the old lead
-        p.held += action.amount;
-        a.highBid = action.amount;
-        a.highBidder = player;
-        a.passed = []; // everyone else may answer the new bid
-        const cap = Math.max(0, this.cfg.auctions.maxSec - a.age);
-        if (a.timeLeft < this.cfg.auctions.softCloseSec) a.timeLeft = Math.min(this.cfg.auctions.softCloseSec, Math.max(a.timeLeft, cap));
-        this.emit('all', { type: 'bid', t: this.t, company: a.company, player, amount: action.amount, timeLeft: a.timeLeft });
-        break;
-      }
-      case 'pass': {
-        const a = this.auction;
-        if (!a || a.company !== action.company) return reject(`no auction for company ${action.company} right now`);
-        if (a.highBidder === player) return reject("you're the high bidder");
-        if (a.passed.includes(player)) return;
-        a.passed.push(player);
-        this.emit('all', { type: 'pass', t: this.t, company: a.company, player });
-        // Everyone who could still bid has passed: it ends now.
-        if (stillBidding(a, this.players.length).length === 0) a.timeLeft = 0;
-        break;
-      }
-      case 'startAuction': {
-        if (this.phase !== 'running') return reject('auctions open once the game starts');
         const c = this.companies[action.company];
         if (!c) return reject(`no company ${action.company}`);
-        let seller: number | null;
-        // Anyone may put up one of a company's bank-held shares, president or not.
-        if (c.shares.some((s) => s === null)) seller = null;
-        else if (c.shares.includes(player)) seller = player;
-        else return reject("all shares are out and you don't own any to sell");
-        if (this.elapsed < this.auctionCooldownUntil[c.id] - 1e-9)
-          return reject(`${this.lastAuctionSold[c.id] ? 'a share sold recently' : 'no bids last time'}; try again in ${Math.ceil(this.auctionCooldownUntil[c.id] - this.elapsed)}s`);
-        if ((this.auction && this.auction.company === c.id) || this.auctionQueue.some((r) => r.company === c.id))
-          return reject('this company already has an auction running or waiting');
-        this.auctionQueue.push({ company: c.id, seller, startedBy: player });
-        if (this.auction) this.emit('all', { type: 'auctionQueued', t: this.t, company: c.id, position: this.auctionQueue.length });
+        if (this.phase === 'opening' && this.sales[0]?.company !== c.id) return reject('in the opening round, you can only bid on the company being sold');
+        const amount = action.amount;
+        if (!(amount >= 0) || !Number.isFinite(amount)) return reject('that bid is not a number');
+        const book = this.books[c.id];
+        const own = book.bid?.player === player ? book.bid.price : 0;
+        const min = minimumBid(book, player, this.cfg.auctions);
+        if (amount < min) return reject(book.bid?.player === player ? `raise your bid above $${own}` : `the lowest bid now is $${min}`);
+        if (book.ask && book.ask.player !== player && amount >= book.ask.price) return reject(`a share is for sale at $${book.ask.price}: buy it instead`);
+        const p = this.players[player];
+        if (p.cash - p.held + own < amount) return reject(`you only have $${(p.cash - p.held + own).toFixed(2)} to bid with`);
+        if (book.bid) this.dropBid(c.id, book.bid.player === player ? null : 'beaten');
+        p.held += amount;
+        book.bid = { player, price: amount };
+        // A bid near the end of a sale gives the others a moment to answer, up to the sale's limit.
+        const sale = this.sales.find((x) => x.company === c.id);
+        if (sale && sale.timeLeft < this.cfg.auctions.softCloseSec) {
+          const cap = Math.max(0, this.cfg.auctions.maxSec - sale.age);
+          sale.timeLeft = Math.min(this.cfg.auctions.softCloseSec, Math.max(sale.timeLeft, cap));
+        }
+        this.emit('all', { type: 'bidPosted', t: this.t, company: c.id, player, price: amount });
+        break;
+      }
+      case 'ask': {
+        const c = this.companies[action.company];
+        if (!c) return reject(`no company ${action.company}`);
+        if (this.phase !== 'running') return reject('the market opens once the game starts');
+        if (!c.shares.includes(player)) return reject("you don't own a share of this company");
+        const price = action.price;
+        if (!(price >= 1) || !Number.isFinite(price)) return reject('ask at least $1');
+        const book = this.books[c.id];
+        if (book.bid && book.bid.player !== player && price <= book.bid.price) return reject(`someone bids $${book.bid.price}: sell to them instead`);
+        const cb = this.companyBid(c.id);
+        if (cb !== null && price <= cb) return reject(`the company pays $${cb}: sell to it instead`);
+        if (book.ask && book.ask.player !== player && price > book.ask.price - this.cfg.auctions.minRaise)
+          return reject(`undercut the asking price of $${book.ask.price} by at least $${this.cfg.auctions.minRaise}`);
+        if (book.ask) this.dropAsk(c.id, book.ask.player === player ? null : 'beaten');
+        book.ask = { player, price };
+        this.emit('all', { type: 'askPosted', t: this.t, company: c.id, player, price });
+        break;
+      }
+      case 'cancelOrder': {
+        const book = this.books[action.company];
+        if (!book) return reject(`no company ${action.company}`);
+        const o = action.side === 'bid' ? book.bid : book.ask;
+        if (!o || o.player !== player) return reject(`you have no ${action.side} there`);
+        if (action.side === 'bid') this.dropBid(action.company, 'withdrawn');
+        else this.dropAsk(action.company, 'withdrawn');
+        break;
+      }
+      case 'buy': {
+        const c = this.companies[action.company];
+        if (!c) return reject(`no company ${action.company}`);
+        if (this.phase !== 'running') return reject('the market opens once the game starts');
+        const ask = this.books[c.id].ask;
+        if (!ask) return reject('nobody is selling a share of this company');
+        if (ask.player === player) return reject("that's your own share");
+        const p = this.players[player];
+        if (p.cash - p.held < ask.price) return reject(`you have $${(p.cash - p.held).toFixed(2)} to spend; it costs $${ask.price}`);
+        this.books[c.id].ask = null;
+        const seller = this.players[ask.player];
+        c.shares[c.shares.indexOf(ask.player)] = player;
+        p.cash -= ask.price;
+        seller.cash += ask.price;
+        this.emit('all', { type: 'trade', t: this.t, company: c.id, buyer: player, seller: ask.player, price: ask.price });
+        this.afterSale(c.id, ask.player);
+        break;
+      }
+      case 'sell': {
+        const c = this.companies[action.company];
+        if (!c) return reject(`no company ${action.company}`);
+        if (this.phase !== 'running') return reject('the market opens once the game starts');
+        if (!c.shares.includes(player)) return reject("you don't own a share of this company");
+        const seller = this.players[player];
+        if (action.to === 'company') {
+          const price = this.companyBid(c.id);
+          if (price === null) return reject("the company can't buy a share back right now");
+          c.shares[c.shares.indexOf(player)] = null;
+          c.treasury -= price;
+          seller.cash += price;
+          this.emit('all', { type: 'trade', t: this.t, company: c.id, buyer: 'company', seller: player, price });
+        } else {
+          const bid = this.books[c.id].bid;
+          if (!bid) return reject('nobody is bidding for a share of this company');
+          if (bid.player === player) return reject("that's your own bid");
+          this.books[c.id].bid = null;
+          const buyer = this.players[bid.player];
+          buyer.held -= bid.price;
+          buyer.cash -= bid.price;
+          seller.cash += bid.price;
+          c.shares[c.shares.indexOf(player)] = bid.player;
+          this.emit('all', { type: 'trade', t: this.t, company: c.id, buyer: bid.player, seller: player, price: bid.price });
+        }
+        this.afterSale(c.id, player);
+        break;
+      }
+      case 'startSale': {
+        if (this.phase !== 'running') return reject('sales open once the game starts');
+        const c = this.companies[action.company];
+        if (!c) return reject(`no company ${action.company}`);
+        if (!c.shares.includes(null)) return reject('the company has no shares of its own left to sell');
+        if (this.sales.some((x) => x.company === c.id)) return reject('this company already has a sale running');
+        if (this.elapsed < this.saleCooldownUntil[c.id] - 1e-9)
+          return reject(`it held a sale recently; try again in ${Math.ceil(this.saleCooldownUntil[c.id] - this.elapsed)}s`);
+        this.startSale(c.id, player, false);
         break;
       }
       default:
@@ -460,73 +529,96 @@ export class Game {
     return this.trucks.add(company, depot.id, depot.node);
   }
 
-  /** Start, count down and settle auctions. Runs every step, in both phases. */
-  private updateAuctions() {
+  /** Value of a company: trucks and factories at what they cost, plus cash. */
+  companyValue(company: number): number {
+    const c = this.companies[company];
+    return c.assets + Math.max(0, c.treasury);
+  }
+
+  /** The lowest price a company sells one of its own shares for, and what it pays for one back. */
+  minPrice(company: number): number {
+    const c = this.companies[company];
+    return shareFloor(this.cfg.auctions, c.assets, c.treasury, c.shares.length);
+  }
+
+  /** What a company would pay for a share now, or null if its cash doesn't cover it. */
+  companyBid(company: number): number | null {
+    const price = this.minPrice(company);
+    return price >= 1 && this.companies[company].treasury >= price ? price : null;
+  }
+
+  /** Take a company's standing bid off the book and release the cash it held. */
+  private dropBid(company: number, reason: CancelReason | null) {
+    const bid = this.books[company].bid;
+    if (!bid) return;
+    this.books[company].bid = null;
+    this.players[bid.player].held -= bid.price;
+    if (reason) this.emit('all', { type: 'orderCancelled', t: this.t, company, side: 'bid', player: bid.player, price: bid.price, reason });
+  }
+
+  private dropAsk(company: number, reason: CancelReason | null) {
+    const ask = this.books[company].ask;
+    if (!ask) return;
+    this.books[company].ask = null;
+    if (reason) this.emit('all', { type: 'orderCancelled', t: this.t, company, side: 'ask', player: ask.player, price: ask.price, reason });
+  }
+
+  /** After a player parted with a share: an ask they can no longer fill goes. */
+  private afterSale(company: number, seller: number) {
+    const ask = this.books[company].ask;
+    if (ask && ask.player === seller && !this.companies[company].shares.includes(seller)) this.dropAsk(company, 'noShares');
+  }
+
+  private startSale(company: number, startedBy: number | 'bank', opening: boolean) {
     const cfg = this.cfg.auctions;
-    if (this.auction) {
-      this.auction.timeLeft -= this.cfg.tickSec;
-      this.auction.age += this.cfg.tickSec;
-      if (this.auction.timeLeft <= 1e-9) this.settleAuction();
+    const sale: Sale = { company, startedBy, timeLeft: opening ? cfg.openingClockSec : cfg.clockSec, age: 0, opening };
+    this.sales.push(sale);
+    this.emit('all', { type: 'saleStart', t: this.t, company, startedBy, opening, timeLeft: sale.timeLeft, minPrice: this.minPrice(company) });
+  }
+
+  /** Count down and settle sales; run the opening round; re-offer companies nobody owns. Every step. */
+  private updateSales() {
+    for (const sale of [...this.sales]) {
+      sale.timeLeft -= this.cfg.tickSec;
+      sale.age += this.cfg.tickSec;
+      if (sale.timeLeft <= 1e-9) this.settleSale(sale);
     }
-    if (this.auction) return;
-    let next: AuctionRequest | undefined;
     if (this.phase === 'opening') {
+      if (this.sales.length) return;
       if (this.openingNext >= this.companies.length) {
         this.phase = 'running';
         this.emit('all', { type: 'open', t: 0 });
         return;
       }
-      next = { company: this.openingNext++, seller: null, startedBy: 'bank' };
-    } else {
-      // A company nobody owns would never get a president: the bank re-offers it after the cooldown.
-      for (const c of this.companies) {
-        const unowned = c.shares.every((s) => s === null);
-        const waiting = this.auctionQueue.some((r) => r.company === c.id);
-        if (unowned && !waiting && this.elapsed >= this.auctionCooldownUntil[c.id] - 1e-9)
-          this.auctionQueue.push({ company: c.id, seller: null, startedBy: 'bank' });
-      }
-      next = this.auctionQueue.shift();
+      this.startSale(this.openingNext++, 'bank', true);
+      return;
     }
-    if (!next) return;
-    const opening = this.phase === 'opening';
-    this.auction = {
-      ...next,
-      highBid: 0,
-      highBidder: null,
-      timeLeft: opening ? cfg.openingClockSec : cfg.clockSec,
-      age: 0,
-      opening,
-      passed: [],
-    };
-    this.emit('all', { type: 'auctionStart', t: this.t, company: next.company, seller: next.seller, opening, timeLeft: this.auction.timeLeft });
+    // A company nobody owns would never get a president: the bank re-offers it after the cooldown.
+    for (const c of this.companies) {
+      if (!c.shares.every((x) => x === null) || this.sales.some((x) => x.company === c.id)) continue;
+      if (this.elapsed >= this.saleCooldownUntil[c.id] - 1e-9) this.startSale(c.id, 'bank', false);
+    }
   }
 
-  private settleAuction() {
-    const a = this.auction!;
-    this.auction = null;
-    const c = this.companies[a.company];
-    if (a.highBidder === null) {
-      this.auctionCooldownUntil[c.id] = this.elapsed + this.cfg.auctions.noBidCooldownSec;
-      this.lastAuctionSold[c.id] = false;
-      this.emit('all', { type: 'auctionNoBids', t: this.t, company: c.id });
+  /** A sale's clock ran out: the standing bid gets the share if it's at least the company's minimum price. */
+  private settleSale(sale: Sale) {
+    this.sales.splice(this.sales.indexOf(sale), 1);
+    const c = this.companies[sale.company];
+    const bid = this.books[c.id].bid;
+    const idx = c.shares.indexOf(null);
+    if (!bid || idx < 0 || bid.price < this.minPrice(c.id)) {
+      this.saleCooldownUntil[c.id] = this.elapsed + this.cfg.auctions.noBidCooldownSec;
+      this.emit('all', { type: 'saleUnsold', t: this.t, company: c.id });
       return;
     }
-    const winner = this.players[a.highBidder];
-    const idx = c.shares.indexOf(a.seller);
-    if (idx < 0) {
-      // The seller no longer has the share (can't happen today, but don't take the money).
-      winner.held -= a.highBid;
-      return;
-    }
+    this.books[c.id].bid = null;
+    const winner = this.players[bid.player];
     c.shares[idx] = winner.id;
-    winner.held -= a.highBid;
-    winner.cash -= a.highBid;
-    c.treasury += a.highBid; // the money always goes to the company, even when a player sells
-    if (!a.opening) {
-      this.auctionCooldownUntil[c.id] = this.elapsed + this.cfg.auctions.saleCooldownSec;
-      this.lastAuctionSold[c.id] = true;
-    }
-    this.emit('all', { type: 'auctionWon', t: this.t, company: c.id, player: winner.id, amount: a.highBid, seller: a.seller });
+    winner.held -= bid.price;
+    winner.cash -= bid.price;
+    c.treasury += bid.price;
+    if (!sale.opening) this.saleCooldownUntil[c.id] = this.elapsed + this.cfg.auctions.saleCooldownSec;
+    this.emit('all', { type: 'saleWon', t: this.t, company: c.id, player: winner.id, amount: bid.price, opening: sale.opening });
   }
 
   private get payoutTicks() {
@@ -541,7 +633,8 @@ export class Game {
   }
 
   /**
-   * Every company pays out its pot, one equal part per share; bank-held shares' parts go unpaid.
+   * Every company pays out its pot, one equal part per share; the parts for shares it owns itself
+   * go into its treasury.
    * The final payout adds a bonus: part of the company's assets, or a multiple of its recent
    * earnings, depending on the config.
    */
@@ -557,6 +650,7 @@ export class Game {
       const amount = c.pot + bonus;
       const paid = payPerShare(c.shares, amount);
       for (const [player, x] of paid) this.players[player].cash += x;
+      c.treasury += (amount / n) * c.shares.filter((x) => x === null).length;
       this.emit('all', {
         type: 'payout',
         t: this.t,
@@ -774,9 +868,12 @@ export class Game {
           .filter((l) => l.kind === 'depot' && !this.depotOwner.has(l.id))
           .map((l) => [l.id, this.companies.map((c) => this.depotPriceFor(c.id, l.id))]),
       ),
-      auction: this.auction ? { ...this.auction } : null,
-      auctionQueue: this.auctionQueue.map((r) => ({ ...r })),
-      auctionCooldownUntil: [...this.auctionCooldownUntil],
+      sales: this.sales.map((x) => ({ ...x })),
+      books: this.books.map((b) => ({ bid: b.bid ? { ...b.bid } : null, ask: b.ask ? { ...b.ask } : null })),
+      companyBid: this.companies.map((c) => this.companyBid(c.id)),
+      minPrice: this.companies.map((c) => this.minPrice(c.id)),
+      value: this.companies.map((c) => this.companyValue(c.id)),
+      saleCooldownUntil: [...this.saleCooldownUntil],
     };
   }
 
@@ -792,9 +889,9 @@ export class Game {
       queues: [...this.trucks.queues].sort((a, b) => a[0] - b[0]),
       depots: [...this.depotOwner].sort((a, b) => a[0] - b[0]),
       steps: this.steps,
-      auction: this.auction,
-      auctionQueue: this.auctionQueue,
-      auctionCooldownUntil: this.auctionCooldownUntil,
+      sales: this.sales,
+      books: this.books,
+      saleCooldownUntil: this.saleCooldownUntil,
     });
     let h = 0x811c9dc5;
     for (let i = 0; i < s.length; i++) {

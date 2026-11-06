@@ -31,7 +31,7 @@ export const SETTINGS: Setting[] = [
   { group: 'Money', label: 'Dividends every', section: 'money', key: 'payoutEverySec', unit: 's', min: 30, max: 600, step: 15 },
   { group: 'Money', label: 'Pallet price', section: 'money', key: 'palletPrice', unit: '$', min: 0.5, max: 10, step: 0.1 },
   { group: 'Money', label: 'Premium pallet price', section: 'money', key: 'premiumPrice', unit: '$', min: 0.5, max: 15, step: 0.1 },
-  { group: 'Money', label: 'Final payout (share of assets)', section: 'money', key: 'finalAssetShare', scale: 100, unit: '%', min: 0, max: 100, step: 5 },
+  { group: 'Money', label: 'Final bonus (share of assets)', section: 'money', key: 'finalAssetShare', scale: 100, unit: '%', min: 0, max: 100, step: 5 },
   { group: 'Trucks', label: 'Truck price', section: 'depots', key: 'truckPrice', unit: '$', min: 1, max: 100, step: 1 },
   { group: 'Trucks', label: 'Trucks per factory', section: 'depots', key: 'capacity', min: 1, max: 30, step: 1 },
   { group: 'Trucks', label: 'Speed', section: 'trucks', key: 'speed', unit: 'blocks/s', min: 0.1, max: 2, step: 0.05 },
@@ -43,9 +43,10 @@ export const SETTINGS: Setting[] = [
   { group: 'Businesses', label: 'A new business every', section: 'openings', key: 'everySec', unit: 's', min: 10, max: 300, step: 5 },
   { group: 'Businesses', label: 'Cycle length', section: 'cycles', key: 'cycleSec', unit: 's', min: 10, max: 180, step: 5 },
   { group: 'Businesses', label: 'Grace period', section: 'cycles', key: 'graceSec', unit: 's', min: 0, max: 300, step: 15, hint: 'Before a new or just-changed business can be judged again.' },
-  { group: 'Auctions', label: 'Auction clock', section: 'auctions', key: 'clockSec', unit: 's', min: 10, max: 120, step: 5 },
-  { group: 'Auctions', label: 'Longest an auction can run', section: 'auctions', key: 'maxSec', unit: 's', min: 10, max: 300, step: 5, hint: 'Late bids add time, but never past this.' },
-  { group: 'Auctions', label: 'Wait after a share sells', section: 'auctions', key: 'saleCooldownSec', unit: 's', min: 0, max: 300, step: 15 },
+  { group: 'Shares', label: 'Sale clock', section: 'auctions', key: 'clockSec', unit: 's', min: 10, max: 120, step: 5 },
+  { group: 'Shares', label: 'Longest a sale can run', section: 'auctions', key: 'maxSec', unit: 's', min: 10, max: 300, step: 5, hint: 'Late bids add time, but never past this.' },
+  { group: 'Shares', label: 'Wait after a company sells a share', section: 'auctions', key: 'saleCooldownSec', unit: 's', min: 0, max: 300, step: 15 },
+  { group: 'Shares', label: 'Company buys shares back at (share of its worth)', section: 'auctions', key: 'buybackShare', scale: 100, unit: '%', min: 0, max: 200, step: 5, hint: 'Of its worth per share, while its cash covers that. Also the least it sells its own shares for.' },
 ];
 
 const KEY = 'sr-settings';

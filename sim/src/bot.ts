@@ -15,7 +15,6 @@ import {
   distanceToNetwork,
   distancesFrom,
   investCost,
-  minimumBid,
   type Action,
   type GameConfig,
   type GameEvent,
@@ -88,6 +87,15 @@ function trucksPerRoute(cfg: GameConfig): number {
   return Math.max(1, Math.round(palletsPerMin / deliveriesPerTruckMin(cfg) * 0.75));
 }
 
+/** A company's sale, as a bidder sees it. */
+interface SaleView {
+  company: number;
+  highBid: number;
+  highBidder: number | null;
+  /** The least a new bid must be to beat the standing one and count (the company's minimum price). */
+  min: number;
+}
+
 interface Route {
   /** Depot (town location id) the route runs from. */
   depot: number;
@@ -101,6 +109,8 @@ export class Bot {
   private lastThink = -Infinity;
   private lastInvest = -Infinity;
   private lastBuyIn = -Infinity;
+  /** When it started a sale of each company (to remember its plans until the sale is on). */
+  private startedAt = new Map<number, number>();
   /** Auctions it started to buy into a company, and the opening bid it means to make. */
   private buyInBid = new Map<number, number>();
   /** Deliveries per company in the last few minutes (from events). */
@@ -127,18 +137,21 @@ export class Bot {
       if (e.type === 'opened' || e.type === 'closed') this.routeCache.clear(); // the map changed
     }
     this.recent = this.recent.filter((r) => r.t > obs.t - 180);
-    // A share sale it started is over: forget the price it meant to pay.
-    for (const c of [...this.raiseFloor.keys()])
-      if (obs.auction?.company !== c && !obs.auctionQueue.some((r) => r.company === c)) this.raiseFloor.delete(c);
-    for (const c of [...this.buyInBid.keys()])
-      if (obs.auction?.company !== c && !obs.auctionQueue.some((r) => r.company === c)) this.buyInBid.delete(c);
+    // A share sale it started is over: forget the price it meant to pay (kept a moment for the sale to start).
+    const selling = (c: number) => obs.sales.some((x) => x.company === c);
+    for (const [c, since] of [...this.startedAt]) if (!selling(c) && obs.elapsed - since > 1.5) {
+      this.raiseFloor.delete(c);
+      this.buyInBid.delete(c);
+      this.startedAt.delete(c);
+    }
     const out: Action[] = [];
-    const bid = this.bid(obs);
-    if (bid) out.push(bid);
-    else {
-      // Not bidding at this price: say so, so the auction can end early.
-      const a = obs.auction;
-      if (a && a.highBidder !== this.me && a.seller !== this.me && !a.passed.includes(this.me)) out.push({ type: 'pass', company: a.company });
+    // Sales running: bid on at most one per look (its cash is held, so the next look sees what's left).
+    for (const sale of obs.sales) {
+      const bid = this.bid(obs, sale.company);
+      if (bid) {
+        out.push(bid);
+        break;
+      }
     }
     if (obs.elapsed - this.lastThink < this.thinkEverySec) return out;
     this.lastThink = obs.elapsed;
@@ -146,6 +159,8 @@ export class Bot {
       for (const c of obs.companies) if (c.presidents.includes(this.me)) out.push(...this.runCompany(obs, c.id));
       const buyIn = this.buyIn(obs);
       if (buyIn) out.push(buyIn);
+      const trade = this.trade(obs);
+      if (trade) out.push(trade);
       const inv = this.invest(obs);
       if (inv) out.push(inv);
     }
@@ -159,8 +174,12 @@ export class Bot {
     return obs.phase === 'opening' ? this.cfg.durationSec / 60 : obs.timeLeft / 60;
   }
 
-  /** Expected value of one share of a company if `extraCash` were added to its treasury. */
-  shareValue(obs: Observation, company: number, extraCash: number, optimistic = false): number {
+  /**
+   * Expected value of one share of a company if `extraCash` were added to its treasury: the
+   * dividends it will pay, plus (with `exit`) about what it could be sold back to the company for
+   * near the end, discounted because only the first few sellers get the company's price.
+   */
+  shareValue(obs: Observation, company: number, extraCash: number, optimistic = false, exit = true): number {
     const c = obs.companies[company];
     const trucks = obs.trucks.filter((t) => t.company === company).length;
     // An optimist assumes the company will buy the depots it needs; otherwise count what it has.
@@ -209,14 +228,15 @@ export class Bot {
       cash += perMin * m.deliveryToTreasury;
       if (this.personality.growth) buy();
     }
-    // Final payout: a share of everything the company holds by then (trucks and factories at what
-    // they cost, plus cash).
+    // Final payout bonus (if the config has one): a share of everything the company holds by then.
     const lastPerMin = Math.max(recentPerMin, fleet * perTruckPerMin);
     const bonus =
       m.finalBonus === 'earnings'
         ? (m.finalEarningsMultiple * lastPerMin * (m.payoutEverySec / 60)) / c.shares.length
         : (m.finalAssetShare * (assets + cash)) / c.shares.length;
-    return dividends + bonus;
+    // Selling back to the company before the end: half its value per share then, about half the time.
+    const buyback = exit ? 0.5 * ((this.cfg.auctions.buybackShare * (assets + cash)) / c.shares.length) : 0;
+    return dividends + bonus + buyback;
   }
 
   /** Companies it's raising money for by selling a bank share, and what it will pay for that share itself. */
@@ -240,8 +260,7 @@ export class Bot {
   /** Controller's company (decided at its first auction). */
   private controlTarget: number | null = null;
 
-  private controllerBid(obs: Observation): Action | null {
-    const a = obs.auction!;
+  private controllerBid(obs: Observation, a: SaleView): Action | null {
     const budget = this.personality.controller!.budget;
     if (this.controlTarget === null) this.controlTarget = this.pickTarget(obs);
     // Someone else has the target locked up: switch to the company it leads, or holds most of.
@@ -252,10 +271,10 @@ export class Bot {
       const most = [...obs.companies].sort((x, y) => holds(y) - holds(x))[0];
       this.controlTarget = (led ?? (holds(most) > 0 ? most : target)).id;
     }
-    if (a.company !== this.controlTarget) return this.plainBid(obs);
+    if (a.company !== this.controlTarget) return this.plainBid(obs, a);
     const me = obs.players[this.me];
     const available = me.cash - me.held;
-    const min = minimumBid(a, this.cfg.auctions);
+    const min = a.min;
     if (min > Math.min(budget, available)) return null;
     return { type: 'bid', company: a.company, amount: min };
   }
@@ -277,9 +296,8 @@ export class Bot {
     return best;
   }
 
-  private speculatorBid(obs: Observation): Action | null {
+  private speculatorBid(obs: Observation, a: SaleView): Action | null {
     const spec = this.personality.speculator!;
-    const a = obs.auction!;
     if (this.target === null) this.target = this.pickTarget(obs);
     const c = obs.companies[a.company];
     // If someone else has locked up the target, switch to wherever it holds the most.
@@ -288,7 +306,7 @@ export class Bot {
       this.target = a.company;
     const me = obs.players[this.me];
     const available = me.cash - me.held;
-    const min = minimumBid(a, this.cfg.auctions);
+    const min = a.min;
     const value = this.shareValue(obs, a.company, min, true);
     if (a.company === this.target) {
       // All in on its own company, minus the reserve kept for bargains.
@@ -305,30 +323,36 @@ export class Bot {
     return { type: 'bid', company: a.company, amount: min };
   }
 
-  private bid(obs: Observation): Action | null {
-    const a = obs.auction;
-    if (!a || a.highBidder === this.me || a.seller === this.me) return null;
+  /** Bidding in a company's sale: what the standing bid is, and the least that would beat it and count. */
+  private saleView(obs: Observation, company: number): SaleView {
+    const book = obs.books[company];
+    const beat = book.bid ? book.bid.price + this.cfg.auctions.minRaise : this.cfg.auctions.openingBid;
+    return { company, highBid: book.bid?.price ?? 0, highBidder: book.bid?.player ?? null, min: Math.max(beat, obs.minPrice[company]) };
+  }
+
+  private bid(obs: Observation, company: number): Action | null {
+    const a = this.saleView(obs, company);
+    if (a.highBidder === this.me) return null;
     // A share it put up to raise money for its own company: it backs the sale itself, up to its floor.
     const floor = this.raiseFloor.get(a.company);
     const me0 = obs.players[this.me];
-    const min0 = minimumBid(a, this.cfg.auctions);
-    if (floor !== undefined && min0 <= floor && min0 <= me0.cash - me0.held) return { type: 'bid', company: a.company, amount: min0 };
-    // An auction it started to buy in: open with the bid it planned.
+    const min0 = a.min;
+    if (floor !== undefined && min0 <= floor && min0 <= me0.cash - me0.held) return { type: 'bid', company: a.company, amount: Math.max(min0, Math.min(floor, a.highBidder === null ? floor : min0)) };
+    // A sale it started to buy in: open with the bid it planned.
     const open = this.buyInBid.get(a.company);
-    if (open !== undefined && a.highBidder === null && a.seller === null) {
+    if (open !== undefined && a.highBidder === null) {
       this.buyInBid.delete(a.company);
       if (open >= min0 && open <= me0.cash - me0.held) return { type: 'bid', company: a.company, amount: open };
     }
-    if (this.personality.speculator) return this.speculatorBid(obs);
-    if (this.personality.controller) return this.controllerBid(obs);
-    return this.plainBid(obs);
+    if (this.personality.speculator) return this.speculatorBid(obs, a);
+    if (this.personality.controller) return this.controllerBid(obs, a);
+    return this.plainBid(obs, a);
   }
 
-  private plainBid(obs: Observation): Action | null {
-    const a = obs.auction!;
+  private plainBid(obs: Observation, a: SaleView): Action | null {
     const me = obs.players[this.me];
     const available = me.cash - me.held;
-    const min = minimumBid(a, this.cfg.auctions);
+    const min = a.min;
     if (min > available * this.personality.maxCashPerBid) return null;
     const c = obs.companies[a.company];
     const myShares = c.shares.filter((s) => s === this.me).length;
@@ -338,9 +362,9 @@ export class Bot {
     const wouldControl = myShares + 1 >= top;
     let value = this.shareValue(obs, a.company, min);
     if (wouldControl && !c.presidents.includes(this.me)) value *= 1 + this.personality.controlBonus;
-    // Defending its company: a rival winning this bank share would catch up with it.
+    // Defending its company: a rival winning this share would catch up with it.
     const rival = a.highBidder;
-    if (c.presidents.includes(this.me) && a.seller === null && rival !== null && rival !== this.me && (counts.get(rival) ?? 0) + 1 >= myShares)
+    if (c.presidents.includes(this.me) && rival !== null && rival !== this.me && (counts.get(rival) ?? 0) + 1 >= myShares)
       value *= 1 + this.personality.controlBonus;
     if (min > value * this.personality.greed) return null;
     return { type: 'bid', company: a.company, amount: min };
@@ -482,8 +506,8 @@ export class Bot {
     // bank share for that only if it could pay 75% of the asking price itself, and backs the sale
     // with its own bid up to that, so the share doesn't go for nothing.
     const bankShares = c.shares.some((s) => s === null);
-    const busy = (obs.auction && obs.auction.company === company) || obs.auctionQueue.some((r) => r.company === company);
-    if ((worthIt || (spare === undefined && factoryWorthIt)) && bankShares && !busy && obs.elapsed >= obs.auctionCooldownUntil[company]) {
+    const busy = obs.sales.some((x) => x.company === company);
+    if ((worthIt || (spare === undefined && factoryWorthIt)) && bankShares && !busy && obs.elapsed >= obs.saleCooldownUntil[company]) {
       const cheapestSite = Math.min(
         ...Object.entries(obs.depotPrices)
           .filter(([site]) => this.siteHasRoute(obs, this.town.locations[Number(site)], load))
@@ -502,9 +526,10 @@ export class Bot {
         const ask = Math.min(need, this.shareValue(obs, company, need) * this.personality.greed);
         const floor = Math.floor(0.75 * ask);
         const me = obs.players[this.me];
-        if (floor >= this.cfg.auctions.minRaise && me.cash - me.held >= floor) {
-          out.push({ type: 'startAuction', company });
+        if (floor >= Math.max(this.cfg.auctions.minRaise, obs.minPrice[company]) && me.cash - me.held >= floor) {
+          out.push({ type: 'startSale', company });
           this.raiseFloor.set(company, floor);
+          this.startedAt.set(company, obs.elapsed);
         }
       }
     }
@@ -519,18 +544,18 @@ export class Bot {
    * what it would pay (so the share doesn't go for nothing), and bids on from there like anyone else.
    */
   private buyIn(obs: Observation): Action | null {
-    if (obs.elapsed - this.lastBuyIn < 20 || obs.auction?.highBidder === this.me) return null;
+    if (obs.elapsed - this.lastBuyIn < 20) return null;
     const cfg = this.cfg.auctions;
-    const rivalMin = Math.max(cfg.openingBid, cfg.minRaise);
     const me = obs.players[this.me];
     const available = (me.cash - me.held) * this.personality.maxCashPerBid;
-    if (available < rivalMin) return null;
+    if (available < cfg.minRaise) return null;
     const factor = this.personality.speculator ? this.personality.speculator.discount : this.personality.greed;
     let best: { company: number; bid: number; gain: number } | null = null;
     for (const c of obs.companies) {
       if (c.presidents.length === 0 || c.presidents.includes(this.me) || !c.shares.includes(null)) continue;
-      if (obs.auction?.company === c.id || obs.auctionQueue.some((r) => r.company === c.id)) continue;
-      if (obs.elapsed < obs.auctionCooldownUntil[c.id]) continue;
+      if (obs.sales.some((x) => x.company === c.id)) continue;
+      if (obs.elapsed < obs.saleCooldownUntil[c.id]) continue;
+      const rivalMin = Math.max(cfg.minRaise, obs.minPrice[c.id]);
       const pay = this.shareValue(obs, c.id, rivalMin) * factor;
       const bid = Math.max(rivalMin, Math.floor(0.6 * pay));
       if (pay < rivalMin || bid > available) continue;
@@ -540,7 +565,41 @@ export class Bot {
     if (!best) return null;
     this.lastBuyIn = obs.elapsed;
     this.buyInBid.set(best.company, best.bid);
-    return { type: 'startAuction', company: best.company };
+    this.startedAt.set(best.company, obs.elapsed);
+    return { type: 'startSale', company: best.company };
+  }
+
+  // ---------------------------------------------------------------- trading shares
+
+  /**
+   * Once a look: sell a share when someone pays more for it than it will still earn (the company's
+   * buy-back price, or a player's standing bid), or buy at a player's ask that's a bargain.
+   * A president keeps the shares it needs to stay president until the last minute.
+   */
+  private trade(obs: Observation): Action | null {
+    const me = obs.players[this.me];
+    for (const c of obs.companies) {
+      const mine = c.shares.filter((s) => s === this.me).length;
+      const book = obs.books[c.id];
+      if (mine > 0) {
+        const counts = new Map<number, number>();
+        for (const s of c.shares) if (s !== null && s !== this.me) counts.set(s, (counts.get(s) ?? 0) + 1);
+        const rival = Math.max(0, ...counts.values());
+        const keepControl = c.presidents.includes(this.me) && mine - 1 < rival && this.minutesLeft(obs) > 1;
+        if (!keepControl) {
+          const hold = this.shareValue(obs, c.id, 0, false, false);
+          const company = obs.companyBid[c.id];
+          const player = book.bid && book.bid.player !== this.me ? book.bid.price : null;
+          if (company !== null && company >= hold && (player === null || company >= player)) return { type: 'sell', company: c.id, to: 'company' };
+          if (player !== null && player >= hold * 1.05) return { type: 'sell', company: c.id, to: 'bid' };
+        }
+      }
+      if (book.ask && book.ask.player !== this.me && book.ask.price <= (me.cash - me.held) * this.personality.maxCashPerBid) {
+        const value = this.shareValue(obs, c.id, 0);
+        if (book.ask.price <= value * this.personality.greed * 0.9) return { type: 'buy', company: c.id };
+      }
+    }
+    return null;
   }
 
   // ---------------------------------------------------------------- location investment
