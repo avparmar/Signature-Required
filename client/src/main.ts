@@ -584,7 +584,7 @@ function refreshCompanies(obs: Observation) {
     const pinned = pinnedCards.has(c.id);
     const pinBtn = `<button class="pin${pinned ? ' on' : ''}" data-pin="${c.id}" title="${pinned ? 'Unpin: fold this card back down' : 'Pin this card open'}">${pinned ? 'Unpin' : 'Pin'}</button>`;
     // Open, the card has a top row (Pin and treasury) so the name gets its own line, with its ticker.
-    let html = `<div class="row head-open"><span>${pinBtn}</span><span title="Treasury">Treasury <b>${money(c.treasury)}</b></span></div>`;
+    let html = `<div class="row head-open"><span>${pinBtn}</span><span class="treasury-box" title="The company's treasury: what it has to spend on trucks and factories, and to buy shares back"><span class="lbl">Treasury</span> <b>${money(c.treasury)}</b></span></div>`;
     html += `<div class="row head"><span>${sw(c.id)}<b>${coName(c.id)}</b> <span class="ticker">${COMPANY_NAMES[companySlot(c.id)][1]}</span></span><span class="treasury" title="Treasury">${money(c.treasury)}</span></div>`;
     let saleBtn = '';
     if (acting && obs.phase === 'running' && own && !sale && c.presidents.length) {
