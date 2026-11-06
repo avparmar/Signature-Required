@@ -386,30 +386,41 @@ export class Renderer {
         ctx.lineWidth = 1.5;
         if (owner === undefined) {
           const price = hl.buyFor !== null ? obs.depotPrices[l.id]?.[hl.buyFor] : undefined;
-          ctx.fillStyle = price !== undefined ? '#fff6d6' : '#ffffff';
+          // An empty factory: the same building as an owned one, in plain grey with a dashed outline.
+          ctx.fillStyle = price !== undefined ? '#f3e6b8' : '#e2ddd2';
           ctx.strokeStyle = price !== undefined ? '#b08a1e' : '#9a9283';
           ctx.setLineDash([3, 3]);
           roundRect(ctx, x - s, y - s, 2 * s, 2 * s, 3);
           ctx.fill();
           ctx.stroke();
           ctx.setLineDash([]);
+          // Its garage door, which holds the subsidy meter.
+          const door = { left: x - s * 0.72, top: y - s * 0.3, w: s * 1.44, h: s * 1.08 };
+          ctx.fillStyle = 'rgba(255,255,255,0.9)';
+          ctx.fillRect(door.left, door.top, door.w, door.h);
+          ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(door.left + 0.5, door.top + 0.5, door.w - 1, door.h - 1);
           if (price !== undefined) label(ctx, `$${price}`, x, y - s - 7, '#7a5d10');
-          // Subsidy meters: inside the site, one column per company serving the area, in company
-          // order, each filled with its progress towards the full discount (each company earns its own,
+          // Subsidy meters: in the door, one column for each of the (up to three) companies furthest
+          // along here, in company order, each filled with its progress towards the full discount (each company earns its own,
           // so nothing overlaps). A full column carries a star. A column blinks when one of that
           // company's pickups or deliveries lands in the zone.
           const prices = obs.depotPrices[l.id];
           if (prices && hl.meterFor.length) {
             const cols = hl.meterFor
               .map((c) => ({ c, frac: Math.max(0, Math.min(1, (1 - prices[c] / hl.siteBase) / hl.maxSubsidy)) }))
-              .filter((m) => m.frac > 0);
+              .filter((m) => m.frac > 0)
+              .sort((a, b) => b.frac - a.frac || a.c - b.c)
+              .slice(0, 3)
+              .sort((a, b) => a.c - b.c);
             if (cols.length) {
-              const pad = Math.max(2, s * 0.18);
+              const pad = Math.max(1.5, s * 0.1);
               const gap = Math.max(1.5, s * 0.08);
-              const left = x - s + pad;
-              const bottom = y + s - pad;
-              const full = 2 * (s - pad);
-              const w = (full - gap * (cols.length - 1)) / cols.length;
+              const bottom = door.top + door.h - pad;
+              const full = door.h - 2 * pad;
+              const w = (door.w - 2 * pad - gap * 2) / 3; // always three slots, so columns keep their width
+              const left = door.left + pad + ((3 - cols.length) * (w + gap)) / 2; // centred
               const flashes = hl.flash.get(l.id);
               cols.forEach(({ c, frac }, k) => {
                 const cx = left + k * (w + gap);
@@ -428,7 +439,7 @@ export class Renderer {
                 ctx.lineWidth = 1;
                 ctx.strokeRect(cx + 0.5, bottom - full * frac + 0.5, Math.max(0, w - 1), Math.max(0, full * frac - 1));
                 if (frac >= 1) {
-                  const size = Math.min(w * 0.9, full * 0.5);
+                  const size = Math.min(w * 0.95, full * 0.6);
                   if (size >= 5) {
                     ctx.fillStyle = '#ffffff';
                     ctx.font = `${Math.round(size)}px system-ui, sans-serif`;
