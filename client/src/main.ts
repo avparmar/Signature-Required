@@ -427,19 +427,23 @@ function refreshAuction(obs: Observation) {
     if (document.activeElement !== input && (fresh || !(Number(input.value) >= min))) input.value = String(min);
     const spendable = me.cash - me.held;
     $<HTMLButtonElement>('bid-go').disabled = Number(input.value) > spendable;
-    $<HTMLButtonElement>('bid-down').disabled = Number(input.value) - 5 < min;
-    $<HTMLButtonElement>('bid-up').disabled = Number(input.value) + 5 > spendable;
+    $<HTMLButtonElement>('bid-down').disabled = Number(input.value) <= min;
+    $<HTMLButtonElement>('bid-up').disabled = Math.floor(Number(input.value) / 5) * 5 + 5 > spendable;
   }
 }
 
 $('bid-down').addEventListener('click', () => {
   const input = $<HTMLInputElement>('bid-amount');
-  input.value = String(Math.max(Number(input.min), Math.floor(Number(input.value)) - 5));
+  // Down to the previous multiple of 5, but never below the minimum bid.
+  const v = Math.floor(Number(input.value));
+  input.value = String(Math.max(Number(input.min), Math.ceil(v / 5) * 5 - 5));
   refreshAuction(session.obs());
 });
 $('bid-up').addEventListener('click', () => {
   const input = $<HTMLInputElement>('bid-amount');
-  input.value = String(Math.floor(Number(input.value) || Number(input.min)) + 5);
+  // Up to the next multiple of 5 ($33 -> $35 -> $40), so round amounts are a click away.
+  const v = Math.floor(Number(input.value) || Number(input.min));
+  input.value = String(Math.floor(v / 5) * 5 + 5);
   refreshAuction(session.obs());
 });
 
