@@ -9,7 +9,7 @@
  */
 import { generateTown, makeGameConfig, type GameConfigOverrides, type MoneyConfig } from '@sr/core';
 import { PERSONALITIES, type BotPersonality } from './bot.js';
-import { runGame, type GameResult } from './runner.js';
+import { defaultTable, runGame, type GameResult } from './runner.js';
 
 const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 
@@ -358,24 +358,48 @@ if (which === 'final') {
         `| ${pot === 1 ? '100% (today)' : `${pot * 100}%`} | ${bonus ? '10% of assets' : 'None'} | ${per.map((x) => x.toFixed(0)).join(' / ')} | $${paid.toFixed(0)} | $${price.toFixed(0)} | ${(paid / price).toFixed(1)}× | ${avg(rs.map((r) => avg(r.companies.map((c) => c.trucks)))).toFixed(1)} | ${avg(rs.map((r) => r.lateBuys.count)).toFixed(1)} / $${avg(rs.map((r) => r.lateBuys.spent)).toFixed(0)} | ${avg(rs.map((r) => r.delivered)).toFixed(0)} | ${avg(rs.map((r) => r.closed)).toFixed(0)} |`,
       );
     }
-} else if (which === 'servicing') {
-  // Truck wear, servicing and breakdowns (#53): does distance from your depots start to matter?
-  console.log(`\nservicing experiment (${games} games per variant)\n`);
-  console.log('| Rules | Breakdowns | Services | Repairs | Pallets delivered | Trucks per company | Depots bought | Depot→producer distance (blocks) | Contested locations | Handovers | Avg paid per share | Closures |');
-  console.log('|---|---|---|---|---|---|---|---|---|---|---|---|');
+} else if (which === 'viadepot') {
+  // Routes through the factory: direct, every load processed at the factory (loaded leg), or the
+  // factory on both legs (hub).
+  console.log(`\nviadepot experiment (${games} games per variant)\n`);
+  console.log('| Rules | Pallets delivered | Trucks per company | Depots bought | Depot→producer distance (blocks) | Contested locations | Handovers | Producers shared | Avg paid per share | Avg auction price | Closures |');
+  console.log('|---|---|---|---|---|---|---|---|---|---|---|');
+  const oldPrices: GameConfigOverrides = { money: { palletPrice: 2, premiumPrice: 3 }, depots: { truckPrice: 15 } };
   const variants: [string, GameConfigOverrides][] = [
-    ['No wear (before)', { trucks: { wearNear: 0, wearFar: 0 } }],
-    ['Wear and servicing, no breakdowns', { trucks: { breakdowns: false } }],
-    ['Wear, servicing and breakdowns (new default)', {}],
-    ['Default, tighter leash (4 blocks)', { trucks: { leashBlocks: 4 } }],
-    ['Default, harsh: far wear ×2, breakdowns ×2', { trucks: { wearFar: 0.03, breakdownRate: 0.03 } }],
-    ['Default + 1 river', { town: { rivers: 1 } }],
+    ['Direct, old prices ($2 / $3 pallets, $15 trucks)', { ...oldPrices, trucks: { viaDepot: 'none' } }],
+    ['Through the factory, old prices', oldPrices],
+    ['Through the factory, new prices ($2.40 / $3.60, $12 trucks) (default)', {}],
+    ['Hub, new prices', { trucks: { viaDepot: 'hub' } }],
   ];
   for (const [label, o] of variants) {
     const rs = Array.from({ length: games }, (_, i) => runGame({ ...o, seed: 1 + i }));
     const pct = (x: number) => `${(100 * x).toFixed(0)}%`;
     console.log(
-      `| ${label} | ${avg(rs.map((r) => r.wear.breakdowns)).toFixed(0)} | ${avg(rs.map((r) => r.wear.services)).toFixed(0)} | ${avg(rs.map((r) => r.wear.repairs)).toFixed(0)} | ${avg(rs.map((r) => r.delivered)).toFixed(0)} | ${avg(rs.map((r) => avg(r.companies.map((c) => c.trucks)))).toFixed(1)} | ${avg(rs.map((r) => r.depotBuys.count)).toFixed(1)} | ${avg(rs.map((r) => r.territory.avgReach)).toFixed(1)} | ${pct(avg(rs.map((r) => r.territory.contestedShare)))} | ${(100 * avg(rs.map((r) => r.territory.handoverRate))).toFixed(1)}% | $${avg(rs.map((r) => avg(r.companies.map((c) => c.paidPerShare)))).toFixed(0)} | ${avg(rs.map((r) => r.closed)).toFixed(0)} |`,
+      `| ${label} | ${avg(rs.map((r) => r.delivered)).toFixed(0)} | ${avg(rs.map((r) => avg(r.companies.map((c) => c.trucks)))).toFixed(1)} | ${avg(rs.map((r) => r.depotBuys.count)).toFixed(1)} | ${avg(rs.map((r) => r.territory.avgReach)).toFixed(1)} | ${pct(avg(rs.map((r) => r.territory.contestedShare)))} | ${(100 * avg(rs.map((r) => r.territory.handoverRate))).toFixed(1)}% | ${avg(rs.map((r) => r.sharing.producers)).toFixed(1)} | $${avg(rs.map((r) => avg(r.companies.map((c) => c.paidPerShare)))).toFixed(0)} | $${avg(rs.map((r) => avg(r.companies.filter((c) => c.avgPrice > 0).map((c) => c.avgPrice)))).toFixed(0)} | ${avg(rs.map((r) => r.closed)).toFixed(0)} |`,
+    );
+  }
+} else if (which === 'tables') {
+  // Who's at the table: does every company get funded? An idle seat stands in for a human who
+  // hasn't bid yet (the client's situation); a starting treasury is the proposed fix.
+  console.log(`\ntables experiment (${games} games per variant)\n`);
+  console.log('| Table | Starting treasury | Companies stuck with no trucks | Opening shares sold for ≤$2 | Avg opening price | Trucks per company | Avg paid per share |');
+  console.log('|---|---|---|---|---|---|---|');
+  const idle: BotPersonality = { greed: 0, maxCashPerBid: 0, controlBonus: 0, investReserve: 1e9 };
+  const S = PERSONALITIES.speculator;
+  const B = PERSONALITIES.balanced;
+  const rows: [string, BotPersonality[], number][] = [
+    ['Speculator + 3 balanced (default)', defaultTable(4), 0],
+    ['Idle seat + speculator + 2 balanced (client)', [idle, S, B, B], 0],
+    ['4 speculators', [S, S, S, S], 0],
+    ['Idle seat + 3 speculators', [idle, S, S, S], 0],
+    ['Speculator + 3 balanced (default)', defaultTable(4), 24],
+    ['Idle seat + speculator + 2 balanced (client)', [idle, S, B, B], 24],
+  ];
+  for (const [label, table, start] of rows) {
+    const rs = Array.from({ length: games }, (_, i) => runGame({ seed: 1 + i, startingTreasury: start }, table));
+    const open = rs.map((r) => r.auctions.filter((a) => a.opening).map((a) => a.amount));
+    console.log(
+      `| ${label} | $${start} | ${avg(rs.map((r) => r.companies.filter((c) => c.trucks === 0).length)).toFixed(2)} | ${avg(open.map((o) => o.filter((x) => x <= 2).length)).toFixed(1)} | $${avg(open.flat()).toFixed(0)} | ${avg(rs.map((r) => avg(r.companies.map((c) => c.trucks)))).toFixed(1)} | $${avg(rs.map((r) => avg(r.companies.map((c) => c.paidPerShare)))).toFixed(0)} |`,
     );
   }
 } else if (which === 'invest') {
@@ -448,5 +472,5 @@ if (which === 'final') {
       );
     }
 } else {
-  console.log('usage: npm run experiments -- final|income|shortlist|scale|map|split|sar|depots|speculator|world|bays|invest|grace|fairness|rivers|loading|depots2|dividends|servicing [games]');
+  console.log('usage: npm run experiments -- final|income|shortlist|scale|map|split|sar|depots|speculator|world|bays|invest|grace|fairness|rivers|loading|depots2|dividends|viadepot|tables [games]');
 }

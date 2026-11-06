@@ -97,6 +97,26 @@ describe('buying', () => {
     expect(g.trucks.trucks[0]).toMatchObject({ company: 0, depot: home.id, node: home.node });
   });
 
+  it('pools trucks across the company: each factory adds to the limit, and any free truck can run any route', () => {
+    const { g, home } = setup({ capacity: 2, pricing: 'distance', depotBase: 80 });
+    const site = g.town.locations.find((l) => l.kind === 'depot' && l.startCompany === null)!;
+    g.companies[0].treasury = 1000;
+    g.act(0, { type: 'buyDepot', company: 0, site: site.id });
+    for (let i = 0; i < 5; i++) g.act(0, { type: 'buyTruck', company: 0, depot: home.id });
+    g.step();
+    expect(g.trucksOf(0)).toBe(4); // two factories x 2
+    expect(g.trucksAt(home.id)).toBe(4); // all bought at home
+    // A route from the new factory takes a free truck from home, which now belongs there.
+    const p = g.town.locations.find((l) => l.kind === 'producer')!;
+    const c = g.town.locations.find((l) => l.kind === 'consumer' && l.good === p.good)!;
+    g.act(0, { type: 'assignRoute', depot: site.id, producer: p.id, consumer: c.id });
+    g.step();
+    expect(g.routes()).toHaveLength(1);
+    const t = g.trucks.trucks.find((x) => x.route !== null)!;
+    expect(t.depot).toBe(site.id);
+    expect(t.home).toBe(site.node);
+  });
+
   it("can't buy without the money, the presidency, or the depot", () => {
     const { g, home } = setup();
     g.companies[0].treasury = 10;

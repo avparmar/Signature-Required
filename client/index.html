@@ -49,6 +49,14 @@
         <section class="panel" id="auction-panel">
           <h2>Auction</h2>
           <div id="auction"></div>
+          <form id="bid-custom" hidden>
+            <button id="bid-down" type="button" title="Down to the previous $5">−5</button>
+            <button id="bid-down1" type="button" title="$1 less">−1</button>
+            <span class="amount">$<input id="bid-amount" type="number" min="0" step="1" inputmode="numeric" /></span>
+            <button id="bid-up1" type="button" title="$1 more">+1</button>
+            <button id="bid-up" type="button" title="Up to the next $5">+5</button>
+            <button id="bid-go" type="submit">Bid</button>
+          </form>
         </section>
         <section class="panel">
           <h2>Your companies</h2>

@@ -189,8 +189,6 @@ export class Game {
   private events: GameEvent[][];
   /** Game-time randomness (separate from the town generator, so map and play don't interfere). */
   readonly rng: Rng;
-  /** Separate stream for breakdowns, so switching them off leaves everything else unchanged. */
-  private readonly breakdownRng: Rng;
 
   constructor(cfg: GameConfig) {
     this.cfg = cfg;
@@ -198,7 +196,6 @@ export class Game {
     if (cfg.companies < cfg.players) throw new Error('need at least one company per player');
     this.town = generateTown(cfg.town);
     this.rng = new Rng(cfg.seed * 2654435761 + 17);
-    this.breakdownRng = new Rng(cfg.seed * 40503 + 29);
     this.players = Array.from({ length: cfg.players }, (_, id) => ({ id, cash: cfg.startingCash, held: 0 }));
     // Every company starts fully owned by the bank, with an empty treasury: shares are sold at
     // auction (pre-game, then during play), and that money is what gets companies going.
@@ -231,8 +228,6 @@ export class Game {
         }
         this.emit('all', e);
       },
-      (company, node) => this.nearestDepot(company, node),
-      () => this.breakdownRng.next(),
     );
     this.events = Array.from({ length: cfg.players }, () => []);
     this.auctionCooldownUntil = this.companies.map(() => 0);
@@ -315,9 +310,19 @@ export class Game {
         if (p.good !== c.good) return reject(`${this.cfg.town.goods[p.good!]} can't be sold at a ${this.cfg.town.goods[c.good!]} consumer`);
         const key = routeKey(action.depot, action.producer, action.consumer);
         if (action.type === 'assignRoute') {
-          const free = this.trucks.trucks.find((t) => t.depot === action.depot && t.orders.length === 0 && t.cargo === null);
-          if (!free) return reject('no free truck at that depot (buy one, or take one off another route)');
-          this.trucks.setOrders(free, [{ location: action.producer, action: 'load' }, { location: action.consumer, action: 'unload' }], this.t);
+          // Trucks are a company-wide pool: send the free truck nearest the route's factory.
+          const d = this.siteDist(action.depot);
+          const free = this.trucks.trucks
+            .filter((t) => t.company === company && t.orders.length === 0 && t.cargo === null)
+            .sort((a, b) => d[a.node] - d[b.node] || a.id - b.id)[0];
+          if (!free) return reject('no free truck (buy one, or take one off another route)');
+          free.depot = action.depot;
+          free.home = this.town.locations[action.depot].node;
+          const load = { location: action.producer, action: 'load' as const };
+          const unload = { location: action.consumer, action: 'unload' as const };
+          const sign = { location: action.depot, action: 'signOff' as const };
+          const via = this.cfg.trucks.viaDepot;
+          this.trucks.setOrders(free, via === 'hub' ? [load, sign, unload, sign] : via === 'loaded' ? [load, sign, unload] : [load, unload], this.t);
           free.route = key;
         } else {
           const onRoute = this.trucks.trucks.filter((t) => t.route === key);
@@ -335,7 +340,8 @@ export class Game {
         if (!c) return reject(`no company ${action.company}`);
         if (!this.presidents(c.id).includes(player)) return reject('only a president can spend company money');
         if (this.depotOwner.get(action.depot) !== c.id) return reject('that depot belongs to someone else (or nobody)');
-        if (this.trucksAt(action.depot) >= this.cfg.depots.capacity) return reject('that depot is full');
+        if (this.trucksOf(c.id) >= this.truckLimit(c.id))
+          return reject(`the fleet is full (${this.cfg.depots.capacity} trucks per factory): buy another factory`);
         const price = this.cfg.depots.truckPrice;
         if (c.treasury < price) return reject(`the treasury has $${c.treasury.toFixed(2)}; a truck costs $${price}`);
         c.treasury -= price;
@@ -586,9 +592,19 @@ export class Game {
     this.emit('all', { type: 'opened', t: this.t, location: loc.id, kind: choice.kind, good: choice.good });
   }
 
-  /** Trucks based at a depot site. */
+  /** Trucks based at a depot site (where they wait when free). */
   trucksAt(site: number): number {
     return this.trucks.trucks.filter((t) => t.depot === site).length;
+  }
+
+  /** A company's trucks. */
+  trucksOf(company: number): number {
+    return this.trucks.trucks.filter((t) => t.company === company).length;
+  }
+
+  /** How many trucks a company may own: each of its factories adds `capacity`. */
+  truckLimit(company: number): number {
+    return this.depotsOf(company).length * this.cfg.depots.capacity;
   }
 
   /** Depot sites a company owns. */

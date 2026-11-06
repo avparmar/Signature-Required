@@ -260,7 +260,15 @@ export class Bot {
         const dp = distancesFrom(this.town.graph, p.node);
         for (const q of this.town.locations) {
           if (q.kind !== 'consumer' || q.good !== p.good || !near(q)) continue;
-          routes.push({ depot: depot.id, producer: p.id, consumer: q.id, length: d[p.node] + 2 * dp[q.node] });
+          // Length of one round trip, as the truck will drive it.
+          const via = this.cfg.trucks.viaDepot;
+          const length =
+            via === 'hub'
+              ? 2 * (d[p.node] + d[q.node])
+              : via === 'loaded'
+                ? d[p.node] + d[q.node] + dp[q.node]
+                : d[p.node] + 2 * dp[q.node];
+          routes.push({ depot: depot.id, producer: p.id, consumer: q.id, length });
         }
       }
     }
@@ -310,8 +318,11 @@ export class Bot {
 
     // Buy a truck if there's money, room and a worthwhile route (one per think).
     const myDepots = Object.entries(obs.depots).filter(([, o]) => o === company).map(([s]) => Number(s));
+    // Trucks are a company-wide pool (each factory adds `capacity`); new ones start at the factory
+    // with the fewest trucks based there.
     const perDepot = (s: number) => obs.trucks.filter((t) => t.depot === s).length;
-    const spare = myDepots.find((s) => perDepot(s) < cfg.capacity);
+    const fleet = obs.trucks.filter((t) => t.company === company).length;
+    const spare = fleet < myDepots.length * cfg.capacity ? [...myDepots].sort((a, b) => perDepot(a) - perDepot(b))[0] : undefined;
     const worthIt = this.minutesLeft(obs) > 4 && this.pickRoute(obs, company, load) !== null;
     if (spare !== undefined && c.treasury >= cfg.truckPrice && worthIt) {
       out.push({ type: 'buyTruck', company, depot: spare });

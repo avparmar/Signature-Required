@@ -48,7 +48,17 @@ export interface TownConfig {
   suburbLoops: number;
   /** Share of blocks that get a diagonal street. */
   diagonalFrac: number;
+  /**
+   * The goods, by what shops sell: each producer yields its raw material (`raws`), a company's
+   * factory turns it into the product (`goods`), and consumers (`shops`) buy it.
+   */
   goods: string[];
+  /** Raw material for each good, as it leaves the producer. */
+  raws: string[];
+  /** What a producer of each good is called. */
+  sources: string[];
+  /** What a consumer of each good is called. */
+  shops: string[];
   producersPerGood: [number, number];
   consumersPerGood: [number, number];
   bays: number;
@@ -83,7 +93,10 @@ export const DEFAULT_TOWN: TownConfig = {
   suburbExits: [1, 2],
   suburbLoops: 0.08,
   diagonalFrac: 0.04,
-  goods: ['milk', 'bread', 'fuel'],
+  goods: ['furniture', 'bread', 'fuel'],
+  raws: ['timber', 'wheat', 'crude oil'],
+  sources: ['sawmill', 'farm', 'oil well'],
+  shops: ['furniture store', 'bakery', 'gas station'],
   producersPerGood: [4, 5],
   consumersPerGood: [7, 11],
   bays: 2,
