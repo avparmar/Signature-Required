@@ -117,6 +117,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #bid-go { background: var(--ink) !important; color: #fff !important; border-color: var(--ink) !important; padding: 5px 16px !important; }
 .chips { display: flex; flex-wrap: wrap; gap: 3px; margin: 4px 0 2px; }
 .chip { font-size: 11px; font-weight: 700; padding: 1px 6px; border-radius: 999px; background: #e8e2d4; color: var(--ink); border: 1.5px solid transparent; }
+.chips .mini { margin-left: auto; font-size: 11px; padding: 1px 8px; line-height: 1.4; }
 .chip.you { background: var(--ink); color: #fff; }
 .chip.pres { border-color: #c99a1a; }
 .chip.bank { background: transparent; color: var(--muted); border: 1.5px dashed #cfc7b6; font-weight: 500; }

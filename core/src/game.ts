@@ -82,7 +82,7 @@ export type Action =
    * Put a share up for auction: a bank-held share (presidents only), or, once all of a company's
    * shares are out, one of your own. Queues if another auction is running.
    */
-  | { type: 'startAuction'; company: number; bid?: number };
+  | { type: 'startAuction'; company: number };
 
 export interface QueuedAction {
   player: number;
@@ -420,27 +420,15 @@ export class Game {
         const c = this.companies[action.company];
         if (!c) return reject(`no company ${action.company}`);
         let seller: number | null;
-        const bid = action.bid;
-        if (bid !== undefined && !(bid >= 0)) return reject('that bid is not a number');
-        if (c.shares.some((s) => s === null)) {
-          // Anyone may put up a bank share; someone who doesn't lead the company opens the bidding.
-          const rivalMin = Math.max(this.cfg.auctions.openingBid, this.cfg.auctions.rivalOpeningBid);
-          if (!this.presidents(c.id).includes(player) && !(bid !== undefined && bid >= rivalMin))
-            return reject(`to put up a share of a company you don't lead, open the bidding at $${rivalMin} or more`);
-          seller = null;
-        } else if (c.shares.includes(player)) {
-          seller = player;
-          if (bid !== undefined) return reject("you can't bid on your own share");
-        } else return reject("all shares are out and you don't own any to sell");
-        if (bid !== undefined) {
-          const p = this.players[player];
-          if (p.cash - p.held < bid) return reject(`you only have $${(p.cash - p.held).toFixed(2)} to bid with`);
-        }
+        // Anyone may put up one of a company's bank-held shares, president or not.
+        if (c.shares.some((s) => s === null)) seller = null;
+        else if (c.shares.includes(player)) seller = player;
+        else return reject("all shares are out and you don't own any to sell");
         if (this.elapsed < this.auctionCooldownUntil[c.id] - 1e-9)
           return reject(`${this.lastAuctionSold[c.id] ? 'a share sold recently' : 'no bids last time'}; try again in ${Math.ceil(this.auctionCooldownUntil[c.id] - this.elapsed)}s`);
         if ((this.auction && this.auction.company === c.id) || this.auctionQueue.some((r) => r.company === c.id))
           return reject('this company already has an auction running or waiting');
-        this.auctionQueue.push({ company: c.id, seller, startedBy: player, ...(bid !== undefined ? { bid } : {}) });
+        this.auctionQueue.push({ company: c.id, seller, startedBy: player });
         if (this.auction) this.emit('all', { type: 'auctionQueued', t: this.t, company: c.id, position: this.auctionQueue.length });
         break;
       }
@@ -497,14 +485,7 @@ export class Game {
         if (unowned && !waiting && this.elapsed >= this.auctionCooldownUntil[c.id] - 1e-9)
           this.auctionQueue.push({ company: c.id, seller: null, startedBy: 'bank' });
       }
-      // A starter who can no longer cover their opening bid loses their place (no cooldown).
-      while ((next = this.auctionQueue.shift())) {
-        if (next.bid === undefined || typeof next.startedBy !== 'number') break;
-        const p = this.players[next.startedBy];
-        if (p.cash - p.held >= next.bid) break;
-        const action: Action = { type: 'startAuction', company: next.company, bid: next.bid };
-        this.emit(next.startedBy, { type: 'rejected', t: this.t, action, reason: `you no longer have $${next.bid} for your opening bid` });
-      }
+      next = this.auctionQueue.shift();
     }
     if (!next) return;
     const opening = this.phase === 'opening';
@@ -518,13 +499,6 @@ export class Game {
       passed: [],
     };
     this.emit('all', { type: 'auctionStart', t: this.t, company: next.company, seller: next.seller, opening, timeLeft: this.auction.timeLeft });
-    if (next.bid !== undefined && typeof next.startedBy === 'number') {
-      const p = this.players[next.startedBy];
-      p.held += next.bid;
-      this.auction.highBid = next.bid;
-      this.auction.highBidder = next.startedBy;
-      this.emit('all', { type: 'bid', t: this.t, company: next.company, player: next.startedBy, amount: next.bid, timeLeft: this.auction.timeLeft });
-    }
   }
 
   private settleAuction() {

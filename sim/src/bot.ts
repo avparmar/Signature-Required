@@ -101,6 +101,8 @@ export class Bot {
   private lastThink = -Infinity;
   private lastInvest = -Infinity;
   private lastBuyIn = -Infinity;
+  /** Auctions it started to buy into a company, and the opening bid it means to make. */
+  private buyInBid = new Map<number, number>();
   /** Deliveries per company in the last few minutes (from events). */
   private recent: { t: number; company: number; price: number }[] = [];
 
@@ -128,6 +130,8 @@ export class Bot {
     // A share sale it started is over: forget the price it meant to pay.
     for (const c of [...this.raiseFloor.keys()])
       if (obs.auction?.company !== c && !obs.auctionQueue.some((r) => r.company === c)) this.raiseFloor.delete(c);
+    for (const c of [...this.buyInBid.keys()])
+      if (obs.auction?.company !== c && !obs.auctionQueue.some((r) => r.company === c)) this.buyInBid.delete(c);
     const out: Action[] = [];
     const bid = this.bid(obs);
     if (bid) out.push(bid);
@@ -309,6 +313,12 @@ export class Bot {
     const me0 = obs.players[this.me];
     const min0 = minimumBid(a, this.cfg.auctions);
     if (floor !== undefined && min0 <= floor && min0 <= me0.cash - me0.held) return { type: 'bid', company: a.company, amount: min0 };
+    // An auction it started to buy in: open with the bid it planned.
+    const open = this.buyInBid.get(a.company);
+    if (open !== undefined && a.highBidder === null && a.seller === null) {
+      this.buyInBid.delete(a.company);
+      if (open >= min0 && open <= me0.cash - me0.held) return { type: 'bid', company: a.company, amount: open };
+    }
     if (this.personality.speculator) return this.speculatorBid(obs);
     if (this.personality.controller) return this.controllerBid(obs);
     return this.plainBid(obs);
@@ -505,13 +515,13 @@ export class Bot {
 
   /**
    * Buying into a company it doesn't lead: when one still has bank shares that look worth more
-   * than they'd cost, put one up itself by opening the bidding (rivals have to, presidents don't).
-   * It opens low, at about 60% of what it would pay, and bids on from there like anyone else.
+   * than they'd cost, put one up for auction itself. It opens the bidding low, at about 60% of
+   * what it would pay (so the share doesn't go for nothing), and bids on from there like anyone else.
    */
   private buyIn(obs: Observation): Action | null {
     if (obs.elapsed - this.lastBuyIn < 20 || obs.auction?.highBidder === this.me) return null;
     const cfg = this.cfg.auctions;
-    const rivalMin = Math.max(cfg.openingBid, cfg.rivalOpeningBid);
+    const rivalMin = Math.max(cfg.openingBid, cfg.minRaise);
     const me = obs.players[this.me];
     const available = (me.cash - me.held) * this.personality.maxCashPerBid;
     if (available < rivalMin) return null;
@@ -529,7 +539,8 @@ export class Bot {
     }
     if (!best) return null;
     this.lastBuyIn = obs.elapsed;
-    return { type: 'startAuction', company: best.company, bid: best.bid };
+    this.buyInBid.set(best.company, best.bid);
+    return { type: 'startAuction', company: best.company };
   }
 
   // ---------------------------------------------------------------- location investment

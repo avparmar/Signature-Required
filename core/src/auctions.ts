@@ -2,9 +2,9 @@
  * Share auctions.
  *
  * - Opening round, before the game clock starts: one share of each company, one company at a time.
- * - During play, a company's president can put up one of its bank-held shares. Anyone else can
- *   too, by opening the bidding themselves (at least `rivalOpeningBid`), so a rival can force a
- *   share onto the market and the president has to outbid them to keep it. Once all of a
+ * - During play, anyone can put up one of a company's bank-held shares, not just its president,
+ *   so a rival can bring a share to market and the president has to outbid them to keep
+ *   control. Once all of a
  *   company's shares are out, a shareholder may put up one of their own (the money still goes
  *   to the company). A company nobody owns is re-offered by the bank after a cooldown.
  * - One auction at a time; requests queue, one per company.
@@ -36,8 +36,6 @@ export interface AuctionConfig {
   saleCooldownSec: number;
   /** No auction runs longer than this in all (seconds), however late the bids come. */
   maxSec: number;
-  /** Lowest opening bid for a player who puts up a bank share of a company they don't lead. */
-  rivalOpeningBid: number;
 }
 
 export const DEFAULT_AUCTIONS: AuctionConfig = {
@@ -49,7 +47,6 @@ export const DEFAULT_AUCTIONS: AuctionConfig = {
   minRaise: 2,
   noBidCooldownSec: 60,
   saleCooldownSec: 60,
-  rivalOpeningBid: 5,
   maxSec: 60,
 };
 
@@ -74,8 +71,6 @@ export interface AuctionRequest {
   company: number;
   seller: number | null;
   startedBy: number | 'bank';
-  /** The starter's own opening bid, placed when the auction starts (required of non-presidents). */
-  bid?: number;
 }
 
 export type AuctionEvent =
