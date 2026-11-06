@@ -37,6 +37,8 @@ export interface Highlights {
   picked: number[];
   /** Route being hovered (route key). */
   hoverRoute: string | null;
+  /** The route whose row in the routes list the pointer is over. */
+  listRoute: string | null;
   /** Free depot sites to highlight with this company's prices (buy-depot mode). */
   buyFor: number | null;
   /** Company being auctioned: its factories get a pulsing ring. */
@@ -352,7 +354,7 @@ export class Renderer {
     for (const [i, r] of routes.entries()) {
       const pts = lines[i];
       // Hovering a route, or the factory it runs through, highlights it.
-      const hot = hl.hoverRoute === r.key || hl.hover === r.depot;
+      const hot = hl.hoverRoute === r.key || hl.listRoute === r.key || hl.hover === r.depot;
       ctx.strokeStyle = companyColor(r.company);
       ctx.globalAlpha = hot ? 0.95 : 0.6;
       ctx.lineWidth = hot ? 3.5 : 2;
@@ -544,9 +546,20 @@ export class Renderer {
       if (picked || hovered) ring(ctx, x, y, r * 1.6, picked ? INK : '#8a8273');
     }
 
-    // Route truck counts (on top of buildings), halfway along each route.
+    // Route truck counts (on top of buildings), halfway along the longer leg of each route (so they
+    // don't pile up on the factory in the middle).
     for (const [i, rt] of routes.entries()) {
-      const m = midpoint(lines[i]);
+      const pts = lines[i];
+      const d = this.town.locations[rt.depot];
+      const dx = this.X(d.x);
+      const dy = this.Y(d.y);
+      let split = 0;
+      pts.forEach((p, k) => {
+        if (Math.hypot(p.x - dx, p.y - dy) < Math.hypot(pts[split].x - dx, pts[split].y - dy)) split = k;
+      });
+      const a = pts.slice(0, split + 1);
+      const b = pts.slice(split);
+      const m = midpoint(pathLength(a) >= pathLength(b) ? a : b);
       badge(ctx, `${rt.trucks}`, m.x, m.y, companyColor(rt.company));
     }
 
@@ -761,6 +774,12 @@ function label(ctx: CanvasRenderingContext2D, text: string, x: number, y: number
 function hexAlpha(hex: string, a: number): string {
   const n = parseInt(hex.slice(1), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+function pathLength(pts: { x: number; y: number }[]) {
+  let total = 0;
+  for (let i = 1; i < pts.length; i++) total += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+  return total;
 }
 
 function midpoint(pts: { x: number; y: number }[]) {

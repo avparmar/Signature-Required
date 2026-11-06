@@ -122,3 +122,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 .chip.bank { background: transparent; color: var(--muted); border: 1.5px dashed #cfc7b6; font-weight: 500; }
 #bid-go, #bid-pass { flex: 1 1 45%; }
 #bid-custom .amount { flex-basis: 30%; }
+
+/* A route row lights up while its route is hovered on the map (and vice versa). */
+.route-row { border-radius: 4px; margin: 0 -4px; padding: 0 4px; }
+.route-row:hover, .route-row.hot { background: #f1ecdf; }

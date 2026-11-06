@@ -56,6 +56,7 @@ const hl: Highlights = {
   hover: null,
   picked: [],
   hoverRoute: null,
+  listRoute: null,
   buyFor: null,
   spotlight: null,
   district: session.cfg.depots.districtBlocks,
@@ -574,7 +575,7 @@ function refreshMyCompanies(obs: Observation) {
       }
       if (open) for (const r of routes) {
         const p = g.town.locations[r.producer];
-        html += `<div class="row small"><span><span class="dot" style="background:${goodColor(p.good!)}"></span>${cap(names(p.good!).product)} ${at(r.producer)} → ${at(r.depot)} → ${at(r.consumer)}</span><span><button data-unroute="${r.key}">−</button> ${r.trucks} <button data-route="${r.key}" ${freeTrucks(obs, id) ? '' : 'disabled'}>+</button></span></div>`;
+        html += `<div class="row small route-row${hl.hoverRoute === r.key ? ' hot' : ''}" data-routerow="${r.key}"><span><span class="dot" style="background:${goodColor(p.good!)}"></span>${cap(names(p.good!).product)} ${at(r.producer)} → ${at(r.depot)} → ${at(r.consumer)}</span><span><button data-unroute="${r.key}">−</button> ${r.trucks} <button data-route="${r.key}" ${freeTrucks(obs, id) ? '' : 'disabled'}>+</button></span></div>`;
       }
     }
     html += '</div>';
@@ -779,6 +780,8 @@ $('btn-pause').onclick = togglePause;
 document.addEventListener('pointermove', (e) => {
   const card = (e.target as HTMLElement | null)?.closest?.('[data-cohover]') as HTMLElement | null;
   hl.cardCompany = card ? Number(card.dataset.cohover) : null;
+  const row = (e.target as HTMLElement | null)?.closest?.('[data-routerow]') as HTMLElement | null;
+  hl.listRoute = row ? row.dataset.routerow! : null;
 });
 $('btn-help').onclick = showHelp;
 $<HTMLSelectElement>('speed').onchange = (e) => (session.speed = Number((e.target as HTMLSelectElement).value));
