@@ -153,3 +153,10 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 .card .guide-nav button.go { background: var(--ink); color: #fff; }
 .card button.link { background: none; color: var(--muted); padding: 0; font-size: 13px; text-decoration: underline; }
 .guide-step .hl { background: linear-gradient(transparent 55%, #f6dd8a 55%); padding: 0 2px; font-weight: 600; }
+/* Walkthrough pages slide in from the direction you're going. */
+@keyframes guide-next { from { opacity: 0; transform: translateX(48px); } to { opacity: 1; transform: none; } }
+@keyframes guide-back { from { opacity: 0; transform: translateX(-48px); } to { opacity: 1; transform: none; } }
+.guide-step.slide-next { animation: guide-next 0.28s cubic-bezier(0.2, 0.7, 0.2, 1); }
+.guide-step.slide-back { animation: guide-back 0.28s cubic-bezier(0.2, 0.7, 0.2, 1); }
+.card.help { overflow-x: hidden; }
+@media (prefers-reduced-motion: reduce) { .guide-step.slide-next, .guide-step.slide-back { animation: none; } }

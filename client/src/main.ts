@@ -788,12 +788,14 @@ function paintGuideIcons(root: HTMLElement) {
   });
 }
 
-function showHelp(step = 0) {
+function showHelp(step = 0, from: number | null = null) {
   const ov = $('overlay');
   const base = import.meta.env.BASE_URL;
   const st = GUIDE[step];
   const last = step === GUIDE.length - 1;
-  ov.innerHTML = `<div class="card help wide"><div class="guide-step">
+  // Slide the new page in from the side you're heading towards.
+  const slide = from === null || from === step ? '' : step > from ? ' slide-next' : ' slide-back';
+  ov.innerHTML = `<div class="card help wide"><div class="guide-step${slide}">
     ${st.img ? `<div class="guide-imgs">${st.img.map((i) => `<img src="${base}guide/${i}.webp" alt="">`).join('')}</div>` : ''}
     ${st.icons ? guideIcons(st.icons) : ''}
     <h2>${step > 0 ? `${step}. ` : ''}${st.title}</h2>${st.text}
@@ -801,10 +803,12 @@ function showHelp(step = 0) {
     ${last ? '' : '<button id="btn-skip" class="link">Skip</button>'}</div></div>`;
   ov.hidden = false;
   paintGuideIcons(ov);
+  // Fetch every page's pictures up front, so they're there as the pages slide in.
+  if (from === null) for (const g of GUIDE) for (const i of g.img ?? []) new Image().src = `${base}guide/${i}.webp`;
   const wasPaused = helpWasPaused ?? session.paused;
   helpWasPaused = wasPaused;
   session.paused = true;
-  ov.querySelectorAll<HTMLElement>('[data-step]').forEach((b) => (b.onclick = () => showHelp(Number(b.dataset.step))));
+  ov.querySelectorAll<HTMLElement>('[data-step]').forEach((b) => (b.onclick = () => showHelp(Number(b.dataset.step), step)));
   const close = () => {
     ov.hidden = true;
     session.paused = wasPaused;
