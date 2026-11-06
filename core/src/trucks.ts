@@ -86,6 +86,11 @@ export interface Truck {
   at: number | null;
   /** Game time a load/unload finishes. */
   busyUntil: number;
+  /**
+   * The load or unload under way: the pallet (or the shop's order) is claimed when it starts, so
+   * no other bay takes it, but it only changes hands, and a delivery only pays, when it finishes.
+   */
+  serving: { action: 'load'; good: number } | { action: 'unload'; price: number } | null;
   /** Orders set while mid-street take effect at the next intersection. */
   pendingOrders: Stop[] | null;
   /** The route this truck is assigned to (see Game.routes), or null when free. */
@@ -148,6 +153,7 @@ export class TruckSystem {
       orderIndex: 0,
       at: null,
       busyUntil: 0,
+      serving: null,
       pendingOrders: null,
       route: null,
       home: node,
@@ -351,8 +357,7 @@ export class TruckSystem {
       const stop = truck.orders[truck.orderIndex];
       if (stop.action === 'load') {
         if (!takePallet(l)) return; // no stock: everyone waits for the next cycle
-        truck.cargo = { good: l.good, origin: l.id, processed: this.cfg.viaDepot === 'none' };
-        this.emit({ type: 'loaded', t: now, truck: id, company: truck.company, location, good: l.good });
+        truck.serving = { action: 'load', good: l.good };
       } else {
         const origin = truck.cargo ? this.loc(truck.cargo.origin) ?? null : null;
         if (!deliverPallet(l, origin)) {
@@ -360,9 +365,7 @@ export class TruckSystem {
           skip.add(id); // this truck's pallet is no use here; serve the others
           continue;
         }
-        const cargo = truck.cargo!;
-        truck.cargo = null;
-        this.emit({ type: 'delivered', t: now, truck: id, company: truck.company, location, good: cargo.good, origin: cargo.origin, price: l.price });
+        truck.serving = { action: 'unload', price: l.price };
       }
       truck.state = 'servicing';
       truck.busyUntil = now + this.cfg.serviceSec;
@@ -372,6 +375,20 @@ export class TruckSystem {
   }
 
   private finishService(truck: Truck, now: number) {
+    // The pallet changes hands now, at the end of the load or unload.
+    const done = truck.serving;
+    const location = truck.at;
+    truck.serving = null;
+    if (done && location !== null) {
+      if (done.action === 'load') {
+        truck.cargo = { good: done.good, origin: location, processed: this.cfg.viaDepot === 'none' };
+        this.emit({ type: 'loaded', t: now, truck: truck.id, company: truck.company, location, good: done.good });
+      } else if (truck.cargo) {
+        const cargo = truck.cargo;
+        truck.cargo = null;
+        this.emit({ type: 'delivered', t: now, truck: truck.id, company: truck.company, location, good: cargo.good, origin: cargo.origin, price: done.price });
+      }
+    }
     this.leaveQueue(truck);
     truck.state = 'driving'; // departForStop sets the real state
     if (truck.homing) {

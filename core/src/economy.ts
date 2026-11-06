@@ -110,8 +110,9 @@ export function newLocationState(l: Location, cfg: CycleConfig, rng: Rng, now = 
     cycleSec,
     // Random phase so the whole town doesn't tick at once; first cycle within one cycle length.
     nextCycleAt: now + rng.next() * cycleSec,
-    stock: 0,
-    demand: 0,
+    // Open for business from the start: a producer has a cycle's goods ready, a shop a cycle's order.
+    stock: l.kind === 'producer' ? cycleRate({ kind: 'producer', level: cfg.startLevel }, cfg) : 0,
+    demand: l.kind === 'consumer' ? cycleRate({ kind: 'consumer', level: cfg.startLevel }, cfg) : 0,
     cycleAmount: 0,
     served: 0,
     history: [],

@@ -193,7 +193,9 @@ export class Bot {
       : Object.values(obs.depots).filter((o) => o === company).length * this.cfg.depots.capacity;
     // The company will also raise money from its other unsold shares, at about this price.
     const unsoldAfter = Math.max(0, c.shares.filter((s) => s === null).length - 1);
-    const assumed = optimistic ? Math.max(extraCash, this.personality.speculator?.assumedSharePrice ?? 0) : extraCash;
+    // A cheap bid today doesn't mean the company stays broke: its other shares will sell too, for at
+    // least about a truck's price each (enough to get it going), whatever this one goes for.
+    const assumed = optimistic ? Math.max(extraCash, this.personality.speculator?.assumedSharePrice ?? 0) : Math.max(extraCash, this.cfg.depots.truckPrice);
     const futureRaise = unsoldAfter * assumed;
     const routes = new Set(this.routesFor(obs, company).map((r) => `${r.producer}-${r.consumer}`)).size;
     const m = this.cfg.money;

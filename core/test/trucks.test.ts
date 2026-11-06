@@ -170,16 +170,27 @@ describe('trucks on routes', () => {
     g.drainEvents(0);
     let last = -1;
     let checked = 0;
+    let loading = new Set<number>();
     for (let i = 0; i < 9000; i++) {
       const waiting = new Set(g.trucks.trucks.filter((t) => t.state === 'queued' && t.at === producer.id).map((t) => t.company));
       g.step();
-      for (const e of g.drainEvents(0)) {
-        if (e.type !== 'loaded') continue;
+      // Whose turn it was: the trucks that started loading at the producer this step.
+      const now = new Set(g.trucks.trucks.filter((t) => t.state === 'servicing' && t.at === producer.id).map((t) => t.id));
+      const started = [...now].filter((id) => !loading.has(id)).map((id) => g.trucks.trucks[id].company);
+      if (started.length === 1) {
         // A company never loads twice running while the other company had a truck waiting.
-        if (e.company === last) expect(waiting.has(1 - e.company)).toBe(false);
+        if (started[0] === last) expect(waiting.has(1 - started[0])).toBe(false);
         if (waiting.size === 2) checked++;
-        last = e.company;
+        last = started[0];
+      } else if (started.length === 2) {
+        // Both bays at once: one each, if both had trucks waiting.
+        if (waiting.size === 2) {
+          expect(new Set(started).size).toBe(2);
+          checked++;
+        }
+        last = -1;
       }
+      loading = now;
     }
     expect(checked).toBeGreaterThanOrEqual(3);
   });

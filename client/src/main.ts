@@ -565,18 +565,17 @@ function refreshCompanies(obs: Observation) {
     const order = [...holders.keys()].sort((a, b) => (a === obs.me ? -1 : b === obs.me ? 1 : holders.get(b)! - holders.get(a)! || a - b));
     const own = c.shares.filter((sh) => sh === null).length;
     const mine = holders.get(obs.me) ?? 0;
-    // Five boxes, one per share: empty while the company owns it, filled with the owner's icon once
-    // bought (you first, then the biggest holders; presidents' boxes in gold).
-    const boxes =
-      order
-        .flatMap((pl) => {
-          const pres = c.presidents.includes(pl);
-          const n = holders.get(pl)!;
-          const you = pl === obs.me && !watching;
-          const tip = `${you ? 'You' : seatName(pl)}: ${n} share${n === 1 ? '' : 's'}${pres ? ', president' : ''}`;
-          return Array.from({ length: n }, () => `<span class="share${you ? ' you' : ''}${pres ? ' pres' : ''}" title="${tip}">${seatIcon(pl)}</span>`);
-        })
-        .join('') + Array.from({ length: own }, () => '<span class="share empty" title="Owned by the company: sold in sales"></span>').join('');
+    // Five boxes, one per share, in the order they were sold (a trade swaps the icon in place):
+    // empty while the company owns it, the owner's icon once bought (presidents' in gold, yours outlined).
+    const boxes = c.shares
+      .map((pl) => {
+        if (pl === null) return '<span class="share empty" title="Owned by the company: sold in sales"></span>';
+        const pres = c.presidents.includes(pl);
+        const n = holders.get(pl)!;
+        const you = pl === obs.me && !watching;
+        return `<span class="share${you ? ' you' : ''}${pres ? ' pres' : ''}" title="${you ? 'You' : seatName(pl)}: ${n} share${n === 1 ? '' : 's'}${pres ? ', president' : ''}">${seatIcon(pl)}</span>`;
+      })
+      .join('');
     const chips = `<span class="shares">${boxes}</span>`;
     const sale = obs.sales.find((x) => x.company === c.id);
     const book = obs.books[c.id];
