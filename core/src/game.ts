@@ -634,6 +634,7 @@ export class Game {
   districtShare(company: number, site: number): number {
     const counts = this.districtCounts(site);
     const all = counts.reduce((a, b) => a + b, 0);
+    if (counts[company] < this.cfg.depots.subsidyMinPallets) return 0;
     return all ? counts[company] / all : 0;
   }
 

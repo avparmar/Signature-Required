@@ -217,12 +217,23 @@ export class Renderer {
     ctx.fillStyle = '#fbf9f4';
     ctx.fillRect(this.X(-0.3), this.Y(-0.3), (blocksX + 0.6) * this.scale, (blocksY + 0.6) * this.scale);
     // Water.
-    ctx.fillStyle = WATER;
-    for (const { i, j } of town.river) ctx.fillRect(this.X(i) - 1, this.Y(j) - 1, this.scale + 2, this.scale + 2);
-
-    // Roads.
     // Two-lane roads: wide enough for trucks to pass on either side of a centre line.
     const roadW = this.roadWidth;
+    // Water. The banks sit half a road in from the block edge, so the land on the bank lines up with
+    // the outer edge of the roads there and roads don't jut into the water.
+    ctx.fillStyle = WATER;
+    const riverSet = new Set(town.river.map(({ i, j }) => `${i},${j}`));
+    const wet = { has: (k: string) => { const [i, j] = k.split(',').map(Number); return i < 0 || j < 0 || i >= blocksX || j >= blocksY || riverSet.has(k); } };
+    const bank = roadW / 2;
+    for (const { i, j } of town.river) {
+      const l = wet.has(`${i - 1},${j}`) ? -1 : bank;
+      const r = wet.has(`${i + 1},${j}`) ? -1 : bank;
+      const t = wet.has(`${i},${j - 1}`) ? -1 : bank;
+      const btm = wet.has(`${i},${j + 1}`) ? -1 : bank;
+      ctx.fillRect(this.X(i) + l, this.Y(j) + t, this.scale - l - r, this.scale - t - btm);
+    }
+
+    // Roads.
     const bridges = new Set(town.bridges.map(([a, b]) => (a < b ? `${a}-${b}` : `${b}-${a}`)));
     ctx.lineCap = 'round';
     ctx.strokeStyle = ROAD;

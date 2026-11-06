@@ -44,8 +44,8 @@ describe('depot pricing by local subsidy', () => {
     for (let c = 0; c < g.cfg.companies; c++) expect(g.depotPriceFor(c, site.id)).toBe(g.cfg.depots.depotBase);
   });
 
-  it('gets cheaper for the company serving the district, and the discount fades when service stops', () => {
-    const { g, home } = setup({ capacity: 8 });
+  function serveNearSite(depots: Partial<DepotConfig>) {
+    const { g, home } = setup({ capacity: 8, ...depots });
     const d = distancesFrom(g.town.graph, home.node);
     // Serve the producer and consumer nearest home.
     const near = (kind: string, good?: number) =>
@@ -64,6 +64,16 @@ describe('depot pricing by local subsidy', () => {
       g.act(0, { type: 'assignRoute', depot: home.id, producer: producer.id, consumer: consumer.id });
     }
     for (let i = 0; i < 1200; i++) g.step(); // two minutes
+    return { g, home, site, producer, consumer };
+  }
+
+  it('gives no discount until a company has the minimum service in the district', () => {
+    const { g, site } = serveNearSite({ subsidyMinPallets: 10_000 });
+    expect(g.depotPriceFor(0, site.id)).toBe(g.cfg.depots.depotBase);
+  });
+
+  it('gets cheaper for the company serving the district, and the discount fades when service stops', () => {
+    const { g, home, site, producer, consumer } = serveNearSite({});
     const served = g.depotPriceFor(0, site.id);
     expect(served).toBeLessThan(g.cfg.depots.depotBase);
     expect(served).toBeGreaterThanOrEqual(subsidisedPrice(g.cfg.depots, 1));

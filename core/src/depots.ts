@@ -28,6 +28,8 @@ export interface DepotConfig {
   districtBlocks: number;
   /** Subsidy pricing: service counts towards the subsidy for this long (seconds). */
   subsidyWindowSec: number;
+  /** Subsidy pricing: a company earns no discount at a site until it has this many pallets of recent service there. */
+  subsidyMinPallets: number;
   /** Drive distance (blocks) from your nearest depot that still costs only the base price. */
   depotFreeBlocks: number;
   /** Extra price per block beyond that. */
@@ -42,6 +44,7 @@ export const DEFAULT_DEPOTS: DepotConfig = {
   maxSubsidy: 0.6,
   districtBlocks: 5,
   subsidyWindowSec: 180,
+  subsidyMinPallets: 3,
   depotFreeBlocks: 4,
   depotPerBlock: 10,
 };
