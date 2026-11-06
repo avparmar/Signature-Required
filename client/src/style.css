@@ -192,3 +192,27 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 .set-def { color: var(--muted); font-size: 12px; text-align: right; }
 .set-buttons { display: flex; gap: 8px; margin-top: 18px; }
 .card .set-buttons button.plain { background: #f0ebe0; color: var(--ink); }
+.chip.co-chip { color: #fff; text-shadow: 0 1px 1px rgba(0,0,0,0.25); }
+.chip.co-chip.pres { border-color: #23201b; }
+
+/* End of game: standings and charts */
+.card.end { max-width: 640px; width: min(640px, calc(100vw - 40px)); }
+.chart-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.card .chart-tabs button { background: #f0ebe0; color: var(--ink); padding: 5px 10px; font-size: 12px; }
+.card .chart-tabs button.on { background: var(--ink); color: #fff; }
+#end-chart { width: 100%; height: 220px; display: block; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--muted); margin: 6px 0 14px; }
+.chart-legend i { display: inline-block; width: 12px; height: 4px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
+
+/* Play online */
+.card.online { max-width: 520px; }
+.card.online h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 14px 0 6px; }
+.field { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; font-size: 13px; color: var(--muted); }
+.field input, .invite input { font: inherit; font-size: 15px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; color: var(--ink); }
+#on-code { text-transform: uppercase; letter-spacing: 0.2em; width: 110px; }
+.online-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.invite { display: flex; gap: 8px; }
+.invite input { flex: 1; font-size: 13px; }
+.lobby-list { padding-left: 22px; margin: 4px 0; }
+.lobby-list li { font-size: 14px; line-height: 1.8; }
+.card .plain { background: #f0ebe0; color: var(--ink); }

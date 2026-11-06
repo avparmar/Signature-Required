@@ -10,8 +10,10 @@
  * - Auction panel (#35): bid on the running auction; presidents can put bank-held shares up.
  */
 import { distancesFrom, makeGameConfig, minimumBid, stillBidding, type GameConfig, type GameConfigOverrides, type GameEvent, type Location, type Observation } from '@sr/core';
-import { Renderer, companyColor, coordOf, drawBusiness, drawFactory, goodColor, type Highlights } from './render.js';
+import { Renderer, companyColor, companySlot, coordOf, drawBusiness, drawFactory, goodColor, pickCompanySlots, type Highlights } from './render.js';
 import { Session } from './session.js';
+import type { Match } from './match.js';
+import { GuestLobby, HostLobby, normalizeCode } from './net.js';
 import { SETTINGS, loadSettings, mergeOverrides, overridesFrom, saveSettings, valueIn, type Setting } from './settings.js';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -23,8 +25,32 @@ const names = (good: number) => {
   const t = session.cfg.town;
   return { raw: t.raws[good], product: t.goods[good], source: t.sources[good], shop: t.shops[good] };
 };
-const coName = (c: number) => `Company ${c + 1}`;
-const playerName = (p: number, me: number) => (p === me ? 'you' : `player ${p + 1}`);
+/**
+ * Company names, one per colour (so a colour always means the same company), each with a
+ * three-letter ticker for tight spots like a player's holdings.
+ */
+const COMPANY_NAMES: [string, string][] = [
+  ['Red Rocket Haulage', 'RRH'],
+  ['Bluebird Express', 'BBX'],
+  ['Greenway Freight', 'GWF'],
+  ['Purple Pony Transport', 'PPT'],
+  ['Orange Owl Logistics', 'OOL'],
+  ['Tealwater Trucking', 'TWT'],
+  ['Magenta Moth Movers', 'MMM'],
+  ['Lime Lizard Lines', 'LLL'],
+  ['Skyhook Shipping', 'SKY'],
+];
+const coName = (c: number) => COMPANY_NAMES[companySlot(c)][0];
+const coTicker = (c: number) => COMPANY_NAMES[companySlot(c)][1];
+/** A holding as a chip in the company's colour: ticker, shares, and a crown for its president. */
+const holdingChip = (c: number, n: number, pres: boolean) =>
+  `<span class="chip co-chip${pres ? ' pres' : ''}" style="background:${companyColor(c)}" title="${coName(c)}: ${n} share${n === 1 ? '' : 's'}${pres ? ', president' : ''}">${pres ? '♔ ' : ''}${coTicker(c)} ×${n}</span>`;
+// While watching the bots, Player 1 isn't you.
+const playerName = (p: number, me: number) => (p === me && !watching ? 'you' : seatName(p));
+/** A seat's name: the person's name online, otherwise Player N. */
+const seatName = (p: number) => session.names[p] || `Player ${p + 1}`;
+/** A short label for chips: their name (trimmed) online, otherwise PN. */
+const seatShort = (p: number) => (session.names[p] ? session.names[p].slice(0, 8) : `P${p + 1}`);
 const fmtClock = (sec: number) => {
   const s = Math.max(0, Math.ceil(sec));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -49,9 +75,14 @@ function overridesFromUrl(): GameConfigOverrides {
   return o;
 }
 
-let session = new Session({ overrides: mergeOverrides(loadSettings(), overridesFromUrl()) });
+/** Watching the bots play (?watch=1, or from the settings or welcome card): every seat is a bot. */
+let watching = new URLSearchParams(location.search).get('watch') === '1';
+let session: Match = new Session({ overrides: mergeOverrides(loadSettings(), overridesFromUrl()), watch: watching });
+pickCompanySlots(session.cfg.companies, session.cfg.seed);
 const renderer = new Renderer($<HTMLCanvasElement>('map'), session.game.town);
 renderer.via = session.cfg.trucks.viaDepot;
+renderer.serviceSec = session.cfg.trucks.serviceSec;
+renderer.processSec = session.cfg.trucks.signOffSec;
 let last = performance.now();
 let lastUi = 0;
 
@@ -106,6 +137,12 @@ function toast(text: string, kind: 'info' | 'error' = 'info') {
 function updateHint(obs: Observation) {
   const g = session.game;
   const hint = $('hint');
+  $('me-title').textContent = watching ? 'Player 1 (a bot: you\'re watching)' : 'You';
+  $('mycos-title').textContent = watching ? "Player 1's companies" : 'Your companies';
+  if (watching) {
+    hint.textContent = 'Watching the bots play. Change the speed at the top; New game to play yourself.';
+    return;
+  }
   if (hl.buyFor !== null) {
     hint.textContent = `Buying a factory for ${coName(hl.buyFor)}: click a highlighted site (Esc to cancel).`;
     return;
@@ -401,10 +438,10 @@ function refreshPanels(obs: Observation) {
       const shares = held
         .map((c) => {
           const n = c.shares.filter((s) => s === p.id).length;
-          return `<span class="holding">${sw(c.id)}${c.id + 1}×${n}${c.presidents.includes(p.id) ? '<span class="tag">P</span>' : ''}</span>`;
+          return holdingChip(c.id, n, c.presidents.includes(p.id));
         })
-        .join(' ');
-      return `<div class="co"><div class="row"><span><b>Player ${p.id + 1}</b></span><span>${money(p.cash)}</span></div><div class="small">${shares || '<span class="muted">No shares</span>'}</div></div>`;
+        .join('');
+      return `<div class="co"><div class="row"><span><b>${seatName(p.id)}</b></span><span>${money(p.cash)}</span></div><div class="chips">${shares || '<span class="muted small">No shares</span>'}</div></div>`;
     })
     .join('');
 
@@ -426,11 +463,12 @@ function refreshPanels(obs: Observation) {
           .map((pl) => {
             const pres = c.presidents.includes(pl);
             const n = holders.get(pl)!;
-            return `<span class="chip${pl === obs.me ? ' you' : ''}${pres ? ' pres' : ''}" title="${pl === obs.me ? 'You' : `Player ${pl + 1}`}: ${n} share${n === 1 ? '' : 's'}${pres ? ', president' : ''}">${pres ? '♔ ' : ''}${pl === obs.me ? 'You' : `P${pl + 1}`} ×${n}</span>`;
+            const you = pl === obs.me && !watching;
+            return `<span class="chip${you ? ' you' : ''}${pres ? ' pres' : ''}" title="${you ? 'You' : seatName(pl)}: ${n} share${n === 1 ? '' : 's'}${pres ? ', president' : ''}">${pres ? '♔ ' : ''}${you ? 'You' : seatShort(pl)} ×${n}</span>`;
           })
           .join('') + (bank ? `<span class="chip bank" title="Still with the bank">bank ×${bank}</span>` : '');
       const routes = obs.routes.filter((r) => r.company === c.id).length;
-      return `<div class="co" data-cohover="${c.id}"><div class="row"><span>${sw(c.id)}<b>${coName(c.id)}</b></span><span>${money(c.treasury)}</span></div><div class="chips">${chips}</div><div class="row muted small"><span>${trucks} trucks · ${depots} factor${depots === 1 ? 'y' : 'ies'} · ${routes} route${routes === 1 ? '' : 's'}</span></div><div class="row muted small"><span>Next dividend</span><span>${money(c.dividendPerShare)}/share</span></div></div>`;
+      return `<div class="co" data-cohover="${c.id}"><div class="row"><span>${sw(c.id)}<b>${coName(c.id)}</b></span><span>${money(c.treasury)}</span></div><div class="chips">${chips}</div><div class="row muted small"><span>${trucks} trucks · ${depots} factor${depots === 1 ? 'y' : 'ies'} · ${routes} route${routes === 1 ? '' : 's'}</span></div><div class="row muted small"><span>Dividend: last · next</span><span>${lastDividend.has(c.id) ? money(lastDividend.get(c.id)!) : '–'} · ${money(c.dividendPerShare)}/share</span></div></div>`;
     })
     .join('');
 
@@ -449,12 +487,14 @@ function refreshAuction(obs: Observation) {
   const box = $('auction');
   let html = '';
   if (a) {
-    const leading = a.highBidder === obs.me;
+    const leading = a.highBidder === obs.me && !watching;
     html += `<div class="row big"><span>${sw(a.company)}${coName(a.company)}</span><b>${Math.ceil(a.timeLeft)}s</b></div>`;
     html += `<div class="row muted small"><span>Selling</span><span>${a.seller === null ? 'a bank share' : `a share from ${playerName(a.seller, obs.me)}`}</span></div>`;
     html += `<div class="row"><span>High bid</span><span>${a.highBidder === null ? 'none yet' : `${money(a.highBid)} (${playerName(a.highBidder, obs.me)})`}</span></div>`;
     const c = obs.companies[a.company];
     html += `<div class="row muted small"><span>Treasury · trucks</span><span>${money(c.treasury)} · ${obs.trucks.filter((t) => t.company === c.id).length}</span></div>`;
+    // What a share paid last time: about the least to expect from the next payout.
+    html += `<div class="row small"><span>Last dividend</span><b>${lastDividend.has(c.id) ? `${money(lastDividend.get(c.id)!)}/share` : 'none yet'}</b></div>`;
     if (leading) html += '<div class="good small">You’re the high bidder.</div>';
     // Who's still in: it ends early once everyone but the high bidder has passed.
     const still = stillBidding(a, obs.players.length);
@@ -668,7 +708,7 @@ function showPayout(paid: { company: number; amount: number; final: boolean }[])
         .sort((a, b) => b.amount - a.amount)
         .map((p) => `<span>${sw(p.company)}${coName(p.company)} ${money(p.amount)}</span>`)
         .join('')}</div>`
-    : `<div class="pay-title">Dividends paid</div><div class="pay-rows"><span>You hold no shares that paid this time.</span></div>`;
+    : `<div class="pay-title">Dividends paid</div><div class="pay-rows"><span>${watching ? 'Player 1 holds' : 'You hold'} no shares that paid this time.</span></div>`;
   banner.classList.remove('show');
   void banner.offsetWidth; // restart the animation
   banner.classList.add('show');
@@ -733,6 +773,76 @@ function waiting(key: string): { share: number; saturated: boolean; where: 'prod
   return { share, saturated: share > SATURATED, where: p >= c ? 'producer' : 'shop' };
 }
 
+/**
+ * The game's story for the end-of-game charts: every 10 seconds of play, each player's cash and
+ * each company's value (treasury plus what it paid for trucks and factories), total earnings, and
+ * earnings over the last minute.
+ */
+const history: { t: number; cash: number[]; value: number[]; earned: number[]; perMin: number[] }[] = [];
+/** Delivery income so far, by company. */
+const earned = new Map<number, number>();
+let lastHistory = -Infinity;
+
+function sampleHistory(obs: Observation) {
+  if (obs.phase === 'opening' || obs.t - lastHistory < 10) return;
+  lastHistory = obs.t;
+  const total = obs.companies.map((c) => earned.get(c.id) ?? 0);
+  const minuteAgo = [...history].reverse().find((h) => h.t <= obs.t - 60);
+  history.push({
+    t: obs.t,
+    cash: obs.players.map((p) => p.cash),
+    value: obs.companies.map((c) => c.treasury + c.assets),
+    earned: total,
+    perMin: total.map((x, i) => (minuteAgo ? (x - minuteAgo.earned[i]) * (60 / (obs.t - minuteAgo.t)) : history.length ? x * (60 / obs.t) : 0)),
+  });
+}
+
+/** A simple line chart: one line per series, time along the bottom. */
+function drawChart(cv: HTMLCanvasElement, series: { label: string; color: string; points: [number, number][] }[], fmt: (v: number) => string) {
+  const dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth;
+  const H = cv.clientHeight;
+  cv.width = W * dpr;
+  cv.height = H * dpr;
+  const ctx = cv.getContext('2d')!;
+  ctx.scale(dpr, dpr);
+  const pad = { l: 46, r: 22, t: 10, b: 24 };
+  const all = series.flatMap((s) => s.points);
+  if (!all.length) return;
+  const tMax = Math.max(...all.map((p) => p[0]), 1);
+  const vMax = Math.max(1, ...all.map((p) => p[1])) * 1.08;
+  const X = (t: number) => pad.l + (t / tMax) * (W - pad.l - pad.r);
+  const Y = (v: number) => H - pad.b - (v / vMax) * (H - pad.t - pad.b);
+  ctx.font = '11px system-ui, sans-serif';
+  ctx.fillStyle = '#7d766b';
+  ctx.strokeStyle = '#e2dccf';
+  ctx.lineWidth = 1;
+  for (let k = 0; k <= 4; k++) {
+    const v = (vMax / 4) * k;
+    ctx.beginPath();
+    ctx.moveTo(pad.l, Y(v));
+    ctx.lineTo(W - pad.r, Y(v));
+    ctx.stroke();
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(fmt(v), pad.l - 6, Y(v));
+  }
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  for (let m = 0; m <= tMax / 60; m += tMax > 900 ? 5 : 3) ctx.fillText(`${m}:00`, X(m * 60), H - pad.b + 6);
+  for (const s of series) {
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = 2.5;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    s.points.forEach(([t, v], k) => (k ? ctx.lineTo(X(t), Y(v)) : ctx.moveTo(X(t), Y(v))));
+    ctx.stroke();
+  }
+}
+
+/** What each company's last payout paid per share. */
+const lastDividend = new Map<number, number>();
+
 /** Deliveries per route (time, price), for its earnings per minute. */
 const routeLog = new Map<string, { since: number; hits: { t: number; price: number }[] }>();
 /** Seconds of history a route's earnings rate is taken over. */
@@ -773,6 +883,7 @@ function handleEvents(evs: GameEvent[]) {
   let payoutSeen = false;
   for (const e of evs) {
     if (e.type === 'delivered') {
+      earned.set(e.company, (earned.get(e.company) ?? 0) + e.price);
       const key = truckRoute.get(e.truck);
       if (key) {
         const log = routeLog.get(key) ?? { since: e.t, hits: [] };
@@ -793,11 +904,12 @@ function handleEvents(evs: GameEvent[]) {
         }
     }
     if (e.type === 'rejected') {
-      toast(cap(e.reason) + '.', 'error');
+      if (!watching) toast(cap(e.reason) + '.', 'error'); // a watched bot's mistakes aren't yours
       continue;
     }
     if (e.type === 'payout') {
       payoutSeen = true;
+      lastDividend.set(e.company, e.perShare + e.bonusPerShare);
       if (e.paid[session.seat]) paidNow.push({ company: e.company, amount: e.paid[session.seat], final: !!e.final });
     }
     if (e.type === 'auctionWon') text = `${cap(playerName(e.player, obs.me))} bought a share of ${coName(e.company)} for ${money(e.amount)}`;
@@ -811,7 +923,11 @@ function handleEvents(evs: GameEvent[]) {
     } else if (e.type === 'closing') {
       text = 'A business is about to close: serve it to save it';
       cls = 'bad';
-    } else if (e.type === 'boughtDepot') text = `${coName(e.company)} bought a factory for ${money(e.price)}`;
+    } else if (e.type === 'boughtDepot') {
+      text = `${coName(e.company)} bought a factory for ${money(e.price)}`;
+      const site = g.town.locations[e.site];
+      renderer.puff(site.x, site.y);
+    }
     else if (e.type === 'end') text = 'Game over';
     if (!text) continue;
     const li = document.createElement('li');
@@ -831,13 +947,36 @@ function endScreen(obs: Observation) {
   shownEnd = true;
   const ranking = [...obs.players].sort((a, b) => b.cash - a.cash);
   const rows = ranking
-    .map((p, i) => `<tr class="${p.id === obs.me ? 'me' : ''}"><td>${i + 1}</td><td>${p.id === obs.me ? 'You' : `Player ${p.id + 1}`}</td><td>${money(p.cash)}</td></tr>`)
+    .map((p, i) => `<tr class="${p.id === obs.me && !watching ? 'me' : ''}"><td>${i + 1}</td><td>${p.id === obs.me && !watching ? 'You' : seatName(p.id)}</td><td>${money(p.cash)}</td></tr>`)
     .join('');
   const place = ranking.findIndex((p) => p.id === obs.me) + 1;
   const ov = $('overlay');
-  ov.innerHTML = `<div class="card"><h1>${place === 1 ? 'You win!' : `You finished ${ordinal(place)}`}</h1><table>${rows}</table><button id="btn-again">Play again</button></div>`;
+  const title = watching ? `${seatName(ranking[0].id)} wins!` : place === 1 ? 'You win!' : `You finished ${ordinal(place)}`;
+  // The final sample, so the charts run to the end.
+  lastHistory = -Infinity;
+  sampleHistory({ ...obs, phase: 'running' } as Observation);
+  const tabs: [string, string][] = [['cash', 'Players: cash'], ['value', 'Companies: value'], ['earned', 'Companies: total earned'], ['perMin', 'Companies: earnings per minute']];
+  ov.innerHTML = `<div class="card end"><h1>${title}</h1><table>${rows}</table>
+    <div class="chart-tabs">${tabs.map(([k, l], i) => `<button data-chart="${k}" class="${i === 0 ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <canvas id="end-chart"></canvas><div class="chart-legend" id="end-legend"></div>
+    <button id="btn-again">Play${watching ? '' : ' again'}</button>${watching ? ' <button id="btn-watch-again">Watch another</button>' : ''}</div>`;
   ov.hidden = false;
-  $('btn-again').onclick = newGame;
+  const show = (key: string) => {
+    ov.querySelectorAll<HTMLElement>('[data-chart]').forEach((b) => b.classList.toggle('on', b.dataset.chart === key));
+    const players = key === 'cash';
+    const n = players ? obs.players.length : obs.companies.length;
+    const series = Array.from({ length: n }, (_, i) => ({
+      label: players ? (i === obs.me && !watching ? 'You' : seatName(i)) : `${coTicker(i)} · ${coName(i)}`,
+      color: players ? ['#23201b', '#8a8273', '#c9a24a', '#5f86a8'][i % 4] : companyColor(i),
+      points: history.map((h) => [h.t, (h as unknown as Record<string, number[]>)[key][i]] as [number, number]),
+    }));
+    drawChart($<HTMLCanvasElement>('end-chart'), series, (v) => (key === 'perMin' ? `$${v.toFixed(0)}/m` : `$${Math.round(v)}`));
+    $('end-legend').innerHTML = series.map((s) => `<span><i style="background:${s.color}"></i>${s.label}</span>`).join('');
+  };
+  ov.querySelectorAll<HTMLElement>('[data-chart]').forEach((b) => (b.onclick = () => show(b.dataset.chart!)));
+  show('cash');
+  $('btn-again').onclick = () => newGame();
+  ov.querySelector<HTMLElement>('#btn-watch-again')?.addEventListener('click', () => newGame(true));
 }
 const ordinal = (n: number) => `${n}${['th', 'st', 'nd', 'rd'][n % 10 > 3 || Math.floor(n / 10) === 1 ? 0 : n % 10]}`;
 
@@ -852,7 +991,8 @@ const GUIDE: { img?: string[]; icons?: GuideIcons; title: string; text: string }
     title: 'Welcome to Signature Required!',
     text: `<p>You're an <b>investor</b> in a busy little town. Trucking companies haul goods from producers to shops, and you <span class="hl">buy shares in them</span>. Every delivery fills their dividend pots, and the pots get paid out to shareholders. After 15 minutes, the <b>richest player wins</b>.</p>
       <p>The next pages show you how to:</p>
-      <ol class="guide-list"><li>take control of a company</li><li>set up a route: producer, factory, shop</li><li>run your routes from the sidebar</li><li>buy more factories</li><li>get paid</li></ol>`,
+      <ol class="guide-list"><li>take control of a company</li><li>set up a route: producer, factory, shop</li><li>run your routes from the sidebar</li><li>buy more factories</li><li>get paid</li></ol>
+      <p class="muted small">Or <a href="#" id="watch-bots">just watch the bots play</a> for a while. To play with friends, use <b>Play online</b> at the top.</p>`,
   },
   {
     img: ['auction'],
@@ -943,7 +1083,7 @@ function showHelp(step = 0) {
   paintGuideIcons(ov);
   const wasPaused = helpWasPaused ?? session.paused;
   helpWasPaused = wasPaused;
-  session.paused = true;
+  if (!session.multiplayer) session.paused = true; // online, the game goes on for everyone
   ov.querySelectorAll<HTMLElement>('[data-step]').forEach((b) => (b.onclick = () => showHelp(Number(b.dataset.step))));
   const close = () => {
     ov.hidden = true;
@@ -952,6 +1092,11 @@ function showHelp(step = 0) {
   };
   ov.querySelector<HTMLElement>('#btn-close')?.addEventListener('click', close);
   ov.querySelector<HTMLElement>('#btn-skip')?.addEventListener('click', close);
+  ov.querySelector<HTMLElement>('#watch-bots')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    helpWasPaused = null;
+    newGame(true);
+  });
 }
 /** Whether the game was paused before the help card opened (kept while flipping its pages). */
 let helpWasPaused: boolean | null = null;
@@ -964,7 +1109,12 @@ function frame(now: number) {
   session.update(dt);
   const obs = session.obs();
   handleEvents(session.takeEvents());
+  // Online: someone left, or the host did.
+  const notices = (session as { notices?: string[] }).notices;
+  while (notices?.length) toast(notices.shift()!, 'info');
+  if ((session as { lostHost?: boolean }).lostHost && !shownEnd) hostGone();
   sampleWaiting(obs);
+  sampleHistory(obs);
   // Ease drawn truck positions towards where they are (smooth between ticks, and into queues).
   const targets = renderer.truckTargets(obs);
   const k = 1 - Math.exp(-dt * 14);
@@ -991,20 +1141,40 @@ function frame(now: number) {
 }
 
 function togglePause() {
+  if (!session.canControlTime) return toast('Only the host can pause.', 'info');
   session.paused = !session.paused;
   $('btn-pause').textContent = session.paused ? '▶' : '⏸';
 }
 
-function newGame() {
+function newGame(watch = false) {
   const { seed: _replay, ...fresh } = overridesFromUrl(); // a new game gets a new town
-  session = new Session({ overrides: mergeOverrides(loadSettings(), fresh) });
+  beginMatch(new Session({ overrides: mergeOverrides(loadSettings(), fresh), watch }));
+}
+
+/** Switch the screen to a match (solo, watching, hosted or joined), resetting everything per game. */
+function beginMatch(m: Match) {
+  session.dispose();
+  session = m;
+  watching = m.watch;
+  pickCompanySlots(session.cfg.companies, session.cfg.seed);
   routeLog.clear();
+  lastDividend.clear();
+  history.length = 0;
+  earned.clear();
+  lastHistory = -Infinity;
   waitLog.clear();
   lastWaitSample = -1;
   hl.saturated = new Set();
-  session.speed = Number($<HTMLSelectElement>('speed').value);
+  // Online, time runs at 1× and only the host can pause.
+  const speedSel = $<HTMLSelectElement>('speed');
+  speedSel.disabled = session.multiplayer;
+  if (session.multiplayer) speedSel.value = '1';
+  session.speed = Number(speedSel.value);
+  ($('btn-pause') as HTMLButtonElement).disabled = !session.canControlTime;
   renderer.setTown(session.game.town);
   renderer.via = session.cfg.trucks.viaDepot;
+  renderer.serviceSec = session.cfg.trucks.serviceSec;
+  renderer.processSec = session.cfg.trucks.signOffSec;
   renderer.resize(true);
   $('log').innerHTML = '';
   $('overlay').hidden = true;
@@ -1030,7 +1200,11 @@ document.addEventListener('pointermove', (e) => {
 });
 $('btn-help').onclick = () => showHelp();
 $<HTMLSelectElement>('speed').onchange = (e) => (session.speed = Number((e.target as HTMLSelectElement).value));
-$('btn-new').onclick = newGame;
+$('btn-new').onclick = () => {
+  // Online, a new game leaves this one (and, for the host, ends it for everyone).
+  if (session.multiplayer && !session.done && !confirm(session.canControlTime ? 'Start a new game? This ends the online game for everyone.' : 'Leave this online game?')) return;
+  newGame();
+};
 $('btn-settings').onclick = () => showSettings();
 
 /** The ⚙ card: tune the game, then start a new one with those settings (kept in this browser). */
@@ -1049,10 +1223,10 @@ function showSettings() {
           <span class="set-def">default ${shown(defaults, st)}</span></label>`)).join('')}`,
       )
       .join('')}
-    <div class="set-buttons"><button id="set-start">Start a new game</button><button id="set-reset" class="plain">Reset to defaults</button><button id="set-close" class="plain">Close</button></div></div>`;
+    <div class="set-buttons"><button id="set-start">Start a new game</button><button id="set-watch" class="plain">Watch the bots play</button><button id="set-reset" class="plain">Reset to defaults</button><button id="set-close" class="plain">Close</button></div></div>`;
   ov.hidden = false;
   const wasPaused = session.paused;
-  session.paused = true;
+  if (!session.multiplayer) session.paused = true;
   const inputs = [...ov.querySelectorAll<HTMLInputElement>('input[data-i]')];
   const mark = () =>
     inputs.forEach((inp) => {
@@ -1070,7 +1244,7 @@ function showSettings() {
     for (const inp of inputs) inp.value = shown(defaults, SETTINGS[Number(inp.dataset.i)]);
     mark();
   };
-  $('set-start').onclick = () => {
+  const start = (watch: boolean) => {
     const values = new Map<Setting, number>();
     for (const inp of inputs) {
       const st = SETTINGS[Number(inp.dataset.i)];
@@ -1079,8 +1253,10 @@ function showSettings() {
     }
     saveSettings(overridesFrom(values));
     ov.hidden = true;
-    newGame();
+    newGame(watch);
   };
+  $('set-start').onclick = () => start(false);
+  $('set-watch').onclick = () => start(true);
 }
 window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement) return;
@@ -1096,7 +1272,152 @@ window.addEventListener('resize', () => renderer.resize(false));
 
 renderer.resize(true);
 requestAnimationFrame(frame);
-showHelp();
+// ------------------------------------------------------------------ playing online
+
+/** The name you play under online (remembered in this browser). */
+function savedName(): string {
+  try {
+    return localStorage.getItem('sr-name') ?? '';
+  } catch {
+    return '';
+  }
+}
+function rememberName(n: string) {
+  try {
+    localStorage.setItem('sr-name', n);
+  } catch {
+    // Storage blocked: fine, they'll type it again next time.
+  }
+}
+
+let lobby: HostLobby | GuestLobby | null = null;
+const esc = (x: string) => x.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+
+/** The Play online card: host a room or join one. */
+function showOnline(joinCode = '') {
+  lobby?.close();
+  lobby = null;
+  const ov = $('overlay');
+  ov.innerHTML = `<div class="card online"><h1>Play online</h1>
+    <p class="muted small">One person hosts; friends join with the room code. Bots take any empty seats, and any seat whose player leaves.</p>
+    <label class="field"><span>Your name</span><input id="on-name" maxlength="16" value="${esc(savedName())}" placeholder="Name"></label>
+    <div class="online-cols">
+      <div><h2>Host</h2><p class="muted small">Uses your ⚙ settings.</p><button id="on-host">Host a game</button></div>
+      <div><h2>Join</h2><label class="field"><span>Room code</span><input id="on-code" maxlength="4" value="${esc(joinCode)}" placeholder="ABCD"></label><button id="on-join">Join</button></div>
+    </div>
+    <p id="on-err" class="bad small"></p>
+    <button id="on-close" class="plain">Back</button></div>`;
+  ov.hidden = false;
+  const name = () => {
+    const n = $<HTMLInputElement>('on-name').value.trim().slice(0, 16) || 'Player';
+    rememberName(n);
+    return n;
+  };
+  const err = (m: string) => ($('on-err').textContent = m);
+  $('on-close').onclick = () => {
+    lobby?.close();
+    lobby = null;
+    ov.hidden = true;
+  };
+  $('on-host').onclick = async () => {
+    const host = new HostLobby(name(), Math.max(2, Math.min(4, makeGameConfig(loadSettings()).players)));
+    lobby = host;
+    err('Opening a room…');
+    try {
+      await host.open();
+    } catch (e) {
+      return err((e as Error).message);
+    }
+    host.onChange = () => hostRoom(host);
+    host.onError = err;
+    hostRoom(host);
+  };
+  $('on-join').onclick = async () => {
+    const code = normalizeCode($<HTMLInputElement>('on-code').value);
+    if (code.length !== 4) return err('Room codes are 4 letters.');
+    const guest = new GuestLobby();
+    lobby = guest;
+    err('Joining…');
+    guest.onChange = () => guestRoom(guest, code);
+    guest.onError = (m) => toast(m, 'error');
+    guest.onStart = (m) => {
+      lobby = null;
+      beginMatch(m);
+    };
+    try {
+      await guest.join(code, name());
+    } catch (e) {
+      return err((e as Error).message);
+    }
+    guestRoom(guest, code);
+  };
+}
+
+const playerList = (players: { seat: number; name: string; host: boolean }[], total: number) =>
+  `<ol class="lobby-list">${Array.from({ length: total }, (_, s) => {
+    const p = players.find((x) => x.seat === s);
+    return `<li>${p ? `<b>${esc(p.name)}</b>${p.host ? ' <span class="muted">(host)</span>' : ''}` : '<span class="muted">a bot, unless someone joins</span>'}</li>`;
+  }).join('')}</ol>`;
+
+/** The host's waiting room: the code, an invite link, who's in, and Start. */
+function hostRoom(host: HostLobby) {
+  const ov = $('overlay');
+  const link = `${location.origin}${location.pathname}?join=${host.code}`;
+  const total = Math.max(2, Math.min(4, makeGameConfig(loadSettings()).players));
+  ov.innerHTML = `<div class="card online"><h1>Room ${host.code}</h1>
+    <p>Send friends the code, or this link:</p>
+    <div class="invite"><input readonly value="${link}" id="on-link"><button id="on-copy" class="plain">Copy</button></div>
+    <h2>Players</h2>${playerList(host.players, total)}
+    <p class="muted small">Keep this tab open: it runs the game for everyone.</p>
+    <div class="set-buttons"><button id="on-start">Start game</button><button id="on-cancel" class="plain">Close the room</button></div></div>`;
+  ov.hidden = false;
+  $('on-copy').onclick = () => {
+    $<HTMLInputElement>('on-link').select();
+    navigator.clipboard?.writeText(link).then(() => toast('Invite link copied.', 'info'), () => {});
+  };
+  $('on-cancel').onclick = () => {
+    host.close();
+    lobby = null;
+    ov.hidden = true;
+  };
+  $('on-start').onclick = () => {
+    lobby = null;
+    const { seed: _replay, ...fresh } = overridesFromUrl();
+    beginMatch(host.start(mergeOverrides(loadSettings(), fresh)));
+  };
+}
+
+/** A guest's waiting room. */
+function guestRoom(guest: GuestLobby, code: string) {
+  const ov = $('overlay');
+  const host = guest.players.find((p) => p.host);
+  ov.innerHTML = `<div class="card online"><h1>Room ${code}</h1>
+    <p>You're in. Waiting for ${host ? esc(host.name) : 'the host'} to start the game…</p>
+    <h2>Players</h2>${playerList(guest.players, Math.max(guest.players.length, 4))}
+    <button id="on-leave" class="plain">Leave</button></div>`;
+  ov.hidden = false;
+  $('on-leave').onclick = () => {
+    guest.close();
+    lobby = null;
+    ov.hidden = true;
+  };
+}
+
+/** The host closed their tab: the game is over. */
+function hostGone() {
+  shownEnd = true;
+  const ov = $('overlay');
+  ov.innerHTML = `<div class="card"><h1>The host left</h1><p>The game ran in their tab, so it has ended.</p><button id="btn-again">Play solo</button> <button id="btn-online2" class="plain">Play online</button></div>`;
+  ov.hidden = false;
+  $('btn-again').onclick = () => newGame();
+  $('btn-online2').onclick = () => showOnline();
+}
+
+$('btn-online').onclick = () => showOnline();
+
+const joinParam = new URLSearchParams(location.search).get('join');
+if (joinParam) showOnline(normalizeCode(joinParam));
+else if (!watching) showHelp();
 
 // For poking at a running match from the browser console.
 (window as unknown as { sr: unknown }).sr = {

@@ -10,9 +10,11 @@
   },
   "dependencies": {
     "@sr/core": "*",
-    "@sr/sim": "*"
+    "@sr/sim": "*",
+    "peerjs": "^1.5.5"
   },
   "devDependencies": {
+    "peer": "^1.0.2",
     "vite": "^8.3.4"
   }
 }
