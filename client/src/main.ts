@@ -504,7 +504,7 @@ function card(id: number): Card {
   const info = document.createElement('div');
   const form = document.createElement('div');
   form.className = 'broker';
-  form.innerHTML = `<div class="quick"><button type="button" class="buy-now"></button><button type="button" class="sell-now"></button></div><div class="slide"><span class="lo"></span><input type="range" min="1" max="2" step="1" aria-label="Price for your order" /><span class="hi"></span></div><div class="order"><b class="px"></b><button type="button" class="place-buy"></button><button type="button" class="place-sell"></button></div>`;
+  form.innerHTML = `<div class="quick"><button type="button" class="sell-now"></button><button type="button" class="buy-now"></button></div><div class="slide"><span class="lo"></span><input type="range" min="1" max="2" step="1" aria-label="Price for your order" /><span class="hi"></span></div><div class="order"><b class="px"></b><button type="button" class="place-buy"></button><button type="button" class="place-sell"></button></div>`;
   root.append(info, form);
   const q = <T extends HTMLElement>(sel: string) => form.querySelector<T>(sel)!;
   k = { slot, root, info, form, quick: q('.quick'), buyNow: q('.buy-now'), sellNow: q('.sell-now'), slider: q('input'), price: q('.px'), lo: q('.lo'), hi: q('.hi'), placeBuy: q('.place-buy'), placeSell: q('.place-sell'), key: '' };
@@ -573,7 +573,7 @@ function refreshCompanies(obs: Observation) {
     // Folded, the card stops here (plus a line for a running sale); hovering or pinning shows the rest.
     if (sale) {
       const best = book.bid;
-      html += `<div class="row small sale-line fold-only"><b>${sale.opening ? 'Opening sale' : 'Sale'} ${Math.ceil(sale.timeLeft)}s</b><span>${best ? `highest bid ${money(best.price)} ${best.player === obs.me && !watching ? '(you)' : seatIcon(best.player)}` : 'no bids yet'}</span></div>`;
+      html += `<div class="row small sale-line fold-only"><b>${sale.opening ? 'Opening sale' : 'Sale'} ${Math.ceil(sale.timeLeft)}s</b><span>${best ? `highest bid ${money(best.price)}${best.player === obs.me && !watching ? ' (you)' : ''}` : 'no bids yet'}</span></div>`;
     }
     html += '<div class="more">';
     html += `<div class="row small muted"><span>${trucks} trucks · ${depots} factor${depots === 1 ? 'y' : 'ies'} · ${routes} route${routes === 1 ? '' : 's'}</span></div>`;
@@ -638,7 +638,7 @@ function refreshCompanies(obs: Observation) {
     k.sellNow.dataset.to = toCompany ? 'company' : 'bid';
     const canSell = sellAt !== null && mine > 0;
     // Only for your own shares: what someone would pay is no business of yours until you have one to sell.
-    k.sellNow.hidden = mine === 0;
+    k.sellNow.classList.toggle('empty', mine === 0);
     const buyer = toCompany ? 'co.' : book.bid ? seatIcon(book.bid.player) : '';
     k.sellNow.innerHTML = sellAt === null ? 'Nobody buying' : `Sell for <b>${money(sellAt)}</b> <span class="from">${buyer}</span>`;
     k.sellNow.disabled = !canSell;

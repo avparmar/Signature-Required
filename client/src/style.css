@@ -274,3 +274,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #companies .broker .quick .from { font-weight: 500; color: var(--muted); margin-left: auto; padding-left: 6px; }
 #companies .broker .quick button b { margin-left: 4px; }
 #players .icon { font-size: 15px; }
+
+/* Folded cards show just the prices; who's buying or selling shows when the card is open. */
+#companies .co:not(:hover):not(:focus-within):not(.pinned) .broker .quick .from { display: none; }
+/* With no share to sell, the sell spot stays empty so Buy keeps its place on the right. */
+#companies .broker .quick .sell-now.empty { visibility: hidden; }
