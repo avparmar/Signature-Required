@@ -109,6 +109,7 @@ export class Bot {
   private lastThink = -Infinity;
   private lastInvest = -Infinity;
   private lastBuyIn = -Infinity;
+  private lastOrder = -Infinity;
   /** When it started a sale of each company (to remember its plans until the sale is on). */
   private startedAt = new Map<number, number>();
   /** Auctions it started to buy into a company, and the opening bid it means to make. */
@@ -587,7 +588,7 @@ export class Bot {
         const rival = Math.max(0, ...counts.values());
         const keepControl = c.presidents.includes(this.me) && mine - 1 < rival && this.minutesLeft(obs) > 1;
         if (!keepControl) {
-          const hold = this.shareValue(obs, c.id, 0, false, false);
+          const hold = this.holdValue(obs, c.id);
           const company = obs.companyBid[c.id];
           const player = book.bid && book.bid.player !== this.me ? book.bid.price : null;
           if (company !== null && company >= hold && (player === null || company >= player)) return { type: 'sell', company: c.id, to: 'company' };
@@ -595,11 +596,87 @@ export class Bot {
         }
       }
       if (book.ask && book.ask.player !== this.me && book.ask.price <= (me.cash - me.held) * this.personality.maxCashPerBid) {
-        const value = this.shareValue(obs, c.id, 0);
+        const value = this.holdValue(obs, c.id);
         if (book.ask.price <= value * this.personality.greed * 0.9) return { type: 'buy', company: c.id };
       }
     }
-    return null;
+    return this.placeOrders(obs);
+  }
+
+  /**
+   * What keeping a share is worth to it: the same as buying one (dividends, plus a chance to sell
+   * it back to the company later), except in the last 90 seconds, when there's no later.
+   */
+  private holdValue(obs: Observation, company: number): number {
+    return this.shareValue(obs, company, 0, false, this.minutesLeft(obs) > 1.5);
+  }
+
+  /** When it posted its standing sell order for each company (to lower it if nobody bites). */
+  private askSince = new Map<number, number>();
+
+  /**
+   * Standing orders, one change a look:
+   * - A buy order it no longer believes in (the company looks worth less now) is withdrawn.
+   * - Selling: a share it doesn't need (not one keeping it president) goes up at a markup over
+   *   what it will still pay; if nobody bites in 30 seconds, the price comes down a step, never
+   *   below what holding it is worth.
+   * - Buying: for a company that looks worth well over the best price on offer, a modest buy
+   *   order, only with plenty of spare cash (a bid holds its cash).
+   */
+  private placeOrders(obs: Observation): Action | null {
+    const cfg = this.cfg.auctions;
+    const me = obs.players[this.me];
+    const spare = me.cash - me.held;
+    // Withdraw a buy order it no longer believes in.
+    for (const c of obs.companies) {
+      const bid = obs.books[c.id].bid;
+      if (bid?.player !== this.me || obs.sales.some((x) => x.company === c.id)) continue;
+      if (bid.price > this.holdValue(obs, c.id) * this.personality.greed) return { type: 'cancelOrder', company: c.id, side: 'bid' };
+    }
+    if (obs.elapsed - this.lastOrder < 10) return null;
+    for (const c of obs.companies) {
+      const mine = c.shares.filter((s) => s === this.me).length;
+      if (!mine) continue;
+      const counts = new Map<number, number>();
+      for (const s of c.shares) if (s !== null && s !== this.me) counts.set(s, (counts.get(s) ?? 0) + 1);
+      const rival = Math.max(0, ...counts.values());
+      if (c.presidents.includes(this.me) && mine - 1 < rival && this.minutesLeft(obs) > 1) continue;
+      const book = obs.books[c.id];
+      const hold = this.holdValue(obs, c.id);
+      const floor = Math.max(Math.ceil(hold), (book.bid?.price ?? 0) + 1, (obs.companyBid[c.id] ?? 0) + 1, 1);
+      const mineAsk = book.ask?.player === this.me ? book.ask : null;
+      if (mineAsk) {
+        const since = this.askSince.get(c.id) ?? obs.elapsed;
+        if (obs.elapsed - since < 30) continue;
+        const lower = Math.floor(mineAsk.price * 0.9);
+        if (lower < floor || lower >= mineAsk.price) continue;
+        this.askSince.set(c.id, obs.elapsed);
+        this.lastOrder = obs.elapsed;
+        return { type: 'ask', company: c.id, price: lower };
+      }
+      const price = Math.max(floor, Math.round(hold * 1.25));
+      if (book.ask && price > book.ask.price - cfg.minRaise) continue; // someone sells cheaper
+      this.askSince.set(c.id, obs.elapsed);
+      this.lastOrder = obs.elapsed;
+      return { type: 'ask', company: c.id, price };
+    }
+    // A buy order for a share that looks cheap, with cash to spare.
+    let best: { company: number; price: number; gain: number } | null = null;
+    for (const c of obs.companies) {
+      if (!c.shares.some((s) => s !== null && s !== this.me)) continue; // nobody to buy from
+      if (obs.sales.some((x) => x.company === c.id)) continue;
+      const book = obs.books[c.id];
+      if (book.bid?.player === this.me) continue;
+      const value = this.holdValue(obs, c.id) * this.personality.greed;
+      const price = Math.floor(value * 0.7);
+      if (price < Math.max(1, (book.bid?.price ?? 0) + cfg.minRaise) || (book.ask && price >= book.ask.price)) continue;
+      if (price * 3 > spare * this.personality.maxCashPerBid) continue;
+      const gain = value / price;
+      if (!best || gain > best.gain) best = { company: c.id, price, gain };
+    }
+    if (!best) return null;
+    this.lastOrder = obs.elapsed;
+    return { type: 'bid', company: best.company, amount: best.price };
   }
 
   // ---------------------------------------------------------------- location investment

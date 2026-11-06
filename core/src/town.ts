@@ -355,15 +355,34 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
     return true;
   };
 
-  // Starting depots, spread on an ellipse inset from the edges (corners first for 4).
+  // Starting depots, spread on an ellipse inset from the edges (corners first for 4), evenly by
+  // distance along it rather than by angle, so on a wide town the ones at the top and bottom
+  // aren't squeezed together.
   const cx = W / 2;
   const cy = H / 2;
-  const offset = rng.next() * ((2 * Math.PI) / cfg.companies);
+  // Snowflake towns start everyone near the edge of the city, facing their own outskirts.
+  const rad = cfg.layout === 'snowflake' ? 0.7 : 1;
+  const rx = (cx - 1.5) * rad;
+  const ry = (cy - 1.5) * rad;
+  const at = (a: number) => ({ x: cx + Math.cos(a) * rx, y: cy + Math.sin(a) * ry });
+  const N = 720;
+  const arc = [0];
+  for (let i = 1; i <= N; i++) {
+    const p = at(((i - 1) / N) * 2 * Math.PI);
+    const q = at((i / N) * 2 * Math.PI);
+    arc.push(arc[i - 1] + Math.hypot(q.x - p.x, q.y - p.y));
+  }
+  const angleAt = (frac: number) => {
+    const target = (((frac % 1) + 1) % 1) * arc[N];
+    let i = 1;
+    while (i < N && arc[i] < target) i++;
+    const f = (target - arc[i - 1]) / Math.max(1e-9, arc[i] - arc[i - 1]);
+    return ((i - 1 + f) / N) * 2 * Math.PI;
+  };
+  const offset = rng.next() / cfg.companies;
+  const start = angleAt(1 / 8) / (2 * Math.PI); // corners first, as before
   for (let c = 0; c < cfg.companies; c++) {
-    const a = offset + (c * 2 * Math.PI) / cfg.companies + Math.PI / 4;
-    // Snowflake towns start everyone near the edge of the city, facing their own outskirts.
-    const rad = cfg.layout === 'snowflake' ? 0.7 : 1;
-    const p = { x: cx + Math.cos(a) * (cx - 1.5) * rad, y: cy + Math.sin(a) * (cy - 1.5) * rad };
+    const p = at(angleAt(start + offset + c / cfg.companies));
     place({ kind: 'depot', good: null, level: 1, bays: 0, startCompany: c }, p);
   }
   cfg.goods.forEach((_, g) => {

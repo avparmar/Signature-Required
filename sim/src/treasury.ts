@@ -11,7 +11,7 @@ const addRaw = (k: string, i: number, v: number) => ((acc[k] ??= new Array(MARKS
 let curCo = -1;
 const add = (k: string, i: number, v: number) => { addRaw(k, i, v); gameRows.push({ c: curCo, k, i, v }); };
 const z16 = () => new Array(16).fill(0);
-const salesByMin = { bank: z16(), resale: z16(), bankPrice: z16(), resalePrice: z16(), buyback: z16(), buybackPrice: z16() };
+const salesByMin = { bank: z16(), resale: z16(), bankPrice: z16(), resalePrice: z16(), buyback: z16(), buybackPrice: z16(), asks: z16(), bids: z16() };
 let companyGames = 0;
 let outsiderBuys = 0;
 let runningSales = 0;
@@ -23,14 +23,16 @@ const orig = proto.emit;
 proto.emit = function (this: Game, to, e) {
   if (current && to === 'all') {
     if (e.type === 'delivered') current.income[e.company] += e.price * this.cfg.money.deliveryToTreasury;
+    if (e.type === 'askPosted' && this.phase === 'running') salesByMin.asks[Math.min(15, Math.floor(this.t / 60))]++;
+    if (e.type === 'bidPosted' && this.phase === 'running' && !this.sales.some((x: { company: number }) => x.company === e.company)) salesByMin.bids[Math.min(15, Math.floor(this.t / 60))]++;
     if (e.type === 'trade') {
-      const m = Math.min(15, Math.floor(this.elapsed / 60));
+      const m = Math.min(15, Math.floor(this.t / 60));
       if (e.buyer === 'company') { current.buyback[e.company] += e.price; salesByMin.buyback[m]++; salesByMin.buybackPrice[m] += e.price; }
       else { salesByMin.resale[m]++; salesByMin.resalePrice[m] += e.price; }
     }
     if (e.type === 'saleWon') {
       current.auction[e.company] += e.amount;
-      const m = Math.min(15, Math.floor(this.elapsed / 60));
+      const m = Math.min(15, Math.floor(this.t / 60));
       if (this.phase === 'running') {
         // Was the winner already leading before this share? (They've just been given it.)
         const sh = [...this.companies[e.company].shares];
@@ -88,6 +90,7 @@ for (let s = 0; s < games; s++) {
       add('alive', i, c.shares.some((x) => x !== null) ? 1 : 0);
     }
     add('playerCash', i, g.players.reduce((a, p) => a + p.cash, 0) / g.players.length * g.companies.length / g.players.length);
+    add('playerCashMin', i, Math.min(...g.players.map((p) => p.cash)) * g.companies.length / g.players.length);
     add('playerCashMax', i, Math.max(...g.players.map((p) => p.cash)) * g.companies.length / g.players.length);
     for (const k of Object.keys(c0) as (keyof typeof c0)[]) c0[k] = z();
   };
@@ -130,10 +133,11 @@ row('Shares held by the biggest holder', 'top');
 row('Different shareholders', 'holders');
 row('Owned outright by one player (%)', 'ownedOutright', companyGames / 100);
 row('Average player cash ($)', 'playerCash', games * makeGameConfig({}).companies / makeGameConfig({}).players);
+row('Poorest player cash ($)', 'playerCashMin', games * makeGameConfig({}).companies / makeGameConfig({}).players);
 row('Richest player cash ($)', 'playerCashMax', games * makeGameConfig({}).companies / makeGameConfig({}).players);
 console.log('\nShares changing hands by minute (all games): company sales / between players / bought back by the company, with average price');
 for (let m = 0; m < 15; m++)
-  console.log(`min ${m}: sold by companies ${salesByMin.bank[m]} @ $${f(salesByMin.bankPrice[m] / Math.max(1, salesByMin.bank[m]))}, between players ${salesByMin.resale[m]} @ $${f(salesByMin.resalePrice[m] / Math.max(1, salesByMin.resale[m]))}, bought back ${salesByMin.buyback[m]} @ $${f(salesByMin.buybackPrice[m] / Math.max(1, salesByMin.buyback[m]))}`);
+  console.log(`min ${m}: orders posted (sell ${salesByMin.asks[m]}, buy ${salesByMin.bids[m]}); sold by companies ${salesByMin.bank[m]} @ $${f(salesByMin.bankPrice[m] / Math.max(1, salesByMin.bank[m]))}, between players ${salesByMin.resale[m]} @ $${f(salesByMin.resalePrice[m] / Math.max(1, salesByMin.resale[m]))}, bought back ${salesByMin.buyback[m]} @ $${f(salesByMin.buybackPrice[m] / Math.max(1, salesByMin.buyback[m]))}`);
 const sold = firstFullControl.filter((x) => x >= 0).sort((a, b) => a - b);
 console.log(`\nIn-game share sales: ${(runningSales / games).toFixed(1)} a game; won by someone who wasn't leading that company: ${(outsiderBuys / games).toFixed(1)} a game`);
 console.log(`\nCompanies whose shares all left the bank: ${sold.length}/${companyGames}; median minute ${f(sold[Math.floor(sold.length / 2)] ?? NaN)}`);
