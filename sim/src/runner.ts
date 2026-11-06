@@ -64,7 +64,7 @@ export interface GameResult {
  * is enough to get the economy going, which is what we expect of humans too.
  */
 export function defaultTable(players: number): BotPersonality[] {
-  return Array.from({ length: players }, (_, p) => (p === 0 ? PERSONALITIES.speculator : PERSONALITIES.balanced));
+  return Array.from({ length: players }, (_, p) => (p === 0 ? PERSONALITIES.speculator : p === 1 ? PERSONALITIES.controller : PERSONALITIES.balanced));
 }
 
 export function runGame(overrides: GameConfigOverrides, personalities: BotPersonality[] = [], onStep?: (g: Game) => void): GameResult {

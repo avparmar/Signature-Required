@@ -28,6 +28,9 @@ export interface AuctionConfig {
   minRaise: number;
   /** After an auction with no bids, seconds before that company can auction again. */
   noBidCooldownSec: number;
+  /** After a share of a company sells (once the game is running), seconds before that company can
+   *  auction another, so shares don't all go in one burst. */
+  saleCooldownSec: number;
 }
 
 export const DEFAULT_AUCTIONS: AuctionConfig = {
@@ -38,6 +41,7 @@ export const DEFAULT_AUCTIONS: AuctionConfig = {
   openingBid: 0,
   minRaise: 2,
   noBidCooldownSec: 60,
+  saleCooldownSec: 60,
 };
 
 export interface Auction {

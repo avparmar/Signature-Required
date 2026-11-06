@@ -169,6 +169,8 @@ export class Game {
   auction: Auction | null = null;
   readonly auctionQueue: AuctionRequest[] = [];
   readonly auctionCooldownUntil: number[];
+  /** Whether a company's cooldown follows a sale (rather than an auction nobody bid in). */
+  private readonly lastAuctionSold: boolean[];
   /** Next company to auction in the opening round. */
   private openingNext = 0;
   readonly players: Player[];
@@ -233,6 +235,7 @@ export class Game {
     );
     this.events = Array.from({ length: cfg.players }, () => []);
     this.auctionCooldownUntil = this.companies.map(() => 0);
+    this.lastAuctionSold = this.companies.map(() => false);
     this.phase = cfg.auctions.openingRound ? 'opening' : 'running';
     this.emit('all', { type: 'start', t: 0 });
     if (this.phase === 'running') this.emit('all', { type: 'open', t: 0 });
@@ -419,7 +422,7 @@ export class Game {
         } else if (c.shares.includes(player)) seller = player;
         else return reject("all shares are out and you don't own any to sell");
         if (this.elapsed < this.auctionCooldownUntil[c.id] - 1e-9)
-          return reject(`no bids last time; try again in ${Math.ceil(this.auctionCooldownUntil[c.id] - this.elapsed)}s`);
+          return reject(`${this.lastAuctionSold[c.id] ? 'a share sold recently' : 'no bids last time'}; try again in ${Math.ceil(this.auctionCooldownUntil[c.id] - this.elapsed)}s`);
         if ((this.auction && this.auction.company === c.id) || this.auctionQueue.some((r) => r.company === c.id))
           return reject('this company already has an auction running or waiting');
         this.auctionQueue.push({ company: c.id, seller, startedBy: player });
@@ -499,6 +502,7 @@ export class Game {
     const c = this.companies[a.company];
     if (a.highBidder === null) {
       this.auctionCooldownUntil[c.id] = this.elapsed + this.cfg.auctions.noBidCooldownSec;
+      this.lastAuctionSold[c.id] = false;
       this.emit('all', { type: 'auctionNoBids', t: this.t, company: c.id });
       return;
     }
@@ -513,6 +517,10 @@ export class Game {
     winner.held -= a.highBid;
     winner.cash -= a.highBid;
     c.treasury += a.highBid; // the money always goes to the company, even when a player sells
+    if (!a.opening) {
+      this.auctionCooldownUntil[c.id] = this.elapsed + this.cfg.auctions.saleCooldownSec;
+      this.lastAuctionSold[c.id] = true;
+    }
     this.emit('all', { type: 'auctionWon', t: this.t, company: c.id, player: winner.id, amount: a.highBid, seller: a.seller });
   }
 

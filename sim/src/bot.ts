@@ -5,8 +5,9 @@
  * - Bidding: values a share as the dividends it expects the company to pay for the rest of the
  *   game (from its fleet, or the fleet the money would buy) plus its slice of the final asset
  *   payout, and bids up to a fraction of that. Winning control is worth a little extra.
- * - As president: raises money when the company can't afford its next truck, buys trucks while it
- *   can, sends each new or idle truck to the best producer -> consumer route near its depot
+ * - As president: plans what it wants to buy next and sells a bank share for it if it could pay 75%
+ *   of the price itself (and backs the sale with its own bid), buys a truck while one will still
+ *   earn a fair part of its price by the end, sends each new or idle truck to the best producer -> consumer route near its depot
  *   (avoiding routes that are already crowded), and buys a nearby depot when its depots are full.
  * - Spare cash: occasionally levels up the bottleneck location on a route its companies run.
  */
@@ -40,6 +41,12 @@ export interface BotPersonality {
    * and goes all in on it, valuing its shares as if the company will be fully funded and built
    * out. It keeps a reserve to buy into other companies, but only at a discount.
    */
+  /**
+   * Controller: eager to run one company (the one with the most routes near its start, or the one
+   * it ends up leading) and bids for its shares whenever that helps it take or keep control, but
+   * never more than `budget` for one share. Elsewhere it bids like anyone else.
+   */
+  controller?: { budget: number };
   speculator?: {
     /** What it assumes the company's other shares will eventually sell for (never anchors on a $0 bid). */
     assumedSharePrice: number;
@@ -54,6 +61,7 @@ export const PERSONALITIES: Record<string, BotPersonality> = {
   balanced: { growth: true, greed: 0.8, maxCashPerBid: 0.6, controlBonus: 0.25, investReserve: 60 },
   cautious: { growth: true, greed: 0.6, maxCashPerBid: 0.4, controlBonus: 0.1, investReserve: 90 },
   aggressive: { growth: true, greed: 1.0, maxCashPerBid: 0.8, controlBonus: 0.4, investReserve: 40 },
+  controller: { growth: true, greed: 0.9, maxCashPerBid: 0.8, controlBonus: 0.5, investReserve: 40, controller: { budget: 40 } },
   speculator: {
     growth: true,
     greed: 1.0,
@@ -116,6 +124,9 @@ export class Bot {
       if (e.type === 'opened' || e.type === 'closed') this.routeCache.clear(); // the map changed
     }
     this.recent = this.recent.filter((r) => r.t > obs.t - 180);
+    // A share sale it started is over: forget the price it meant to pay.
+    for (const c of [...this.raiseFloor.keys()])
+      if (obs.auction?.company !== c && !obs.auctionQueue.some((r) => r.company === c)) this.raiseFloor.delete(c);
     const out: Action[] = [];
     const bid = this.bid(obs);
     if (bid) out.push(bid);
@@ -201,6 +212,47 @@ export class Bot {
     return dividends + bonus;
   }
 
+  /** Companies it's raising money for by selling a bank share, and what it will pay for that share itself. */
+  private raiseFloor = new Map<number, number>();
+
+  /** What one truck earns its company per minute (deliveries at the average price). */
+  private get truckPerMin() {
+    const m = this.cfg.money;
+    return this.perTruckMin * (m.palletPrice * (1 - m.premiumShare) + m.premiumPrice * m.premiumShare);
+  }
+
+  /**
+   * What a truck bought now will earn its company by the end of the game. Cash in the treasury is
+   * worth little to shareholders (only its slice of the final payout), while a truck's deliveries
+   * pay dividends, so a truck is worth buying as long as it will earn a fair part of its price.
+   */
+  truckReturn(obs: Observation): number {
+    return this.truckPerMin * Math.max(0, this.minutesLeft(obs) - 0.75);
+  }
+
+  /** Controller's company (decided at its first auction). */
+  private controlTarget: number | null = null;
+
+  private controllerBid(obs: Observation): Action | null {
+    const a = obs.auction!;
+    const budget = this.personality.controller!.budget;
+    if (this.controlTarget === null) this.controlTarget = this.pickTarget(obs);
+    // Someone else has the target locked up: switch to the company it leads, or holds most of.
+    const target = obs.companies[this.controlTarget];
+    const holds = (c: { shares: (number | null)[] }) => c.shares.filter((s) => s === this.me).length;
+    if (!target.presidents.includes(this.me) && target.shares.every((s) => s !== null)) {
+      const led = obs.companies.find((c) => c.presidents.includes(this.me));
+      const most = [...obs.companies].sort((x, y) => holds(y) - holds(x))[0];
+      this.controlTarget = (led ?? (holds(most) > 0 ? most : target)).id;
+    }
+    if (a.company !== this.controlTarget) return this.plainBid(obs);
+    const me = obs.players[this.me];
+    const available = me.cash - me.held;
+    const min = minimumBid(a, this.cfg.auctions);
+    if (min > Math.min(budget, available)) return null;
+    return { type: 'bid', company: a.company, amount: min };
+  }
+
   /** Speculator's chosen company (decided at its first look). */
   private target: number | null = null;
 
@@ -249,7 +301,18 @@ export class Bot {
   private bid(obs: Observation): Action | null {
     const a = obs.auction;
     if (!a || a.highBidder === this.me || a.seller === this.me) return null;
+    // A share it put up to raise money for its own company: it backs the sale itself, up to its floor.
+    const floor = this.raiseFloor.get(a.company);
+    const me0 = obs.players[this.me];
+    const min0 = minimumBid(a, this.cfg.auctions);
+    if (floor !== undefined && min0 <= floor && min0 <= me0.cash - me0.held) return { type: 'bid', company: a.company, amount: min0 };
     if (this.personality.speculator) return this.speculatorBid(obs);
+    if (this.personality.controller) return this.controllerBid(obs);
+    return this.plainBid(obs);
+  }
+
+  private plainBid(obs: Observation): Action | null {
+    const a = obs.auction!;
     const me = obs.players[this.me];
     const available = me.cash - me.held;
     const min = minimumBid(a, this.cfg.auctions);
@@ -312,6 +375,17 @@ export class Bot {
     return routes.sort((a, b) => a.length - b.length);
   }
 
+  /** Whether a factory at this (free) site would have an uncrowded route of its own. */
+  private siteHasRoute(obs: Observation, site: Location, load: Map<number, number>): boolean {
+    const key = `site:${site.id}`;
+    let routes = this.routeCache.get(key);
+    if (!routes) {
+      routes = this.computeRoutes([site]);
+      this.routeCache.set(key, routes);
+    }
+    return routes.some((r) => Math.max(load.get(r.producer) ?? 0, load.get(r.consumer) ?? 0) < this.perRoute + 1);
+  }
+
   /** Trucks (any company) already working a producer or consumer. */
   private load(obs: Observation): Map<number, number> {
     const m = new Map<number, number>();
@@ -359,7 +433,7 @@ export class Bot {
     const perDepot = (s: number) => obs.trucks.filter((t) => t.depot === s).length;
     const fleet = obs.trucks.filter((t) => t.company === company).length;
     const spare = fleet < myDepots.length * cfg.capacity ? [...myDepots].sort((a, b) => perDepot(a) - perDepot(b))[0] : undefined;
-    const worthIt = this.minutesLeft(obs) > 4 && this.pickRoute(obs, company, load) !== null;
+    const worthIt = this.truckReturn(obs) >= 0.25 * cfg.truckPrice && this.pickRoute(obs, company, load) !== null;
     if (spare !== undefined && c.treasury >= cfg.truckPrice && worthIt) {
       out.push({ type: 'buyTruck', company, depot: spare });
       return out;
@@ -367,28 +441,55 @@ export class Bot {
 
     // Depots full: buy the cheapest free site if affordable (with a truck to put in it). With
     // subsidy pricing that's the site in the area the company serves most; ties go to the nearest.
-    if (spare === undefined && worthIt) {
+    const factoryWorthIt = this.truckReturn(obs) >= cfg.truckPrice;
+    if (spare === undefined && factoryWorthIt) {
       let cheapest: { site: number; price: number; dist: number } | null = null;
       for (const [siteId, prices] of Object.entries(obs.depotPrices)) {
         const l = this.town.locations[Number(siteId)];
+        // Only a site with an uncrowded route of its own (a new factory opens new routes).
+        if (!this.siteHasRoute(obs, l, load)) continue;
         const price = prices[company];
         // Straight-line distance to the nearest own depot: a cheap tiebreak.
         const dist = Math.min(...myDepots.map((s) => Math.hypot(this.town.locations[s].x - l.x, this.town.locations[s].y - l.y)));
         if (!cheapest || price < cheapest.price || (price === cheapest.price && dist < cheapest.dist)) cheapest = { site: l.id, price, dist };
       }
+      // A factory is worth it while a truck in it still pays for itself.
       if (cheapest && c.treasury >= cheapest.price + cfg.truckPrice) {
         out.push({ type: 'buyDepot', company, site: cheapest.site });
         return out;
       }
     }
 
-    // Short of money for the next step: raise some by auctioning a bank-held share.
-    const cheapestSite = Math.min(...Object.values(obs.depotPrices).map((p) => p[company]));
-    const needs = spare !== undefined ? cfg.truckPrice : (Number.isFinite(cheapestSite) ? cheapestSite : cfg.depotBase) + cfg.truckPrice;
+    // Raising money: a small plan for what it wants to buy next (trucks to fill its factories' room
+    // and good routes, or another factory and a couple of trucks), less what it has. It sells a
+    // bank share for that only if it could pay 75% of the asking price itself, and backs the sale
+    // with its own bid up to that, so the share doesn't go for nothing.
     const bankShares = c.shares.some((s) => s === null);
     const busy = (obs.auction && obs.auction.company === company) || obs.auctionQueue.some((r) => r.company === company);
-    if (worthIt && bankShares && !busy && c.treasury < needs && obs.elapsed >= obs.auctionCooldownUntil[company]) {
-      out.push({ type: 'startAuction', company });
+    if ((worthIt || (spare === undefined && factoryWorthIt)) && bankShares && !busy && obs.elapsed >= obs.auctionCooldownUntil[company]) {
+      const cheapestSite = Math.min(
+        ...Object.entries(obs.depotPrices)
+          .filter(([site]) => this.siteHasRoute(obs, this.town.locations[Number(site)], load))
+          .map(([, p]) => p[company]),
+      );
+      const routes = new Set(this.routesFor(obs, company).map((r) => `${r.producer}-${r.consumer}`)).size;
+      const room = Math.max(0, Math.min(myDepots.length * cfg.capacity, routes * this.perRoute) - fleet);
+      const want =
+        room > 0
+          ? Math.min(room, 4) * cfg.truckPrice
+          : Number.isFinite(cheapestSite) && factoryWorthIt
+            ? cheapestSite + 2 * cfg.truckPrice
+            : 0;
+      const need = want - c.treasury;
+      if (need >= cfg.truckPrice) {
+        const ask = Math.min(need, this.shareValue(obs, company, need) * this.personality.greed);
+        const floor = Math.floor(0.75 * ask);
+        const me = obs.players[this.me];
+        if (floor >= this.cfg.auctions.minRaise && me.cash - me.held >= floor) {
+          out.push({ type: 'startAuction', company });
+          this.raiseFloor.set(company, floor);
+        }
+      }
     }
     return out;
   }

@@ -161,6 +161,22 @@ describe('in-game auctions', () => {
     expect(of(g.drainEvents(0), 'rejected')).toHaveLength(0);
   });
 
+  it('after a share sells, the company waits before auctioning another', () => {
+    const g = running();
+    g.act(0, { type: 'startAuction', company: 0 });
+    g.step();
+    g.act(1, { type: 'bid', company: 0, amount: 30 });
+    stepFor(g, 31);
+    expect(g.companies[0].shares.filter((s) => s === 1)).toHaveLength(1);
+    g.act(0, { type: 'startAuction', company: 0 });
+    g.step();
+    expect(of(g.drainEvents(0), 'rejected')).toHaveLength(1);
+    stepFor(g, g.cfg.auctions.saleCooldownSec);
+    g.act(0, { type: 'startAuction', company: 0 });
+    g.step();
+    expect(of(g.drainEvents(0), 'rejected')).toHaveLength(0);
+  });
+
   it('the bank re-offers a company nobody owns', () => {
     const g = running([0, null, null, null, null]);
     // Companies 1-4 are unowned; the bank auctions them one after another.
