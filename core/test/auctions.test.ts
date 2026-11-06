@@ -285,7 +285,7 @@ describe('the company buys back', () => {
 
 describe('determinism with the market', () => {
   it('replays an opening round with bids exactly', () => {
-    const cfg = makeGameConfig({ seed: 11 });
+    const cfg = makeGameConfig({ seed: 11, durationSec: 60 });
     const g = new Game(cfg);
     g.step();
     g.act(1, { type: 'bid', company: 0, amount: 20 });

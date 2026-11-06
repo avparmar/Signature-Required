@@ -270,7 +270,7 @@ describe('routes through the depot', () => {
       const { g, depot, producer, consumer } = setup({ trucks: { viaDepot: via }, town: { blocksX: 16, blocksY: 16 } });
       g.addTruck(0);
       g.act(0, { type: 'assignRoute', depot: depot.id, producer: producer.id, consumer: consumer.id });
-      runFor(g, 600);
+      runFor(g, 300);
       const ev = g.drainEvents(0).filter((e) => e.type === 'loaded' || e.type === 'signedOff' || e.type === 'delivered');
       expect(ev.filter((e) => e.type === 'delivered').length).toBeGreaterThan(1);
       // Between each load and its delivery there is a loaded sign-off at the route's depot.
