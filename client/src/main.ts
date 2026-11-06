@@ -551,7 +551,7 @@ function refreshCompanies(obs: Observation) {
     }
     html += `<div class="chips">${chips}${saleBtn}</div>`;
     html += `<div class="row muted small"><span>${trucks} trucks · ${depots} factor${depots === 1 ? 'y' : 'ies'} · ${routes} route${routes === 1 ? '' : 's'}</span></div>`;
-    html += `<div class="row small"><span title="Trucks and factories at what they cost, plus cash">Worth <b>${money(obs.value[c.id])}</b></span><span class="muted" title="Dividend per share: the last one paid, and the next one so far">Dividend ${lastDividend.has(c.id) ? money(lastDividend.get(c.id)!) : '—'} → ${money(c.dividendPerShare)}</span></div>`;
+    html += `<div class="row small"><span title="Trucks and factories at what they cost, plus cash">Company value <b>${money(obs.value[c.id])}</b></span><span class="muted" title="Dividend per share: the last one paid, and the next one so far">Dividend ${lastDividend.has(c.id) ? money(lastDividend.get(c.id)!) : '—'} → ${money(c.dividendPerShare)}</span></div>`;
     // A sale running: the share goes to the best bid at the end, if it's at least the minimum.
     if (sale) {
       const best = book.bid;
@@ -574,7 +574,7 @@ function refreshCompanies(obs: Observation) {
       if (book.bid && !sale) rows.push(order('bid', book.bid));
       if (book.ask) rows.push(order('ask', book.ask));
       const cb = obs.companyBid[c.id];
-      if (cb !== null) rows.push(`<div class="row small"><span title="Half its worth per share, while its cash covers that">Company buys back at ${money(cb)}</span></div>`);
+      if (cb !== null) rows.push(`<div class="row small"><span title="Half the company value per share, while its cash covers that">Company buys back at ${money(cb)}</span></div>`);
       html += rows.join('');
     }
     if (k.info.dataset.html !== html) {
@@ -624,7 +624,7 @@ function refreshCompanies(obs: Observation) {
     k.lo.textContent = money(low);
     k.lo.title = 'The least a buy order can be now';
     k.hi.textContent = money(high);
-    k.hi.title = otherAsk !== null ? 'Just below the standing sell price' : 'Nobody is selling: well above its worth per share';
+    k.hi.title = otherAsk !== null ? 'Just below the standing sell price' : 'Nobody is selling: well above the company value per share';
     // Place a buy order at that price (in a sale, that's your bid), or a sell order for one of your shares.
     k.placeBuy.textContent = myBid ? 'Raise buy' : sale ? 'Bid' : 'Place buy';
     k.placeBuy.disabled = v < low || (otherAsk !== null && v >= otherAsk) || v - myBid > free;

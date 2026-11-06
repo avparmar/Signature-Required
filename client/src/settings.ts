@@ -46,7 +46,7 @@ export const SETTINGS: Setting[] = [
   { group: 'Shares', label: 'Sale clock', section: 'auctions', key: 'clockSec', unit: 's', min: 10, max: 120, step: 5 },
   { group: 'Shares', label: 'Longest a sale can run', section: 'auctions', key: 'maxSec', unit: 's', min: 10, max: 300, step: 5, hint: 'Late bids add time, but never past this.' },
   { group: 'Shares', label: 'Wait after a company sells a share', section: 'auctions', key: 'saleCooldownSec', unit: 's', min: 0, max: 300, step: 15 },
-  { group: 'Shares', label: 'Company buys shares back at (share of its worth)', section: 'auctions', key: 'buybackShare', scale: 100, unit: '%', min: 0, max: 200, step: 5, hint: 'Of its worth per share, while its cash covers that. Also the least it sells its own shares for.' },
+  { group: 'Shares', label: 'Company buys shares back at (share of company value)', section: 'auctions', key: 'buybackShare', scale: 100, unit: '%', min: 0, max: 200, step: 5, hint: 'Of the company value per share, while its cash covers that. Also the least it sells its own shares for.' },
 ];
 
 const KEY = 'sr-settings';
