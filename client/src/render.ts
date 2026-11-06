@@ -130,7 +130,7 @@ export class Renderer {
   /** Building radius on screen. */
   get r() {
     // Small enough to leave room in the block, now that roads take most of the gap.
-    return Math.max(4, Math.min(19, this.scale * 0.22));
+    return Math.max(5, Math.min(24, this.scale * 0.27));
   }
 
   /** The location under a screen point, if any. */
@@ -382,7 +382,7 @@ export class Renderer {
       }
       if (l.kind === 'depot') {
         const owner = obs.depots[l.id];
-        const s = r * 1.05;
+        const s = r * 1.2; // factories are the big buildings: most of their block
         ctx.lineWidth = 1.5;
         if (owner === undefined) {
           const price = hl.buyFor !== null ? obs.depotPrices[l.id]?.[hl.buyFor] : undefined;
@@ -394,34 +394,50 @@ export class Renderer {
           ctx.stroke();
           ctx.setLineDash([]);
           if (price !== undefined) label(ctx, `$${price}`, x, y - s - 7, '#7a5d10');
-          // Subsidy meters: for each company you run, an arc from 12 o'clock, clockwise, in its
-          // colour, filled with the discount it has earned here (a full circle is the biggest
-          // discount). Bigger arcs are drawn first so every company's stays visible. An arc blinks
-          // when one of that company's pickups or deliveries lands in the zone.
+          // Subsidy meters: inside the site, one column per company serving the area, in company
+          // order, each filled with its progress towards the full discount (each company earns its own,
+          // so nothing overlaps). A full column carries a star. A column blinks when one of that
+          // company's pickups or deliveries lands in the zone.
           const prices = obs.depotPrices[l.id];
           if (prices && hl.meterFor.length) {
-            const h = s + 4; // the meter's square, just outside the site's outline
-            ctx.lineWidth = 3.5;
-            ctx.lineCap = 'butt';
-            ctx.strokeStyle = 'rgba(120,110,90,0.15)';
-            ctx.strokeRect(x - h, y - h, 2 * h, 2 * h);
-            const arcs = hl.meterFor
+            const cols = hl.meterFor
               .map((c) => ({ c, frac: Math.max(0, Math.min(1, (1 - prices[c] / hl.siteBase) / hl.maxSubsidy)) }))
-              .filter((m) => m.frac > 0)
-              .sort((a, b) => b.frac - a.frac);
-            for (const { c, frac } of arcs) {
-              ctx.strokeStyle = companyColor(c);
-              squareArc(ctx, x, y, h, frac);
-            }
-            ctx.lineCap = 'round';
-            for (const [c, t] of hl.flash.get(l.id) ?? []) {
-              const since = obs.t - t;
-              if (since >= 0 && since < 0.6) {
-                const g = h + 2 + since * 10;
-                ctx.strokeStyle = hexAlpha(companyColor(c), 0.8 * (1 - since / 0.6));
-                ctx.lineWidth = 2;
-                ctx.strokeRect(x - g, y - g, 2 * g, 2 * g);
-              }
+              .filter((m) => m.frac > 0);
+            if (cols.length) {
+              const pad = Math.max(2, s * 0.18);
+              const gap = Math.max(1.5, s * 0.08);
+              const left = x - s + pad;
+              const bottom = y + s - pad;
+              const full = 2 * (s - pad);
+              const w = (full - gap * (cols.length - 1)) / cols.length;
+              const flashes = hl.flash.get(l.id);
+              cols.forEach(({ c, frac }, k) => {
+                const cx = left + k * (w + gap);
+                ctx.fillStyle = hexAlpha(companyColor(c), 0.16);
+                ctx.fillRect(cx, bottom - full, w, full);
+                const t = flashes?.get(c);
+                const since = t === undefined ? Infinity : obs.t - t;
+                const blink = since >= 0 && since < 0.6 ? 1 - since / 0.6 : 0;
+                ctx.fillStyle = companyColor(c);
+                ctx.fillRect(cx, bottom - full * frac, w, full * frac);
+                if (blink) {
+                  ctx.fillStyle = `rgba(255,255,255,${0.55 * blink})`;
+                  ctx.fillRect(cx, bottom - full * frac, w, full * frac);
+                }
+                ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(cx + 0.5, bottom - full * frac + 0.5, Math.max(0, w - 1), Math.max(0, full * frac - 1));
+                if (frac >= 1) {
+                  const size = Math.min(w * 0.9, full * 0.5);
+                  if (size >= 5) {
+                    ctx.fillStyle = '#ffffff';
+                    ctx.font = `${Math.round(size)}px system-ui, sans-serif`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText('★', cx + w / 2, bottom - full + size * 0.7);
+                  }
+                }
+              });
             }
           }
         } else {
@@ -489,7 +505,7 @@ export class Renderer {
           const gap = Math.max(4, r * 0.42);
           for (let k = 0; k < n; k++) {
             ctx.beginPath();
-            ctx.arc(x + (k - (n - 1) / 2) * gap, y + r * 1.35, Math.max(1.3, r * 0.14), 0, Math.PI * 2);
+            ctx.arc(x + (k - (n - 1) / 2) * gap, y + r * 1.22, Math.max(1.3, r * 0.12), 0, Math.PI * 2);
             ctx.fillStyle = k < st.level ? INK : 'rgba(0,0,0,0.13)';
             ctx.fill();
           }
@@ -708,30 +724,6 @@ function label(ctx: CanvasRenderingContext2D, text: string, x: number, y: number
   ctx.fillText(text, x, y);
 }
 
-/**
- * Stroke part of a square's outline, like a clock hand sweeping it: from the middle of the top
- * edge, clockwise, `frac` of the way round.
- */
-function squareArc(ctx: CanvasRenderingContext2D, x: number, y: number, h: number, frac: number) {
-  const pts: [number, number][] = [
-    [x, y - h],
-    [x + h, y - h],
-    [x + h, y + h],
-    [x - h, y + h],
-    [x - h, y - h],
-    [x, y - h],
-  ];
-  const lens = [h, 2 * h, 2 * h, 2 * h, h];
-  let left = frac * 8 * h;
-  ctx.beginPath();
-  ctx.moveTo(pts[0][0], pts[0][1]);
-  for (let i = 0; i < 5 && left > 0; i++) {
-    const f = Math.min(1, left / lens[i]);
-    ctx.lineTo(pts[i][0] + (pts[i + 1][0] - pts[i][0]) * f, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * f);
-    left -= lens[i];
-  }
-  ctx.stroke();
-}
 
 /** A #rrggbb colour with an alpha. */
 function hexAlpha(hex: string, a: number): string {

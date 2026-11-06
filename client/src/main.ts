@@ -304,8 +304,14 @@ function tooltip(obs: Observation) {
     if (owner === undefined) {
       html = `<b>Free factory site ${at(l.id)}</b><div><b>Gold = subsidy zone only.</b> A company's pickups and deliveries inside it over the last ${Math.round(g.cfg.depots.subsidyWindowSec / 60)} minutes cut its price for this site.</div><div class="muted">It isn't a range: a factory here can run routes anywhere.</div>`;
       const prices = obs.depotPrices[l.id];
-      for (const c of myCompanies(obs)) html += `<div>${coName(c)} would pay ${money(prices[c])}${prices[c] < g.cfg.depots.depotBase ? ' (local subsidy)' : ''}</div>`;
-      if (!myCompanies(obs).length) html += `<div class="muted">Full price ${money(g.cfg.depots.depotBase)}, up to ${Math.round(100 * g.cfg.depots.maxSubsidy)}% off with the subsidy.</div>`;
+      const dc = g.cfg.depots;
+      const mine = new Set(myCompanies(obs));
+      const earning = obs.companies.map((c) => c.id).filter((c) => mine.has(c) || prices[c] < dc.depotBase);
+      for (const c of earning) {
+        const full = prices[c] <= Math.round(dc.depotBase * (1 - dc.maxSubsidy));
+        html += `<div>${full ? '★ ' : ''}${coName(c)}${mine.has(c) ? ' (yours)' : ''} would pay ${money(prices[c])}${full ? ', full discount' : ''}</div>`;
+      }
+      html += `<div class="muted">Full price ${money(dc.depotBase)}. Each company earns its own discount: it starts after ${dc.subsidyMinPallets} pickups and deliveries in the zone, and reaches ${Math.round(100 * dc.maxSubsidy)}% off at ${dc.subsidyTarget}, counting the last ${Math.round(dc.subsidyWindowSec / 60)} minutes.</div>`;
     } else {
       const routes = obs.routes.filter((r) => r.depot === l.id);
       const n = routes.reduce((a, r) => a + r.trucks, 0);
@@ -678,7 +684,7 @@ function showHelp() {
   <p>You're an investor. Buy shares of trucking companies at auction; whoever holds the most shares of a company is its president and runs it. Every 3 minutes each company pays its dividend to its shareholders. After 15 minutes, the richest player wins.</p>
   <ul>
   <li><b>Routes:</b> click a <b>producer</b> (round: sawmill, farm or oil well) and a <b>shop</b> (house) of the same good. A free truck picks up the raw material, takes it through your company's factory to be made into product, and delivers it to the shop. Click a route line to add a truck; right-click it to take one off.</li>
-  <li><b>Factories:</b> every load goes through one, so where your factories are decides which routes pay. Each factory also adds ${session.cfg.depots.capacity} to your truck limit. A factory site is cheaper where your company already does business.</li>
+  <li><b>Factories:</b> every load goes through one, so where your factories are decides which routes pay. Each factory also adds ${session.cfg.depots.capacity} to your truck limit. A free site gets cheaper for each company that keeps busy near it (up to ${Math.round(100 * session.cfg.depots.maxSubsidy)}% off, shown by the coloured columns inside the site; ★ means full discount).</li>
   <li><b>Businesses</b> grow when served well (dots under each one show its level) and close if neglected (flashing red).</li>
   <li><b>Map:</b> drag to pan, scroll to zoom, double-click to fit. P or Space pauses.</li>
   </ul><button id="btn-close">Got it</button></div>`;

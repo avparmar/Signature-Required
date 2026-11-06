@@ -32,7 +32,7 @@ describe('depot pricing by distance (older rule)', () => {
 });
 
 describe('depot pricing by local subsidy', () => {
-  it('discounts the full price by your share of recent service, up to the maximum subsidy', () => {
+  it('discounts the full price by your progress towards the service target, up to the maximum subsidy', () => {
     expect(subsidisedPrice(DEFAULT_DEPOTS, 0)).toBe(150);
     expect(subsidisedPrice(DEFAULT_DEPOTS, 0.5)).toBe(105);
     expect(subsidisedPrice(DEFAULT_DEPOTS, 1)).toBe(60);
@@ -70,6 +70,11 @@ describe('depot pricing by local subsidy', () => {
   it('gives no discount until a company has the minimum service in the district', () => {
     const { g, site } = serveNearSite({ subsidyMinPallets: 10_000 });
     expect(g.depotPriceFor(0, site.id)).toBe(g.cfg.depots.depotBase);
+  });
+
+  it('gives the full discount once a company reaches the service target on its own', () => {
+    const { g, site } = serveNearSite({ subsidyTarget: 6 });
+    expect(g.depotPriceFor(0, site.id)).toBe(subsidisedPrice(g.cfg.depots, 1));
   });
 
   it('gets cheaper for the company serving the district, and the discount fades when service stops', () => {

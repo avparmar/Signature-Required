@@ -628,14 +628,14 @@ export class Game {
   }
 
   /**
-   * A company's share (0 to 1) of the pallets loaded and delivered in a site's district over the
-   * subsidy window. 0 if nobody served it.
+   * A company's progress (0 to 1) towards the full discount at a site: its pickups and deliveries in
+   * the site's district over the subsidy window, against the target. 0 below the minimum.
    */
   districtShare(company: number, site: number): number {
-    const counts = this.districtCounts(site);
-    const all = counts.reduce((a, b) => a + b, 0);
-    if (counts[company] < this.cfg.depots.subsidyMinPallets) return 0;
-    return all ? counts[company] / all : 0;
+    const n = this.districtCounts(site)[company];
+    const cfg = this.cfg.depots;
+    if (n < cfg.subsidyMinPallets) return 0;
+    return Math.min(1, n / cfg.subsidyTarget);
   }
 
   /** Pallets loaded and delivered per company in a site's district over the subsidy window (cached per tick). */

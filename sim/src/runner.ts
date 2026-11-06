@@ -67,7 +67,7 @@ export function defaultTable(players: number): BotPersonality[] {
   return Array.from({ length: players }, (_, p) => (p === 0 ? PERSONALITIES.speculator : PERSONALITIES.balanced));
 }
 
-export function runGame(overrides: GameConfigOverrides, personalities: BotPersonality[] = []): GameResult {
+export function runGame(overrides: GameConfigOverrides, personalities: BotPersonality[] = [], onStep?: (g: Game) => void): GameResult {
   const cfg = makeGameConfig(overrides);
   const g = new Game(cfg);
   const table = personalities.length ? personalities : defaultTable(cfg.players);
@@ -154,6 +154,7 @@ export function runGame(overrides: GameConfigOverrides, personalities: BotPerson
     }
     phase = g.phase;
     g.step();
+    onStep?.(g);
     if (g.phase === 'running' && g.tick % 50 === 0) {
       // Bays: trucks queued (waiting for a bay, stock or demand) per building with a queue.
       for (const q of g.trucks.queues.values()) {
