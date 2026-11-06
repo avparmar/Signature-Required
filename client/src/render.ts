@@ -12,7 +12,8 @@
 import { distancesFrom, routeVia, type Location, type Observation, type Route, type Town } from '@sr/core';
 
 // Company colours stay clear of the goods' colours (wood brown, wheat gold, oil slate).
-export const COMPANY_COLORS = ['#d1452f', '#2a7ab0', '#3f9a54', '#8a5cc2', '#d24f93', '#1f9e9a'];
+// Bright and far apart: red, blue, green, purple, orange, teal (no pink next to the red).
+export const COMPANY_COLORS = ['#e8432f', '#2a86e0', '#25a84a', '#9152e0', '#f5891a', '#14b2a8'];
 export const GOOD_COLORS = ['#b07a4a', '#f0cf6a', '#4a5470', '#8fbf5a', '#b05bb0'];
 /** Producer icons (raw material) and shop icons (product), by good. */
 export const RAW_ICONS = ['🪵', '🌾', '🛢️'];
@@ -44,6 +45,8 @@ export interface Highlights {
   district: number;
   /** Companies whose subsidy meters show on free factory sites (the ones you run). */
   meterFor: number[];
+  /** The company whose card the pointer is over (shows the subsidy meters on every free site). */
+  cardCompany: number | null;
   /** Full price of a factory site and the biggest discount, for the meters. */
   siteBase: number;
   maxSubsidy: number;
@@ -123,6 +126,12 @@ export class Renderer {
   }
 
   /** Road width on screen: most of the gap between blocks, room for two lanes. */
+  /** Truck size on screen (pixels): long enough that the company colour shows around the load. */
+  get truckSize() {
+    const w = Math.max(11, Math.min(26, this.scale * 0.52));
+    return { w, h: w * 0.42 };
+  }
+
   get roadWidth() {
     return Math.max(3, Math.min(24, this.scale * 0.31));
   }
@@ -382,74 +391,77 @@ export class Renderer {
       }
       if (l.kind === 'depot') {
         const owner = obs.depots[l.id];
-        const s = r * 1.2; // factories are the big buildings: most of their block
+        const s = r * 1.05; // on par with the other buildings, leaving a sidewalk round the block
         ctx.lineWidth = 1.5;
         if (owner === undefined) {
           const price = hl.buyFor !== null ? obs.depotPrices[l.id]?.[hl.buyFor] : undefined;
-          // An empty factory: the same building as an owned one, in plain grey with a dashed outline.
-          ctx.fillStyle = price !== undefined ? '#f3e6b8' : '#e2ddd2';
+          const prices = obs.depotPrices[l.id];
+          // Subsidy meters show while you hover this site or a company card, or are buying a factory.
+          const showMeter = !!prices && (hovered || hl.cardCompany !== null || hl.buyFor !== null);
+          ctx.fillStyle = price !== undefined ? '#fff6d6' : '#ffffff';
           ctx.strokeStyle = price !== undefined ? '#b08a1e' : '#9a9283';
-          ctx.setLineDash([3, 3]);
           roundRect(ctx, x - s, y - s, 2 * s, 2 * s, 3);
           ctx.fill();
           ctx.stroke();
-          ctx.setLineDash([]);
-          // Its garage door, which holds the subsidy meter.
-          const door = { left: x - s * 0.72, top: y - s * 0.3, w: s * 1.44, h: s * 1.08 };
-          ctx.fillStyle = 'rgba(255,255,255,0.9)';
-          ctx.fillRect(door.left, door.top, door.w, door.h);
-          ctx.strokeStyle = 'rgba(0,0,0,0.18)';
-          ctx.lineWidth = 1;
-          ctx.strokeRect(door.left + 0.5, door.top + 0.5, door.w - 1, door.h - 1);
           if (price !== undefined) label(ctx, `$${price}`, x, y - s - 7, '#7a5d10');
-          // Subsidy meters: in the door, one column for each of the (up to three) companies furthest
-          // along here, in company order, each filled with its progress towards the full discount (each company earns its own,
-          // so nothing overlaps). A full column carries a star. A column blinks when one of that
-          // company's pickups or deliveries lands in the zone.
-          const prices = obs.depotPrices[l.id];
-          if (prices && hl.meterFor.length) {
-            const cols = hl.meterFor
+          if (!showMeter) {
+            // A plain white factory, with the same garage door as an owned one.
+            ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x - s * 0.55 + 0.5, y - s * 0.1 + 0.5, s * 1.1 - 1, s * 0.85 - 1);
+            for (let k = 1; k < 3; k++) {
+              ctx.beginPath();
+              ctx.moveTo(x - s * 0.55, y - s * 0.1 + (k * s * 0.85) / 3);
+              ctx.lineTo(x + s * 0.55, y - s * 0.1 + (k * s * 0.85) / 3);
+              ctx.stroke();
+            }
+          } else {
+            // Subsidy meters, filling the building: a column for each of the (up to three) companies
+            // furthest along here (always including a hovered company card's), in company order,
+            // each filled with its progress towards the full discount. A full column carries a star,
+            // and a column blinks when one of that company's pickups or deliveries lands in the zone.
+            const all = hl.meterFor
               .map((c) => ({ c, frac: Math.max(0, Math.min(1, (1 - prices[c] / hl.siteBase) / hl.maxSubsidy)) }))
               .filter((m) => m.frac > 0)
-              .sort((a, b) => b.frac - a.frac || a.c - b.c)
-              .slice(0, 3)
-              .sort((a, b) => a.c - b.c);
-            if (cols.length) {
-              const pad = Math.max(1.5, s * 0.1);
-              const gap = Math.max(1.5, s * 0.08);
-              const bottom = door.top + door.h - pad;
-              const full = door.h - 2 * pad;
-              const w = (door.w - 2 * pad - gap * 2) / 3; // always three slots, so columns keep their width
-              const left = door.left + pad + ((3 - cols.length) * (w + gap)) / 2; // centred
-              const flashes = hl.flash.get(l.id);
-              cols.forEach(({ c, frac }, k) => {
-                const cx = left + k * (w + gap);
-                ctx.fillStyle = hexAlpha(companyColor(c), 0.16);
-                ctx.fillRect(cx, bottom - full, w, full);
-                const t = flashes?.get(c);
-                const since = t === undefined ? Infinity : obs.t - t;
-                const blink = since >= 0 && since < 0.6 ? 1 - since / 0.6 : 0;
-                ctx.fillStyle = companyColor(c);
+              .sort((a, b) => b.frac - a.frac || a.c - b.c);
+            let cols = all.slice(0, 3);
+            const focus = all.find((m) => m.c === hl.cardCompany);
+            if (focus && !cols.includes(focus)) cols = [...cols.slice(0, 2), focus];
+            cols.sort((a, b) => a.c - b.c);
+            const pad = Math.max(2, s * 0.14);
+            const gap = Math.max(1.5, s * 0.08);
+            const bottom = y + s - pad;
+            const full = 2 * (s - pad);
+            const w = (full - gap * 2) / 3; // always three slots, so columns keep their width
+            const left = x - s + pad + ((3 - cols.length) * (w + gap)) / 2; // centred
+            const flashes = hl.flash.get(l.id);
+            cols.forEach(({ c, frac }, k) => {
+              const cx = left + k * (w + gap);
+              ctx.fillStyle = hexAlpha(companyColor(c), 0.16);
+              ctx.fillRect(cx, bottom - full, w, full);
+              const t = flashes?.get(c);
+              const since = t === undefined ? Infinity : obs.t - t;
+              const blink = since >= 0 && since < 0.6 ? 1 - since / 0.6 : 0;
+              ctx.fillStyle = companyColor(c);
+              ctx.fillRect(cx, bottom - full * frac, w, full * frac);
+              if (blink) {
+                ctx.fillStyle = `rgba(255,255,255,${0.55 * blink})`;
                 ctx.fillRect(cx, bottom - full * frac, w, full * frac);
-                if (blink) {
-                  ctx.fillStyle = `rgba(255,255,255,${0.55 * blink})`;
-                  ctx.fillRect(cx, bottom - full * frac, w, full * frac);
+              }
+              ctx.strokeStyle = c === hl.cardCompany ? INK : 'rgba(0,0,0,0.35)';
+              ctx.lineWidth = c === hl.cardCompany ? 1.5 : 1;
+              ctx.strokeRect(cx + 0.5, bottom - full * frac + 0.5, Math.max(0, w - 1), Math.max(0, full * frac - 1));
+              if (frac >= 1) {
+                const size = Math.min(w * 0.95, full * 0.5);
+                if (size >= 5) {
+                  ctx.fillStyle = '#ffffff';
+                  ctx.font = `${Math.round(size)}px system-ui, sans-serif`;
+                  ctx.textAlign = 'center';
+                  ctx.textBaseline = 'middle';
+                  ctx.fillText('★', cx + w / 2, bottom - full + size * 0.7);
                 }
-                ctx.strokeStyle = 'rgba(0,0,0,0.35)';
-                ctx.lineWidth = 1;
-                ctx.strokeRect(cx + 0.5, bottom - full * frac + 0.5, Math.max(0, w - 1), Math.max(0, full * frac - 1));
-                if (frac >= 1) {
-                  const size = Math.min(w * 0.95, full * 0.6);
-                  if (size >= 5) {
-                    ctx.fillStyle = '#ffffff';
-                    ctx.font = `${Math.round(size)}px system-ui, sans-serif`;
-                    ctx.textAlign = 'center';
-                    ctx.textBaseline = 'middle';
-                    ctx.fillText('★', cx + w / 2, bottom - full + size * 0.7);
-                  }
-                }
-              });
-            }
+              }
+            });
           }
         } else {
           ctx.fillStyle = companyColor(owner);
@@ -550,8 +562,7 @@ export class Renderer {
     }
 
     // Trucks.
-    const tw = Math.max(8, Math.min(18, this.scale * 0.4));
-    const th = tw * 0.6;
+    const { w: tw, h: th } = this.truckSize;
     const tById = new Map(obs.trucks.map((t) => [t.id, t]));
     for (const p of trucks) {
       const t = tById.get(p.id)!;
@@ -561,25 +572,33 @@ export class Renderer {
       ctx.save();
       ctx.translate(x, y);
       if (t.state === 'driving') ctx.rotate(Math.abs(p.dx) + Math.abs(p.dy) > 1e-6 ? ang : 0);
-      // Body.
-      ctx.fillStyle = companyColor(t.company);
+      // A long truck in the company's colour: the trailer (with its load set inside a coloured rim)
+      // and, in front, a cab with a pale windscreen.
+      const col = companyColor(t.company);
+      const cabW = tw * 0.24;
+      const gapW = Math.max(1, tw * 0.04);
+      const trW = tw - cabW - gapW;
+      ctx.fillStyle = col;
       ctx.strokeStyle = INK;
       ctx.lineWidth = 1;
-      roundRect(ctx, -tw / 2, -th / 2, tw, th, 2);
+      roundRect(ctx, -tw / 2, -th / 2, trW, th, 1.5);
       ctx.fill();
       ctx.stroke();
-      // Cab.
-      ctx.fillStyle = 'rgba(0,0,0,0.4)';
-      ctx.fillRect(tw / 2 - tw * 0.26, -th / 2, tw * 0.26, th);
+      roundRect(ctx, tw / 2 - cabW, -th / 2 + th * 0.06, cabW, th * 0.88, 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      ctx.fillRect(tw / 2 - cabW * 0.42, -th / 2 + th * 0.2, cabW * 0.26, th * 0.6);
       // Open-top bed: raw material is a rough crate (cross-braced), product a wrapped pallet
       // (with a band), both in the good's colour; an empty bed is dark.
-      const bx = -tw / 2 + 1.5;
-      const bw = tw * 0.6;
+      const rim = Math.max(1.5, th * 0.2);
+      const bx = -tw / 2 + rim;
+      const bw = trW - 2 * rim;
       if (t.cargo) {
-        const x0 = bx - 1;
-        const y0 = -th / 2 - 1;
-        const w = bw + 1;
-        const h = th + 2;
+        const x0 = bx;
+        const y0 = -th / 2 + rim;
+        const w = bw;
+        const h = th - 2 * rim;
         ctx.fillStyle = goodColor(t.cargo.good);
         ctx.fillRect(x0, y0, w, h);
         ctx.strokeStyle = INK;
@@ -598,8 +617,8 @@ export class Renderer {
           ctx.fillRect(x0 + w * 0.4, y0, w * 0.2, h);
         }
       } else {
-        ctx.fillStyle = 'rgba(0,0,0,0.22)';
-        ctx.fillRect(bx, -th / 2 + 1.5, bw, th - 3);
+        ctx.fillStyle = 'rgba(0,0,0,0.25)';
+        ctx.fillRect(bx, -th / 2 + rim, bw, th - 2 * rim);
       }
       ctx.restore();
       // Being processed at the factory.
@@ -628,7 +647,7 @@ export class Renderer {
     // Trucks waiting or loading at a building park along the kerbs around its block, grouped by
     // company (a gap between companies), going clockwise from the top-left corner.
     const park = (cx: number, cy: number, ids: number[]) => {
-      const truckLen = Math.max(8, Math.min(18, this.scale * 0.4)) / this.scale;
+      const truckLen = this.truckSize.w / this.scale;
       const spacing = truckLen * 1.5;
       // The lane nearest the block: half a block out, less a quarter of the road's width.
       const kerb = 0.5 - this.roadWidth / this.scale / 4;

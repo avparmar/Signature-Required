@@ -60,6 +60,7 @@ const hl: Highlights = {
   spotlight: null,
   district: session.cfg.depots.districtBlocks,
   meterFor: [],
+  cardCompany: null,
   siteBase: session.cfg.depots.depotBase,
   maxSubsidy: session.cfg.depots.maxSubsidy,
   flash: new Map(),
@@ -409,7 +410,7 @@ function refreshPanels(obs: Observation) {
           })
           .join('') + (bank ? `<span class="chip bank" title="Still with the bank">bank ×${bank}</span>` : '');
       const routes = obs.routes.filter((r) => r.company === c.id).length;
-      return `<div class="co"><div class="row"><span>${sw(c.id)}<b>${coName(c.id)}</b></span><span>${money(c.treasury)}</span></div><div class="chips">${chips}</div><div class="row muted small"><span>${trucks} trucks · ${depots} factor${depots === 1 ? 'y' : 'ies'} · ${routes} route${routes === 1 ? '' : 's'}</span></div><div class="row muted small"><span>Next dividend</span><span>${money(c.dividendPerShare)}/share</span></div></div>`;
+      return `<div class="co" data-cohover="${c.id}"><div class="row"><span>${sw(c.id)}<b>${coName(c.id)}</b></span><span>${money(c.treasury)}</span></div><div class="chips">${chips}</div><div class="row muted small"><span>${trucks} trucks · ${depots} factor${depots === 1 ? 'y' : 'ies'} · ${routes} route${routes === 1 ? '' : 's'}</span></div><div class="row muted small"><span>Next dividend</span><span>${money(c.dividendPerShare)}/share</span></div></div>`;
     })
     .join('');
 
@@ -538,7 +539,7 @@ function refreshMyCompanies(obs: Observation) {
     const free = freeTrucks(obs, id);
     const factories = Object.values(obs.depots).filter((o) => o === id).length;
     const limit = factories * g.cfg.depots.capacity;
-    html += `<div class="co${currentCompany(obs) === id ? ' active' : ''}" data-company="${id}"><div class="row big"><span>${sw(id)}<b>${coName(id)}</b></span><b>${money(c.treasury)}</b></div>`;
+    html += `<div class="co${currentCompany(obs) === id ? ' active' : ''}" data-company="${id}" data-cohover="${id}"><div class="row big"><span>${sw(id)}<b>${coName(id)}</b></span><b>${money(c.treasury)}</b></div>`;
     const full = trucks.length >= limit;
     const canPay = c.treasury >= g.cfg.depots.truckPrice;
     const home = Object.entries(obs.depots).find(([, o]) => o === id)?.[0];
@@ -756,6 +757,11 @@ function newGame() {
 }
 
 $('btn-pause').onclick = togglePause;
+// Hovering a company card shows the subsidy meters on every free factory site.
+document.addEventListener('pointermove', (e) => {
+  const card = (e.target as HTMLElement | null)?.closest?.('[data-cohover]') as HTMLElement | null;
+  hl.cardCompany = card ? Number(card.dataset.cohover) : null;
+});
 $('btn-help').onclick = showHelp;
 $<HTMLSelectElement>('speed').onchange = (e) => (session.speed = Number((e.target as HTMLSelectElement).value));
 $('btn-new').onclick = newGame;

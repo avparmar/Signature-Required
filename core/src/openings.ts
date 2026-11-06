@@ -68,11 +68,14 @@ export function chooseOpening(town: Town, live: Location[], cfg: OpeningConfig, 
   const pConsumer = consumers >= 2 * producers ? 0.35 : producers >= consumers ? 0.75 : 0.6;
   let kind: 'producer' | 'consumer' = rng.next() < pConsumer ? 'consumer' : 'producer';
   // Never right next to its own trading partner: try the other kind, then other goods.
+  // Preferably not right beside a twin (same kind and good) either.
+  const apart = (k: 'producer' | 'consumer', g: number) =>
+    live.every((l) => l.kind !== k || l.good !== g || Math.abs(l.x - lot.x) + Math.abs(l.y - lot.y) >= town.cfg.sameGap);
   const ok = (k: 'producer' | 'consumer', g: number) => pairOk(live, k, g, lot, town.cfg.pairGap);
-  if (!ok(kind, good)) {
+  if (!ok(kind, good) || !apart(kind, good)) {
     const options: ['producer' | 'consumer', number][] = [];
     for (let k = 0; k < town.cfg.goods.length; k++) for (const kk of [kind, kind === 'producer' ? 'consumer' : 'producer'] as const) options.push([kk, (good + k) % town.cfg.goods.length]);
-    const pick = options.find(([kk, g]) => ok(kk, g));
+    const pick = options.find(([kk, g]) => ok(kk, g) && apart(kk, g)) ?? options.find(([kk, g]) => ok(kk, g));
     if (!pick) return null;
     [kind, good] = pick;
   }
