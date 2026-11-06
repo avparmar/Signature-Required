@@ -255,6 +255,7 @@ export class Renderer {
       }
       ctx.stroke();
       ctx.globalAlpha = 1;
+      label(ctx, 'subsidy zone', this.X(site.x), this.Y(site.y) - this.r * 1.9, '#7a5d10');
     }
 
     // Routes, along the streets.

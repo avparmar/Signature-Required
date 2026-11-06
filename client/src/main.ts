@@ -286,10 +286,10 @@ function tooltip(obs: Observation) {
   } else if (l && l.kind === 'depot') {
     const owner = obs.depots[l.id];
     if (owner === undefined) {
-      html = `<b>Free factory site ${at(l.id)}</b><div class="muted">Shaded: within ${g.cfg.depots.districtBlocks} blocks. A company's pickups and deliveries here in the last ${Math.round(g.cfg.depots.subsidyWindowSec / 60)} minutes cut its price.</div>`;
+      html = `<b>Free factory site ${at(l.id)}</b><div><b>Gold = subsidy zone only.</b> A company's pickups and deliveries inside it over the last ${Math.round(g.cfg.depots.subsidyWindowSec / 60)} minutes cut its price for this site.</div><div class="muted">It isn't a range: a factory here can run routes anywhere.</div>`;
       const prices = obs.depotPrices[l.id];
       for (const c of myCompanies(obs)) html += `<div>${coName(c)} would pay ${money(prices[c])}${prices[c] < g.cfg.depots.depotBase ? ' (local subsidy)' : ''}</div>`;
-      if (!myCompanies(obs).length) html += `<div class="muted">Full price ${money(g.cfg.depots.depotBase)}, less a subsidy for companies serving the area.</div>`;
+      if (!myCompanies(obs).length) html += `<div class="muted">Full price ${money(g.cfg.depots.depotBase)}, up to ${Math.round(100 * g.cfg.depots.maxSubsidy)}% off with the subsidy.</div>`;
     } else {
       const routes = obs.routes.filter((r) => r.depot === l.id);
       const n = routes.reduce((a, r) => a + r.trucks, 0);
