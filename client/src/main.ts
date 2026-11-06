@@ -618,8 +618,8 @@ function handleEvents(evs: GameEvent[]) {
   for (const e of evs) {
     let text: string | null = null;
     let cls = '';
-    // A pickup or delivery by a company you run: blink its arc on the free sites whose zone it's in.
-    if ((e.type === 'loaded' || e.type === 'delivered') && mine.has(e.company)) {
+    // A pickup or delivery by any company: blink its arc on the free sites whose zone it's in.
+    if (e.type === 'loaded' || e.type === 'delivered') {
       const node = g.town.locations[e.location].node;
       for (const site of Object.keys(obs.depotPrices).map(Number))
         if (siteReach(site)[node] <= g.cfg.depots.districtBlocks) {
@@ -709,7 +709,7 @@ function frame(now: number) {
   }
   tooltip(obs);
   hl.spotlight = obs.auction ? obs.auction.company : null;
-  hl.meterFor = myCompanies(obs);
+  hl.meterFor = obs.companies.map((c) => c.id); // public: everyone sees every company's progress
   renderer.draw(
     obs,
     [...targets.keys()].map((id) => ({ id, ...shown.get(id)! })),

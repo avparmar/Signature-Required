@@ -228,15 +228,30 @@ export class Renderer {
     ctx.strokeStyle = ROAD;
     ctx.lineWidth = roadW;
     const term = town.graph.terminal;
+    // Square ends (so a road stopping at the river stops square), with round joins drawn at every
+    // intersection and bend, so corners stay rounded.
+    ctx.lineCap = 'butt';
+    const degree = new Array(town.graph.nodes.length).fill(0);
     ctx.beginPath();
     for (const e of town.graph.edges) {
       if (term[e.a] || term[e.b]) continue;
+      degree[e.a]++;
+      degree[e.b]++;
       const a = town.graph.nodes[e.a];
       const b = town.graph.nodes[e.b];
       ctx.moveTo(this.X(a.x), this.Y(a.y));
       ctx.lineTo(this.X(b.x), this.Y(b.y));
     }
     ctx.stroke();
+    ctx.fillStyle = ROAD;
+    ctx.beginPath();
+    for (const n of town.graph.nodes) {
+      if (degree[n.id] < 2) continue;
+      ctx.moveTo(this.X(n.x) + roadW / 2, this.Y(n.y));
+      ctx.arc(this.X(n.x), this.Y(n.y), roadW / 2, 0, Math.PI * 2);
+    }
+    ctx.fill();
+    ctx.lineCap = 'round';
     // Centre lines, when zoomed in enough to see the lanes.
     if (this.scale >= 30) {
       ctx.strokeStyle = 'rgba(255,255,255,0.75)';
@@ -253,18 +268,41 @@ export class Renderer {
       ctx.stroke();
       ctx.setLineDash([]);
     }
+    // Bridges: a flat deck the width of the road, square-ended, with a railing along each side.
     if (bridges.size) {
-      ctx.strokeStyle = '#a07c55';
-      ctx.lineWidth = roadW * 1.3;
-      ctx.beginPath();
       for (const e of town.graph.edges) {
         if (!bridges.has(e.a < e.b ? `${e.a}-${e.b}` : `${e.b}-${e.a}`)) continue;
         const a = town.graph.nodes[e.a];
         const b = town.graph.nodes[e.b];
-        ctx.moveTo(this.X(a.x), this.Y(a.y));
-        ctx.lineTo(this.X(b.x), this.Y(b.y));
+        const ax = this.X(a.x);
+        const ay = this.Y(a.y);
+        const bx = this.X(b.x);
+        const by = this.Y(b.y);
+        const len = Math.hypot(bx - ax, by - ay) || 1;
+        const nx = (-(by - ay) / len) * (roadW / 2);
+        const ny = ((bx - ax) / len) * (roadW / 2);
+        // Trim the ends a little so the deck meets the bank roads rather than covering them.
+        const tx = ((bx - ax) / len) * (roadW / 2);
+        const ty = ((by - ay) / len) * (roadW / 2);
+        ctx.fillStyle = '#cdbfa8';
+        ctx.beginPath();
+        ctx.moveTo(ax + tx + nx, ay + ty + ny);
+        ctx.lineTo(bx - tx + nx, by - ty + ny);
+        ctx.lineTo(bx - tx - nx, by - ty - ny);
+        ctx.lineTo(ax + tx - nx, ay + ty - ny);
+        ctx.closePath();
+        ctx.fill();
+        ctx.strokeStyle = '#7a6550';
+        ctx.lineWidth = Math.max(1, roadW * 0.12);
+        ctx.lineCap = 'butt';
+        ctx.beginPath();
+        ctx.moveTo(ax + tx + nx, ay + ty + ny);
+        ctx.lineTo(bx - tx + nx, by - ty + ny);
+        ctx.moveTo(ax + tx - nx, ay + ty - ny);
+        ctx.lineTo(bx - tx - nx, by - ty - ny);
+        ctx.stroke();
+        ctx.lineCap = 'round';
       }
-      ctx.stroke();
     }
 
     // A hovered free factory site: shade its district, where a company's pickups and deliveries
