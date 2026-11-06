@@ -562,14 +562,11 @@ function refreshCompanies(obs: Observation) {
     // Folded, the card stops here (plus a line for a running sale); hovering or pinning shows the rest.
     if (sale) {
       const best = book.bid;
-      html += `<div class="row small sale-line"><b>${sale.opening ? 'Opening sale' : 'Sale'} ${Math.ceil(sale.timeLeft)}s</b><span>${best ? `best ${money(best.price)} (${who(best.player)})` : 'no bids yet'}</span></div>`;
-    } else if (obs.phase === 'running') {
-      const ask = book.ask?.price;
-      const bid = Math.max(book.bid?.price ?? 0, obs.companyBid[c.id] ?? 0);
-      html += `<div class="row small muted fold-only"><span>Buy ${ask !== undefined ? money(ask) : '—'} · Sell ${bid > 0 ? money(bid) : '—'}</span><span>Div ${money(c.dividendPerShare)}</span></div>`;
+      html += `<div class="row small sale-line fold-only"><b>${sale.opening ? 'Opening sale' : 'Sale'} ${Math.ceil(sale.timeLeft)}s</b><span>${best ? `best ${money(best.price)} (${who(best.player)})` : 'no bids yet'}</span></div>`;
     }
     html += '<div class="more">';
-    html += `<div class="row small muted"><span>${trucks} trucks · ${depots} factor${depots === 1 ? 'y' : 'ies'} · ${routes} route${routes === 1 ? '' : 's'}</span><span title="Dividend per share: the last one paid → the next one so far">Div ${lastDividend.has(c.id) ? money(lastDividend.get(c.id)!) : '—'} → ${money(c.dividendPerShare)}</span></div>`;
+    html += `<div class="row small muted"><span>${trucks} trucks · ${depots} factor${depots === 1 ? 'y' : 'ies'} · ${routes} route${routes === 1 ? '' : 's'}</span></div>`;
+    html += `<div class="row small muted"><span>Dividend per share</span><span>last ${lastDividend.has(c.id) ? money(lastDividend.get(c.id)!) : '—'} · next ${money(c.dividendPerShare)}</span></div>`;
     // A sale running: the share goes to the best bid at the end, if it's at least the minimum.
     if (sale) {
       const best = book.bid;
@@ -1038,7 +1035,7 @@ function handleEvents(evs: GameEvent[]) {
         e.buyer === 'company'
           ? `${cap(playerName(e.seller, obs.me))} sold a share of ${coName(e.company)} back to it for ${money(e.price)}`
           : `${cap(playerName(e.buyer, obs.me))} bought a share of ${coName(e.company)} from ${playerName(e.seller, obs.me)} for ${money(e.price)}`;
-    else if (e.type === 'askPosted') text = `${cap(playerName(e.player, obs.me))} ${e.player === obs.me && !watching ? 'offer' : 'offers'} a share of ${coName(e.company)} for ${money(e.price)}`;
+    else if (e.type === 'askPosted' && e.player === obs.me && !watching) text = `${cap(playerName(e.player, obs.me))} ${e.player === obs.me && !watching ? 'offer' : 'offers'} a share of ${coName(e.company)} for ${money(e.price)}`;
     else if (e.type === 'payout' && e.paid[session.seat]) {
       text = `Dividend from ${coName(e.company)}: ${money(e.paid[session.seat])}${e.final ? ' (final)' : ''}`;
       cls = 'good';
