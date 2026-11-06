@@ -12,6 +12,8 @@
 import { distancesFrom, makeGameConfig, minimumBid, stillBidding, type GameConfig, type GameConfigOverrides, type GameEvent, type Location, type Observation } from '@sr/core';
 import { Renderer, companyColor, companySlot, coordOf, drawBusiness, drawFactory, goodColor, pickCompanySlots, type Highlights } from './render.js';
 import { Session } from './session.js';
+import type { Match } from './match.js';
+import { GuestLobby, HostLobby, normalizeCode } from './net.js';
 import { SETTINGS, loadSettings, mergeOverrides, overridesFrom, saveSettings, valueIn, type Setting } from './settings.js';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -44,7 +46,11 @@ const coTicker = (c: number) => COMPANY_NAMES[companySlot(c)][1];
 const holdingChip = (c: number, n: number, pres: boolean) =>
   `<span class="chip co-chip${pres ? ' pres' : ''}" style="background:${companyColor(c)}" title="${coName(c)}: ${n} share${n === 1 ? '' : 's'}${pres ? ', president' : ''}">${pres ? '♔ ' : ''}${coTicker(c)} ×${n}</span>`;
 // While watching the bots, Player 1 isn't you.
-const playerName = (p: number, me: number) => (p === me && !watching ? 'you' : `player ${p + 1}`);
+const playerName = (p: number, me: number) => (p === me && !watching ? 'you' : seatName(p));
+/** A seat's name: the person's name online, otherwise Player N. */
+const seatName = (p: number) => session.names[p] || `Player ${p + 1}`;
+/** A short label for chips: their name (trimmed) online, otherwise PN. */
+const seatShort = (p: number) => (session.names[p] ? session.names[p].slice(0, 8) : `P${p + 1}`);
 const fmtClock = (sec: number) => {
   const s = Math.max(0, Math.ceil(sec));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -71,7 +77,7 @@ function overridesFromUrl(): GameConfigOverrides {
 
 /** Watching the bots play (?watch=1, or from the settings or welcome card): every seat is a bot. */
 let watching = new URLSearchParams(location.search).get('watch') === '1';
-let session = new Session({ overrides: mergeOverrides(loadSettings(), overridesFromUrl()), watch: watching });
+let session: Match = new Session({ overrides: mergeOverrides(loadSettings(), overridesFromUrl()), watch: watching });
 pickCompanySlots(session.cfg.companies, session.cfg.seed);
 const renderer = new Renderer($<HTMLCanvasElement>('map'), session.game.town);
 renderer.via = session.cfg.trucks.viaDepot;
@@ -435,7 +441,7 @@ function refreshPanels(obs: Observation) {
           return holdingChip(c.id, n, c.presidents.includes(p.id));
         })
         .join('');
-      return `<div class="co"><div class="row"><span><b>Player ${p.id + 1}</b></span><span>${money(p.cash)}</span></div><div class="chips">${shares || '<span class="muted small">No shares</span>'}</div></div>`;
+      return `<div class="co"><div class="row"><span><b>${seatName(p.id)}</b></span><span>${money(p.cash)}</span></div><div class="chips">${shares || '<span class="muted small">No shares</span>'}</div></div>`;
     })
     .join('');
 
@@ -458,7 +464,7 @@ function refreshPanels(obs: Observation) {
             const pres = c.presidents.includes(pl);
             const n = holders.get(pl)!;
             const you = pl === obs.me && !watching;
-            return `<span class="chip${you ? ' you' : ''}${pres ? ' pres' : ''}" title="${you ? 'You' : `Player ${pl + 1}`}: ${n} share${n === 1 ? '' : 's'}${pres ? ', president' : ''}">${pres ? '♔ ' : ''}${you ? 'You' : `P${pl + 1}`} ×${n}</span>`;
+            return `<span class="chip${you ? ' you' : ''}${pres ? ' pres' : ''}" title="${you ? 'You' : seatName(pl)}: ${n} share${n === 1 ? '' : 's'}${pres ? ', president' : ''}">${pres ? '♔ ' : ''}${you ? 'You' : seatShort(pl)} ×${n}</span>`;
           })
           .join('') + (bank ? `<span class="chip bank" title="Still with the bank">bank ×${bank}</span>` : '');
       const routes = obs.routes.filter((r) => r.company === c.id).length;
@@ -941,11 +947,11 @@ function endScreen(obs: Observation) {
   shownEnd = true;
   const ranking = [...obs.players].sort((a, b) => b.cash - a.cash);
   const rows = ranking
-    .map((p, i) => `<tr class="${p.id === obs.me && !watching ? 'me' : ''}"><td>${i + 1}</td><td>${p.id === obs.me && !watching ? 'You' : `Player ${p.id + 1}`}</td><td>${money(p.cash)}</td></tr>`)
+    .map((p, i) => `<tr class="${p.id === obs.me && !watching ? 'me' : ''}"><td>${i + 1}</td><td>${p.id === obs.me && !watching ? 'You' : seatName(p.id)}</td><td>${money(p.cash)}</td></tr>`)
     .join('');
   const place = ranking.findIndex((p) => p.id === obs.me) + 1;
   const ov = $('overlay');
-  const title = watching ? `Player ${ranking[0].id + 1} wins!` : place === 1 ? 'You win!' : `You finished ${ordinal(place)}`;
+  const title = watching ? `${seatName(ranking[0].id)} wins!` : place === 1 ? 'You win!' : `You finished ${ordinal(place)}`;
   // The final sample, so the charts run to the end.
   lastHistory = -Infinity;
   sampleHistory({ ...obs, phase: 'running' } as Observation);
@@ -960,7 +966,7 @@ function endScreen(obs: Observation) {
     const players = key === 'cash';
     const n = players ? obs.players.length : obs.companies.length;
     const series = Array.from({ length: n }, (_, i) => ({
-      label: players ? (i === obs.me && !watching ? 'You' : `Player ${i + 1}`) : `${coTicker(i)} · ${coName(i)}`,
+      label: players ? (i === obs.me && !watching ? 'You' : seatName(i)) : `${coTicker(i)} · ${coName(i)}`,
       color: players ? ['#23201b', '#8a8273', '#c9a24a', '#5f86a8'][i % 4] : companyColor(i),
       points: history.map((h) => [h.t, (h as unknown as Record<string, number[]>)[key][i]] as [number, number]),
     }));
@@ -986,7 +992,7 @@ const GUIDE: { img?: string[]; icons?: GuideIcons; title: string; text: string }
     text: `<p>You're an <b>investor</b> in a busy little town. Trucking companies haul goods from producers to shops, and you <span class="hl">buy shares in them</span>. Every delivery fills their dividend pots, and the pots get paid out to shareholders. After 15 minutes, the <b>richest player wins</b>.</p>
       <p>The next pages show you how to:</p>
       <ol class="guide-list"><li>take control of a company</li><li>set up a route: producer, factory, shop</li><li>run your routes from the sidebar</li><li>buy more factories</li><li>get paid</li></ol>
-      <p class="muted small">Or <a href="#" id="watch-bots">just watch the bots play</a> for a while.</p>`,
+      <p class="muted small">Or <a href="#" id="watch-bots">just watch the bots play</a> for a while. To play with friends, use <b>Play online</b> at the top.</p>`,
   },
   {
     img: ['auction'],
@@ -1077,7 +1083,7 @@ function showHelp(step = 0) {
   paintGuideIcons(ov);
   const wasPaused = helpWasPaused ?? session.paused;
   helpWasPaused = wasPaused;
-  session.paused = true;
+  if (!session.multiplayer) session.paused = true; // online, the game goes on for everyone
   ov.querySelectorAll<HTMLElement>('[data-step]').forEach((b) => (b.onclick = () => showHelp(Number(b.dataset.step))));
   const close = () => {
     ov.hidden = true;
@@ -1103,6 +1109,10 @@ function frame(now: number) {
   session.update(dt);
   const obs = session.obs();
   handleEvents(session.takeEvents());
+  // Online: someone left, or the host did.
+  const notices = (session as { notices?: string[] }).notices;
+  while (notices?.length) toast(notices.shift()!, 'info');
+  if ((session as { lostHost?: boolean }).lostHost && !shownEnd) hostGone();
   sampleWaiting(obs);
   sampleHistory(obs);
   // Ease drawn truck positions towards where they are (smooth between ticks, and into queues).
@@ -1131,14 +1141,21 @@ function frame(now: number) {
 }
 
 function togglePause() {
+  if (!session.canControlTime) return toast('Only the host can pause.', 'info');
   session.paused = !session.paused;
   $('btn-pause').textContent = session.paused ? '▶' : '⏸';
 }
 
 function newGame(watch = false) {
-  watching = watch;
   const { seed: _replay, ...fresh } = overridesFromUrl(); // a new game gets a new town
-  session = new Session({ overrides: mergeOverrides(loadSettings(), fresh), watch });
+  beginMatch(new Session({ overrides: mergeOverrides(loadSettings(), fresh), watch }));
+}
+
+/** Switch the screen to a match (solo, watching, hosted or joined), resetting everything per game. */
+function beginMatch(m: Match) {
+  session.dispose();
+  session = m;
+  watching = m.watch;
   pickCompanySlots(session.cfg.companies, session.cfg.seed);
   routeLog.clear();
   lastDividend.clear();
@@ -1148,7 +1165,12 @@ function newGame(watch = false) {
   waitLog.clear();
   lastWaitSample = -1;
   hl.saturated = new Set();
-  session.speed = Number($<HTMLSelectElement>('speed').value);
+  // Online, time runs at 1× and only the host can pause.
+  const speedSel = $<HTMLSelectElement>('speed');
+  speedSel.disabled = session.multiplayer;
+  if (session.multiplayer) speedSel.value = '1';
+  session.speed = Number(speedSel.value);
+  ($('btn-pause') as HTMLButtonElement).disabled = !session.canControlTime;
   renderer.setTown(session.game.town);
   renderer.via = session.cfg.trucks.viaDepot;
   renderer.serviceSec = session.cfg.trucks.serviceSec;
@@ -1178,7 +1200,11 @@ document.addEventListener('pointermove', (e) => {
 });
 $('btn-help').onclick = () => showHelp();
 $<HTMLSelectElement>('speed').onchange = (e) => (session.speed = Number((e.target as HTMLSelectElement).value));
-$('btn-new').onclick = () => newGame();
+$('btn-new').onclick = () => {
+  // Online, a new game leaves this one (and, for the host, ends it for everyone).
+  if (session.multiplayer && !session.done && !confirm(session.canControlTime ? 'Start a new game? This ends the online game for everyone.' : 'Leave this online game?')) return;
+  newGame();
+};
 $('btn-settings').onclick = () => showSettings();
 
 /** The ⚙ card: tune the game, then start a new one with those settings (kept in this browser). */
@@ -1200,7 +1226,7 @@ function showSettings() {
     <div class="set-buttons"><button id="set-start">Start a new game</button><button id="set-watch" class="plain">Watch the bots play</button><button id="set-reset" class="plain">Reset to defaults</button><button id="set-close" class="plain">Close</button></div></div>`;
   ov.hidden = false;
   const wasPaused = session.paused;
-  session.paused = true;
+  if (!session.multiplayer) session.paused = true;
   const inputs = [...ov.querySelectorAll<HTMLInputElement>('input[data-i]')];
   const mark = () =>
     inputs.forEach((inp) => {
@@ -1246,7 +1272,152 @@ window.addEventListener('resize', () => renderer.resize(false));
 
 renderer.resize(true);
 requestAnimationFrame(frame);
-if (!watching) showHelp();
+// ------------------------------------------------------------------ playing online
+
+/** The name you play under online (remembered in this browser). */
+function savedName(): string {
+  try {
+    return localStorage.getItem('sr-name') ?? '';
+  } catch {
+    return '';
+  }
+}
+function rememberName(n: string) {
+  try {
+    localStorage.setItem('sr-name', n);
+  } catch {
+    // Storage blocked: fine, they'll type it again next time.
+  }
+}
+
+let lobby: HostLobby | GuestLobby | null = null;
+const esc = (x: string) => x.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+
+/** The Play online card: host a room or join one. */
+function showOnline(joinCode = '') {
+  lobby?.close();
+  lobby = null;
+  const ov = $('overlay');
+  ov.innerHTML = `<div class="card online"><h1>Play online</h1>
+    <p class="muted small">One person hosts; friends join with the room code. Bots take any empty seats, and any seat whose player leaves.</p>
+    <label class="field"><span>Your name</span><input id="on-name" maxlength="16" value="${esc(savedName())}" placeholder="Name"></label>
+    <div class="online-cols">
+      <div><h2>Host</h2><p class="muted small">Uses your ⚙ settings.</p><button id="on-host">Host a game</button></div>
+      <div><h2>Join</h2><label class="field"><span>Room code</span><input id="on-code" maxlength="4" value="${esc(joinCode)}" placeholder="ABCD"></label><button id="on-join">Join</button></div>
+    </div>
+    <p id="on-err" class="bad small"></p>
+    <button id="on-close" class="plain">Back</button></div>`;
+  ov.hidden = false;
+  const name = () => {
+    const n = $<HTMLInputElement>('on-name').value.trim().slice(0, 16) || 'Player';
+    rememberName(n);
+    return n;
+  };
+  const err = (m: string) => ($('on-err').textContent = m);
+  $('on-close').onclick = () => {
+    lobby?.close();
+    lobby = null;
+    ov.hidden = true;
+  };
+  $('on-host').onclick = async () => {
+    const host = new HostLobby(name(), Math.max(2, Math.min(4, makeGameConfig(loadSettings()).players)));
+    lobby = host;
+    err('Opening a room…');
+    try {
+      await host.open();
+    } catch (e) {
+      return err((e as Error).message);
+    }
+    host.onChange = () => hostRoom(host);
+    host.onError = err;
+    hostRoom(host);
+  };
+  $('on-join').onclick = async () => {
+    const code = normalizeCode($<HTMLInputElement>('on-code').value);
+    if (code.length !== 4) return err('Room codes are 4 letters.');
+    const guest = new GuestLobby();
+    lobby = guest;
+    err('Joining…');
+    guest.onChange = () => guestRoom(guest, code);
+    guest.onError = (m) => toast(m, 'error');
+    guest.onStart = (m) => {
+      lobby = null;
+      beginMatch(m);
+    };
+    try {
+      await guest.join(code, name());
+    } catch (e) {
+      return err((e as Error).message);
+    }
+    guestRoom(guest, code);
+  };
+}
+
+const playerList = (players: { seat: number; name: string; host: boolean }[], total: number) =>
+  `<ol class="lobby-list">${Array.from({ length: total }, (_, s) => {
+    const p = players.find((x) => x.seat === s);
+    return `<li>${p ? `<b>${esc(p.name)}</b>${p.host ? ' <span class="muted">(host)</span>' : ''}` : '<span class="muted">a bot, unless someone joins</span>'}</li>`;
+  }).join('')}</ol>`;
+
+/** The host's waiting room: the code, an invite link, who's in, and Start. */
+function hostRoom(host: HostLobby) {
+  const ov = $('overlay');
+  const link = `${location.origin}${location.pathname}?join=${host.code}`;
+  const total = Math.max(2, Math.min(4, makeGameConfig(loadSettings()).players));
+  ov.innerHTML = `<div class="card online"><h1>Room ${host.code}</h1>
+    <p>Send friends the code, or this link:</p>
+    <div class="invite"><input readonly value="${link}" id="on-link"><button id="on-copy" class="plain">Copy</button></div>
+    <h2>Players</h2>${playerList(host.players, total)}
+    <p class="muted small">Keep this tab open: it runs the game for everyone.</p>
+    <div class="set-buttons"><button id="on-start">Start game</button><button id="on-cancel" class="plain">Close the room</button></div></div>`;
+  ov.hidden = false;
+  $('on-copy').onclick = () => {
+    $<HTMLInputElement>('on-link').select();
+    navigator.clipboard?.writeText(link).then(() => toast('Invite link copied.', 'info'), () => {});
+  };
+  $('on-cancel').onclick = () => {
+    host.close();
+    lobby = null;
+    ov.hidden = true;
+  };
+  $('on-start').onclick = () => {
+    lobby = null;
+    const { seed: _replay, ...fresh } = overridesFromUrl();
+    beginMatch(host.start(mergeOverrides(loadSettings(), fresh)));
+  };
+}
+
+/** A guest's waiting room. */
+function guestRoom(guest: GuestLobby, code: string) {
+  const ov = $('overlay');
+  const host = guest.players.find((p) => p.host);
+  ov.innerHTML = `<div class="card online"><h1>Room ${code}</h1>
+    <p>You're in. Waiting for ${host ? esc(host.name) : 'the host'} to start the game…</p>
+    <h2>Players</h2>${playerList(guest.players, Math.max(guest.players.length, 4))}
+    <button id="on-leave" class="plain">Leave</button></div>`;
+  ov.hidden = false;
+  $('on-leave').onclick = () => {
+    guest.close();
+    lobby = null;
+    ov.hidden = true;
+  };
+}
+
+/** The host closed their tab: the game is over. */
+function hostGone() {
+  shownEnd = true;
+  const ov = $('overlay');
+  ov.innerHTML = `<div class="card"><h1>The host left</h1><p>The game ran in their tab, so it has ended.</p><button id="btn-again">Play solo</button> <button id="btn-online2" class="plain">Play online</button></div>`;
+  ov.hidden = false;
+  $('btn-again').onclick = () => newGame();
+  $('btn-online2').onclick = () => showOnline();
+}
+
+$('btn-online').onclick = () => showOnline();
+
+const joinParam = new URLSearchParams(location.search).get('join');
+if (joinParam) showOnline(normalizeCode(joinParam));
+else if (!watching) showHelp();
 
 // For poking at a running match from the browser console.
 (window as unknown as { sr: unknown }).sr = {
