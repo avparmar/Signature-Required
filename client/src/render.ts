@@ -25,11 +25,15 @@ export const companySlot = (c: number) => companySlots[c % companySlots.length];
 export function pickCompanySlots(n: number, seed: number) {
   let x = (seed >>> 0) || 1;
   const rand = () => ((x = (Math.imul(x, 1103515245) + 12345) >>> 0) / 2 ** 32);
-  const order = COMPANY_COLORS.map((_, i) => i).sort(() => rand() - 0.5);
+  const order = COMPANY_COLORS.map((_, i) => i);
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
   const picked: number[] = [];
   for (const i of order) if (picked.length < n && !picked.some((j) => CLASHES.some(([a, b]) => (a === i && b === j) || (a === j && b === i)))) picked.push(i);
   for (const i of order) if (picked.length < n && !picked.includes(i)) picked.push(i); // more companies than clash-free colours
-  companySlots = picked.sort((a, b) => a - b);
+  companySlots = picked; // in shuffled order, so red isn't always the first company
 }
 export const GOOD_COLORS = ['#b07a4a', '#f0cf6a', '#4a5470', '#8fbf5a', '#b05bb0'];
 /** Producer icons (raw material) and shop icons (product), by good. */
@@ -554,6 +558,26 @@ export class Renderer {
           ctx.stroke();
         }
       }
+      // A premium shop (pays more per pallet): a gold coin on its roof.
+      if (st && st.kind === 'consumer' && st.price > this.palletPrice + 1e-9) {
+        const cr = Math.max(3.5, r * 0.42);
+        const ccx = x + r * 0.78;
+        const ccy = y - r * 0.78;
+        ctx.fillStyle = '#f2c230';
+        ctx.strokeStyle = '#8a6510';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(ccx, ccy, cr, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        if (cr >= 5) {
+          ctx.fillStyle = '#7a5208';
+          ctx.font = `800 ${Math.round(cr * 1.3)}px system-ui, sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('$', ccx, ccy + 0.5);
+        }
+      }
       // Closing: a slow, soft pulse rather than a hard blink (it's news, not an alarm).
       if (closing) ring(ctx, x, y, r * 1.6, `rgba(209, 52, 47, ${0.25 + 0.5 * (0.5 + 0.5 * Math.sin(now * 2.2))})`, 2.5);
       if (picked || hovered) ring(ctx, x, y, r * 1.6, picked ? INK : '#8a8273');
@@ -731,6 +755,9 @@ export class Renderer {
   puff(x: number, y: number) {
     this.puffs.push({ x, y, t0: performance.now() / 1000 });
   }
+
+  /** The ordinary pallet price: shops paying more are premium (drawn with a gold coin). */
+  palletPrice = 2.4;
 
   /** How long loading/unloading and factory processing take (seconds), for the progress pies. */
   serviceSec = 3;

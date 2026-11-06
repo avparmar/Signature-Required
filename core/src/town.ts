@@ -67,6 +67,12 @@ export interface TownConfig {
   extraDepotSites: [number, number];
   /** Empty lots where locations can open during the game. */
   emptyLots: [number, number];
+  /** Empty lots favour blocks within this many blocks of the centre... */
+  lotCentreRadius: number;
+  /** ...and within this many blocks of the edge. */
+  lotRingWidth: number;
+  /** Spare factory sites try to keep at least this far (blocks, straight line) from every other factory. */
+  depotGap: number;
   /** Rivers across the town (0 = none). Streets crossing a river are removed except for a few bridges. */
   rivers: number;
   /** Bridges per river. */
@@ -105,7 +111,10 @@ export const DEFAULT_TOWN: TownConfig = {
   bays: 2,
   companies: 5,
   extraDepotSites: [6, 9],
-  emptyLots: [20, 30],
+  emptyLots: [40, 55],
+  lotCentreRadius: 3.5,
+  lotRingWidth: 2.5,
+  depotGap: 3.5,
   rivers: 1,
   bridgesPerRiver: [2, 3],
   minSpacing: 1,
@@ -315,7 +324,7 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
   const degree = new Map<number, number>();
   for (const [a, b] of [...edges, ...diagonals]) for (const n of [a, b]) degree.set(n, (degree.get(n) ?? 0) + 1);
   const deadEnd = (b: { sides: [number, number][] }) => b.sides.some(([p, q]) => degree.get(p) === 1 || degree.get(q) === 1);
-  const place = (loc: Omit<Location, 'node' | 'x' | 'y' | 'id'>, near?: Vec): boolean => {
+  const place = (loc: Omit<Location, 'node' | 'x' | 'y' | 'id'>, near?: Vec, prefer?: (p: Vec) => number): boolean => {
     let candidates = blocks
       .map((b, i) => ({ b, i }))
       .filter(({ b }) => !b.used && free(centre(b)) && pairOk(locations, loc.kind, loc.good, centre(b), cfg.pairGap));
@@ -337,7 +346,8 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
     if (near) {
       candidates.sort((p, q) => dist(centre(p.b), near) - dist(centre(q.b), near));
       pick = candidates[Math.min(candidates.length - 1, rng.int(0, 2))];
-    } else pick = rng.pick(candidates);
+    } else if (prefer) pick = candidates[rng.weighted(candidates.map(({ b }) => prefer(centre(b))))];
+    else pick = rng.pick(candidates);
     pick.b.used = true;
     const p = centre(pick.b);
     locations.push({ ...loc, id: locations.length, x: p.x, y: p.y });
@@ -363,24 +373,44 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
     for (let k = 0; k < nc; k++) place({ kind: 'consumer', good: g, level: 1, bays: cfg.bays, startCompany: null });
   });
   const nd = rng.int(...cfg.extraDepotSites);
-  // Spread spare depot sites out: each goes near the best of a few random spots, the one furthest
-  // from every depot placed so far (so with only a handful of sites they don't bunch up).
+  // Spare depot sites go where they make companies compete: the town centre first, then between
+  // each pair of neighbouring starting depots, then between non-neighbours (an inner ring nearer the
+  // centre). Each lands near its spot, loosely (a block or so of jitter).
+  const starts = locations.filter((l) => l.kind === 'depot');
+  const mid = (a: Vec, b: Vec): Vec => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  const n = starts.length;
+  const neighbours = starts.map((s, i) => mid(s, starts[(i + 1) % n]));
+  const others: Vec[] = [];
+  for (let i = 0; i < n; i++) for (let j = i + 2; j < n; j++) if (!(i === 0 && j === n - 1)) others.push(mid(starts[i], starts[j]));
+  const spots: Vec[] = [{ x: cx, y: cy }, ...rng.shuffle(neighbours), ...rng.shuffle(others)];
+  // Several tries per spot, keeping the first that's at least `depotGap` from every other factory
+  // (or the roomiest), so sites near the same spot don't bunch up.
   for (let k = 0; k < nd; k++) {
+    const target = spots[k % spots.length];
     const depots = locations.filter((l) => l.kind === 'depot');
-    let best: Vec | null = null;
-    let bestD = -1;
-    for (let tries = 0; tries < 16; tries++) {
-      const p = { x: 0.5 + rng.next() * (W - 1), y: 0.5 + rng.next() * (H - 1) };
-      const d = Math.min(...depots.map((l) => Math.hypot(l.x - p.x, l.y - p.y)));
-      if (d > bestD) {
-        bestD = d;
+    let best: Vec = target;
+    let bestRoom = -1;
+    for (let tries = 0; tries < 12; tries++) {
+      const jitter = () => (rng.next() - 0.5) * 5; // up to 2.5 blocks either way
+      const p = { x: Math.min(W - 0.5, Math.max(0.5, target.x + jitter())), y: Math.min(H - 0.5, Math.max(0.5, target.y + jitter())) };
+      const room = Math.min(...depots.map((l) => Math.hypot(l.x - p.x, l.y - p.y)));
+      if (room > bestRoom) {
+        bestRoom = room;
         best = p;
       }
+      if (room >= cfg.depotGap) break;
     }
-    place({ kind: 'depot', good: null, level: 1, bays: 0, startCompany: null }, best ?? undefined);
+    place({ kind: 'depot', good: null, level: 1, bays: 0, startCompany: null }, best);
   }
   const nl = rng.int(...cfg.emptyLots);
-  for (let k = 0; k < nl; k++) place({ kind: 'lot', good: null, level: 0, bays: cfg.bays, startCompany: null });
+  // Empty lots (where new businesses open) favour a tight centre, drawing companies inwards, and an
+  // outer ring, so companies and factories on the edges have room to grow too.
+  const lotWeight = (p: Vec) => {
+    const fromCentre = Math.hypot(p.x - cx, p.y - cy);
+    const fromEdge = Math.min(p.x, W - p.x, p.y, H - p.y);
+    return fromCentre < cfg.lotCentreRadius ? 3 : fromEdge < cfg.lotRingWidth ? 2.5 : 0.6;
+  };
+  for (let k = 0; k < nl; k++) place({ kind: 'lot', good: null, level: 0, bays: cfg.bays, startCompany: null }, undefined, lotWeight);
 
   // Split each street that a building faces at its midpoint, and add the driveways.
   const allNodes: Vec[] = [...nodes];
