@@ -50,8 +50,11 @@ const holdingChip = (c: number, n: number, pres: boolean) =>
 const playerName = (p: number, me: number) => (p === me && !watching ? 'you' : seatName(p));
 /** A seat's name: the person's name online, otherwise Player N. */
 const seatName = (p: number) => session.names[p] || `Player ${p + 1}`;
-/** A short label for chips: their name (trimmed) online, otherwise PN. */
-const seatShort = (p: number) => (session.names[p] ? session.names[p].slice(0, 8) : `P${p + 1}`);
+/** Each seat's icon, so players are easy to tell apart wherever they appear (names alone aren't, online). */
+const SEAT_ICONS = ['🦊', '🐻', '🐸', '🐧', '🦉', '🐙', '🐯', '🐨'];
+const seatIcon = (p: number) => SEAT_ICONS[p % SEAT_ICONS.length];
+/** A short label: icon plus their name (trimmed) online, otherwise PN. */
+const seatShort = (p: number) => `${seatIcon(p)} ${session.names[p] ? session.names[p].slice(0, 8) : `P${p + 1}`}`;
 const fmtClock = (sec: number) => {
   const s = Math.max(0, Math.ceil(sec));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -451,7 +454,7 @@ function refreshPanels(obs: Observation) {
           return holdingChip(c.id, n, c.presidents.includes(p.id));
         })
         .join('');
-      return `<div class="pl"><b>${seatName(p.id)}</b><span class="cash">${money(p.cash)}</span><span class="chips">${shares || '<span class="muted small">no shares</span>'}</span></div>`;
+      return `<div class="pl"><span class="icon">${seatIcon(p.id)}</span><b>${seatName(p.id)}</b><span class="cash">${money(p.cash)}</span><span class="chips">${shares || '<span class="muted small">no shares</span>'}</span></div>`;
     })
     .join('');
 
@@ -552,7 +555,7 @@ function refreshCompanies(obs: Observation) {
           const pres = c.presidents.includes(pl);
           const n = holders.get(pl)!;
           const you = pl === obs.me && !watching;
-          return `<span class="chip${you ? ' you' : ''}${pres ? ' pres' : ''}" title="${you ? 'You' : seatName(pl)}: ${n} share${n === 1 ? '' : 's'}${pres ? ', president' : ''}">${pres ? '♔ ' : ''}${you ? 'You' : seatShort(pl)} ×${n}</span>`;
+          return `<span class="chip${you ? ' you' : ''}${pres ? ' pres' : ''}" title="${you ? 'You' : seatName(pl)}: ${n} share${n === 1 ? '' : 's'}${pres ? ', president' : ''}">${pres ? '♔ ' : ''}${you ? `${seatIcon(pl)} You` : seatIcon(pl)} ×${n}</span>`;
         })
         .join('') + (own ? `<span class="chip bank" title="Shares the company owns itself: sold in sales">company ×${own}</span>` : '');
     const sale = obs.sales.find((x) => x.company === c.id);
@@ -570,7 +573,7 @@ function refreshCompanies(obs: Observation) {
     // Folded, the card stops here (plus a line for a running sale); hovering or pinning shows the rest.
     if (sale) {
       const best = book.bid;
-      html += `<div class="row small sale-line fold-only"><b>${sale.opening ? 'Opening sale' : 'Sale'} ${Math.ceil(sale.timeLeft)}s</b><span>${best ? `highest bid ${money(best.price)} (${who(best.player)})` : 'no bids yet'}</span></div>`;
+      html += `<div class="row small sale-line fold-only"><b>${sale.opening ? 'Opening sale' : 'Sale'} ${Math.ceil(sale.timeLeft)}s</b><span>${best ? `highest bid ${money(best.price)} ${best.player === obs.me && !watching ? '(you)' : seatIcon(best.player)}` : 'no bids yet'}</span></div>`;
     }
     html += '<div class="more">';
     html += `<div class="row small muted"><span>${trucks} trucks · ${depots} factor${depots === 1 ? 'y' : 'ies'} · ${routes} route${routes === 1 ? '' : 's'}</span></div>`;
@@ -625,18 +628,22 @@ function refreshCompanies(obs: Observation) {
     k.quick.hidden = obs.phase !== 'running';
     // Buttons only for what you can do; otherwise a plain note of the price (or that there's none).
     const canBuy = otherAsk !== null && free >= otherAsk;
-    k.buyNow.innerHTML = otherAsk === null ? 'Nobody selling' : canBuy ? `Buy for <b>${money(otherAsk)}</b>` : `Sells for <b>${money(otherAsk)}</b>`;
+    const seller = book.ask && book.ask.player !== obs.me ? seatIcon(book.ask.player) : '';
+    k.buyNow.innerHTML = otherAsk === null ? 'Nobody selling' : canBuy ? `Buy for <b>${money(otherAsk)}</b> <span class="from">${seller}</span>` : `${seller} sells for <b>${money(otherAsk)}</b>`;
     k.buyNow.disabled = !canBuy;
     k.buyNow.classList.toggle('note', !canBuy);
-    k.buyNow.title = otherAsk === null ? 'Nobody is selling a share right now' : !canBuy ? 'Not enough cash to buy it' : `Buy ${who(book.ask!.player)}'s share at once`;
+    k.buyNow.title = otherAsk === null ? 'Nobody is selling a share right now' : !canBuy ? 'Not enough cash to buy it' : `Buy ${seatName(book.ask!.player)}'s share at once`;
     const toCompany = cb !== null && (otherBid === null || cb >= otherBid);
     const sellAt = toCompany ? cb : otherBid;
     k.sellNow.dataset.to = toCompany ? 'company' : 'bid';
     const canSell = sellAt !== null && mine > 0;
-    k.sellNow.innerHTML = sellAt === null ? 'Nobody buying' : canSell ? `Sell for <b>${money(sellAt)}</b>` : `Buyers pay <b>${money(sellAt)}</b>`;
+    // Only for your own shares: what someone would pay is no business of yours until you have one to sell.
+    k.sellNow.hidden = mine === 0;
+    const buyer = toCompany ? 'co.' : book.bid ? seatIcon(book.bid.player) : '';
+    k.sellNow.innerHTML = sellAt === null ? 'Nobody buying' : `Sell for <b>${money(sellAt)}</b> <span class="from">${buyer}</span>`;
     k.sellNow.disabled = !canSell;
     k.sellNow.classList.toggle('note', !canSell);
-    k.sellNow.title = sellAt === null ? 'Nobody is buying right now' : !mine ? "What you'd get for a share, if you had one" : toCompany ? 'Sell one of your shares back to the company at once' : `Sell one of your shares to ${who(book.bid!.player)} at once`;
+    k.sellNow.title = sellAt === null ? 'Nobody is buying right now' : toCompany ? 'Sell one of your shares back to the company at once' : `Sell one of your shares to ${seatName(book.bid!.player)} at once`;
     // The slider runs from the least buy order that would stand to just below the standing ask
     // (or, with nobody selling, well above the company's worth per share).
     const low = leastBid(obs, c.id);

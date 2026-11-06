@@ -59,7 +59,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #companies .co .head > span { display: flex; align-items: center; gap: 6px; white-space: nowrap; min-width: 0; }
 #companies .co .head > span:first-child { overflow: hidden; text-overflow: ellipsis; }
 #companies .pin { font-size: 10px; padding: 0 6px; line-height: 1.5; }
-#companies .co .sale-line { color: #8a6a10; }
+#companies .co .sale-line { color: #8a6a10; white-space: nowrap; }
+#companies .co .sale-line > * { flex: none; }
 #companies .co:is(:hover, :focus-within, .pinned) .fold-only { display: none; }
 #companies .co:first-child { padding-top: 7px; }
 #companies .row { font-size: 13px; padding: 1px 0; }
@@ -242,7 +243,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 .co .row .mini { font-size: 11px; padding: 1px 8px; line-height: 1.4; }
 .broker[hidden], .broker .quick[hidden] { display: none; }
 .broker .quick { display: flex; gap: 4px; margin-top: 6px; }
-.broker .quick button { flex: 1; display: flex; justify-content: space-between; align-items: baseline; padding: 4px 8px; font-size: 12px; font-weight: 600; }
+.broker .quick button { flex: 1; display: flex; justify-content: flex-start; align-items: baseline; white-space: nowrap; overflow: hidden; padding: 4px 8px; font-size: 12px; font-weight: 600; }
 .broker .quick .buy-now:not(:disabled) { background: #e3f0e1; border-color: #9cc596; }
 .broker .quick .sell-now:not(:disabled) { background: #f6e3df; border-color: #d6a196; }
 .broker .slide { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 11px; color: var(--muted); }
@@ -255,8 +256,10 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 .broker .order button[hidden] { display: none; }
 
 /* Other players: a slim strip along the top of the map. */
-#players { grid-column: 1; grid-row: 2; display: flex; gap: 18px; align-items: center; padding: 5px 14px; border-bottom: 1px solid var(--line); background: var(--panel); font-size: 13px; overflow: hidden; white-space: nowrap; }
-#players .pl { display: flex; align-items: center; gap: 6px; min-width: 0; }
+#players { grid-column: 1; grid-row: 2; display: flex; flex-wrap: wrap; gap: 4px 26px; align-items: center; padding: 5px 14px; border-bottom: 1px solid var(--line); background: var(--panel); font-size: 13px; white-space: nowrap; }
+#players .pl { display: flex; align-items: center; gap: 6px; flex: none; }
+#players .chip { font-size: 10.5px; padding: 0 5px; }
+
 #players .cash { color: var(--muted); }
 #players .chips { display: flex; gap: 3px; margin: 0; flex-wrap: nowrap; }
 #companies .quick-stats > span { flex: none; }
@@ -266,3 +269,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 /* Companies you run stand out in the strip. */
 #companies .co.yours { border-color: var(--ink); box-shadow: inset 0 3px 0 var(--ink); }
 #companies .co.yours.selling { box-shadow: inset 0 3px 0 #d4b048; }
+
+#companies .broker .quick button[hidden] { display: none; }
+#companies .broker .quick .from { font-weight: 500; color: var(--muted); margin-left: auto; padding-left: 6px; }
+#companies .broker .quick button b { margin-left: 4px; }
+#players .icon { font-size: 15px; }
