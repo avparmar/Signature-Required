@@ -46,7 +46,7 @@ describe('payPerShare', () => {
 });
 
 describe('deliveries and dividends', () => {
-  it('each delivery pays the treasury its full price and the pot half of it', () => {
+  it('splits each delivery price between the treasury and the pot, half each', () => {
     const { g, home, producer, consumer } = setup();
     g.companies[0].shares = [0, null, null, null, null];
     g.addTruck(0);
@@ -55,7 +55,8 @@ describe('deliveries and dividends', () => {
     const deliveries = of(g.drainEvents(0), 'delivered');
     expect(deliveries.length).toBeGreaterThan(0);
     const price = g.location(consumer.id)!.price;
-    expect(g.companies[0].treasury).toBeCloseTo(deliveries.length * price);
+    expect(g.companies[0].treasury).toBeCloseTo(deliveries.length * price * g.cfg.money.deliveryToTreasury);
+    expect(g.cfg.money.deliveryToTreasury + g.cfg.money.deliveryToPot).toBe(1); // a split, nothing printed
     expect(g.companies[0].pot).toBeCloseTo(deliveries.length * price * g.cfg.money.deliveryToPot);
     expect(g.cfg.money.deliveryToPot).toBe(0.5);
     expect(g.observe(0).companies[0].dividendPerShare).toBeCloseTo((deliveries.length * price * 0.5) / 5);

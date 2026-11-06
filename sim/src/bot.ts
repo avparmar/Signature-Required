@@ -26,6 +26,9 @@ import {
 export interface BotPersonality {
   /** Bid up to this fraction of a share's estimated value. */
   greed: number;
+  /** Expects the company to reinvest what it earns (more trucks, then more factories) when valuing
+   *  its shares, rather than only counting the fleet its cash can buy today. */
+  growth?: boolean;
   /** Never put more than this share of available cash into one bid. */
   maxCashPerBid: number;
   /** Extra value (as a fraction) for a share that would make this bot president. */
@@ -48,10 +51,11 @@ export interface BotPersonality {
 }
 
 export const PERSONALITIES: Record<string, BotPersonality> = {
-  balanced: { greed: 0.8, maxCashPerBid: 0.6, controlBonus: 0.25, investReserve: 60 },
-  cautious: { greed: 0.6, maxCashPerBid: 0.4, controlBonus: 0.1, investReserve: 90 },
-  aggressive: { greed: 1.0, maxCashPerBid: 0.8, controlBonus: 0.4, investReserve: 40 },
+  balanced: { growth: true, greed: 0.8, maxCashPerBid: 0.6, controlBonus: 0.25, investReserve: 60 },
+  cautious: { growth: true, greed: 0.6, maxCashPerBid: 0.4, controlBonus: 0.1, investReserve: 90 },
+  aggressive: { growth: true, greed: 1.0, maxCashPerBid: 0.8, controlBonus: 0.4, investReserve: 40 },
   speculator: {
+    growth: true,
     greed: 1.0,
     maxCashPerBid: 1.0,
     controlBonus: 0.5,
@@ -149,24 +153,51 @@ export class Bot {
     const unsoldAfter = Math.max(0, c.shares.filter((s) => s === null).length - 1);
     const assumed = optimistic ? Math.max(extraCash, this.personality.speculator?.assumedSharePrice ?? 0) : extraCash;
     const futureRaise = unsoldAfter * assumed;
-    const canBuy = Math.floor((c.treasury + extraCash + futureRaise) / this.cfg.depots.truckPrice);
     const routes = new Set(this.routesFor(obs, company).map((r) => `${r.producer}-${r.consumer}`)).size;
-    const fleet = Math.min(trucks + canBuy, capacity, routes * this.perRoute);
-    // Earning rate: what it's been doing recently, or the fleet estimate, whichever is higher.
-    const recentPerMin = this.recent.filter((r) => r.company === company).reduce((s, r) => s + r.price, 0) / 3;
-    const estPerMin = fleet * this.perTruckMin * this.cfg.money.palletPrice;
-    const perMin = Math.max(recentPerMin, estPerMin);
-    // Trucks bought now take a while to pay off; discount the last stretch a little.
-    const mins = Math.max(0, this.minutesLeft(obs) - 1);
     const m = this.cfg.money;
-    const dividends = (perMin * m.deliveryToPot * mins) / c.shares.length;
-    // Final payout: a share of everything the company holds by then. Money spent on trucks and
-    // depots still counts (at purchase price), and delivery income also piles up in the treasury.
-    const endHoldings = c.assets + c.treasury + extraCash + futureRaise + perMin * m.deliveryToTreasury * mins;
+    const d = this.cfg.depots;
+    const perTruckPerMin = this.perTruckMin * m.palletPrice;
+    // What it's been earning recently counts as a floor on its fleet's earning power.
+    const recentPerMin = this.recent.filter((r) => r.company === company).reduce((sum, r) => sum + r.price, 0) / 3;
+    // Play the rest of the game forward a minute at a time: the company spends its cash (and later its
+    // retained earnings) on trucks, and once its factories are full, on another factory, which opens
+    // up more routes.
+    let cash = c.treasury + extraCash + futureRaise;
+    let fleet = trucks;
+    let cap = capacity;
+    let routeCap = Math.max(1, routes) * this.perRoute;
+    const factoryPrice = d.depotBase * (1 - d.maxSubsidy / 2);
+    let assets = c.assets;
+    let dividends = 0;
+    const mins = Math.max(0, Math.round(this.minutesLeft(obs) - 1)); // the last stretch is discounted
+    const buy = () => {
+      for (;;) {
+        if (fleet < Math.min(cap, routeCap) && cash >= d.truckPrice) {
+          cash -= d.truckPrice;
+          assets += d.truckPrice;
+          fleet++;
+        } else if (this.personality.growth && fleet >= cap && cap !== Infinity && cash >= factoryPrice + d.truckPrice) {
+          cash -= factoryPrice;
+          assets += factoryPrice;
+          cap += d.capacity;
+          routeCap += d.capacity;
+        } else return;
+      }
+    };
+    buy();
+    for (let k = 0; k < mins; k++) {
+      const perMin = Math.max(recentPerMin, fleet * perTruckPerMin);
+      dividends += (perMin * m.deliveryToPot) / c.shares.length;
+      cash += perMin * m.deliveryToTreasury;
+      if (this.personality.growth) buy();
+    }
+    // Final payout: a share of everything the company holds by then (trucks and factories at what
+    // they cost, plus cash).
+    const lastPerMin = Math.max(recentPerMin, fleet * perTruckPerMin);
     const bonus =
       m.finalBonus === 'earnings'
-        ? (m.finalEarningsMultiple * perMin * (m.payoutEverySec / 60)) / c.shares.length
-        : (m.finalAssetShare * endHoldings) / c.shares.length;
+        ? (m.finalEarningsMultiple * lastPerMin * (m.payoutEverySec / 60)) / c.shares.length
+        : (m.finalAssetShare * (assets + cash)) / c.shares.length;
     return dividends + bonus;
   }
 
