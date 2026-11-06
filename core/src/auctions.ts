@@ -20,7 +20,9 @@
  *   the standing bid if that is at least the company's minimum price (the same as its bid price,
  *   whether or not it could pay it, so nobody can sell to the company high and buy back cheap).
  *   The money goes to the company. A late bid extends the countdown to `softCloseSec`, but a sale
- *   never lasts more than `maxSec` in all. Several companies' sales can run at once.
+ *   never lasts more than `maxSec` in all. Anyone may pass; once everyone but the highest bidder
+ *   has passed, it ends at once (a new bid clears the passes). Several companies' sales can run
+ *   at once.
  * - Opening round, before the game clock starts: one sale of each company in turn.
  * - Dividends for company-owned shares go into the company's treasury.
  */
@@ -83,6 +85,8 @@ export interface Sale {
   /** Seconds it has been running. */
   age: number;
   opening: boolean;
+  /** Players who have passed since the last bid. Once everyone but the highest bidder has, it ends at once. */
+  passed: number[];
 }
 
 export type CancelReason = 'withdrawn' | 'beaten' | 'noShares' | 'noCash';
@@ -92,6 +96,7 @@ export type AuctionEvent =
   /** A company sold one of its shares at the end of a sale. */
   | { type: 'saleWon'; t: number; company: number; player: number; amount: number; opening: boolean }
   | { type: 'saleUnsold'; t: number; company: number }
+  | { type: 'pass'; t: number; company: number; player: number }
   | { type: 'bidPosted'; t: number; company: number; player: number; price: number }
   | { type: 'askPosted'; t: number; company: number; player: number; price: number }
   | { type: 'orderCancelled'; t: number; company: number; side: 'bid' | 'ask'; player: number; price: number; reason: CancelReason }

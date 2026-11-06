@@ -177,6 +177,41 @@ describe('sales of company shares', () => {
     expect(g.drainEvents(0).some((e) => e.type === 'saleWon' && e.company === 0)).toBe(true);
   });
 
+  it('ends at once when everyone but the highest bidder has passed; a new bid clears the passes', () => {
+    const g = running();
+    g.act(1, { type: 'startSale', company: 0 });
+    g.step();
+    g.act(1, { type: 'bid', company: 0, amount: 10 });
+    g.act(0, { type: 'pass', company: 0 });
+    g.act(2, { type: 'pass', company: 0 });
+    g.step();
+    g.act(2, { type: 'bid', company: 0, amount: 12 }); // clears the passes
+    g.step();
+    expect(g.sales[0].passed).toEqual([]);
+    g.act(1, { type: 'pass', company: 0 });
+    g.act(0, { type: 'pass', company: 0 });
+    g.act(3, { type: 'pass', company: 0 });
+    g.step();
+    expect(g.sales).toHaveLength(0); // over well before its 30s
+    expect(g.companies[0].shares).toEqual([0, 2, null, null, null]);
+    expect(g.companies[0].treasury).toBe(12);
+  });
+
+  it("the highest bidder can't pass, and everyone passing with no bids ends it unsold", () => {
+    const g = running();
+    g.act(1, { type: 'startSale', company: 0 });
+    g.step();
+    for (const p of [0, 1, 2, 3]) g.act(p, { type: 'pass', company: 0 });
+    g.step();
+    expect(g.sales).toHaveLength(0);
+    expect(of(g.drainEvents(0), 'saleUnsold')).toHaveLength(1);
+    g.act(1, { type: 'startSale', company: 0 });
+    g.step();
+    g.act(2, { type: 'startSale', company: 0 });
+    g.step();
+    expect(of(g.drainEvents(1), 'rejected')).toHaveLength(1); // cooldown after an unsold sale
+  });
+
   it("can't start one while the company has no shares of its own", () => {
     const g = running([0, 0, 1, 1, 2]);
     g.act(1, { type: 'startSale', company: 0 });

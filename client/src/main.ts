@@ -452,8 +452,8 @@ function refreshPanels(obs: Observation) {
   $('me').innerHTML = html;
 
   // Everyone else: cash and holdings, as for you.
-  $('players').innerHTML = obs.players
-    .filter((p) => p.id !== obs.me)
+  $('players').innerHTML = [...obs.players]
+    .sort((a, b) => (a.id === obs.me ? -1 : b.id === obs.me ? 1 : a.id - b.id))
     .map((p) => {
       const held = obs.companies.filter((c) => c.shares.includes(p.id));
       const shares = held
@@ -462,7 +462,7 @@ function refreshPanels(obs: Observation) {
           return holdingChip(c.id, n, c.presidents.includes(p.id));
         })
         .join('');
-      return `<div class="pl"><span class="icon">${seatIcon(p.id)}</span><b>${seatName(p.id)}</b><span class="cash">${money(p.cash)}</span><span class="chips">${shares || '<span class="muted small">no shares</span>'}</span></div>`;
+      return `<div class="pl${p.id === obs.me && !watching ? ' me' : ''}"><span class="icon">${seatIcon(p.id)}</span><b>${p.id === obs.me && !watching ? 'You' : seatName(p.id)}</b><span class="cash">${money(p.cash)}</span><span class="chips">${shares || '<span class="muted small">no shares</span>'}</span></div>`;
     })
     .join('');
 
@@ -528,7 +528,8 @@ function card(id: number): Card {
   press(kk.buyNow, () => session.act({ type: 'buy', company: id }));
   press(kk.sellNow, () => session.act({ type: 'sell', company: id, to: (kk.sellNow.dataset.to as 'bid' | 'company') ?? 'bid' }));
   press(kk.placeBuy, () => session.act({ type: 'bid', company: id, amount: Number(kk.slider.value) }));
-  press(kk.placeSell, () => session.act({ type: 'ask', company: id, price: Number(kk.slider.value) }));
+  // In a sale, the second button passes; otherwise it posts a sell order.
+  press(kk.placeSell, () => session.act(kk.placeSell.dataset.mode === 'pass' ? { type: 'pass', company: id } : { type: 'ask', company: id, price: Number(kk.slider.value) }));
   return k;
 }
 
@@ -595,6 +596,7 @@ function refreshCompanies(obs: Observation) {
       html += `<div class="row small"><span>Highest bid</span><span>${best ? `${money(best.price)} (${who(best.player)})` : 'none yet'}</span></div>`;
       if (obs.minPrice[c.id] > 0) html += `<div class="row small muted"><span>Sells for at least</span><span>${money(obs.minPrice[c.id])}${best && !enough ? ' · not met yet' : ''}</span></div>`;
       if (best?.player === obs.me && !watching) html += `<div class="good small">${enough ? 'You’re winning it.' : 'Your bid is below the minimum.'}</div>`;
+      if (sale.passed.length) html += `<div class="row small muted"><span>Passed</span><span>${sale.passed.map((pl) => (pl === obs.me && !watching ? 'you' : seatIcon(pl))).join(' ')}</span></div>`;
       if (last) html += `<div class="muted small">Final seconds: bids no longer add time.</div>`;
       html += `</div>`;
     }
@@ -678,10 +680,18 @@ function refreshCompanies(obs: Observation) {
     k.placeBuy.disabled = v < low || (otherAsk !== null && v >= otherAsk) || v - myBid > free;
     k.placeBuy.title = v - myBid > free ? 'Not enough cash' : `Offer ${money(v)} for a share${sale ? ' in this sale' : ''}; it holds that cash until it's filled, beaten or withdrawn`;
     k.placeSell.textContent = book.ask?.player === obs.me ? 'Lower sell' : 'Place sell';
-    k.placeSell.hidden = !!sale;
+    k.placeSell.hidden = false;
+    k.placeSell.dataset.mode = sale ? 'pass' : 'ask';
     const sellOk = mine > 0 && v > (otherBid ?? 0) && v > (cb ?? 0) && (otherAsk === null || v <= otherAsk - cfg.minRaise) && (book.ask?.player !== obs.me || v < book.ask.price);
     k.placeSell.disabled = !sellOk;
     k.placeSell.title = !mine ? "You don't own a share" : sellOk ? `Offer one of your shares for ${money(v)}` : 'At this price, sell now instead (or undercut the standing price)';
+    if (sale) {
+      // Pass: done bidding until someone bids again; once everyone but the highest bidder has, it ends.
+      const passed = sale.passed.includes(obs.me);
+      k.placeSell.textContent = passed ? 'Passed' : 'Pass';
+      k.placeSell.disabled = passed || book.bid?.player === obs.me;
+      k.placeSell.title = book.bid?.player === obs.me ? "You're the highest bidder" : 'Done bidding (until someone bids again). Once everyone but the highest bidder has passed, the sale ends at once.';
+    }
   });
 }
 

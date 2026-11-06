@@ -147,13 +147,16 @@ export class Bot {
       this.startedAt.delete(c);
     }
     const out: Action[] = [];
-    // Sales running: bid on at most one per look (its cash is held, so the next look sees what's left).
+    // Sales running: bid on at most one per look (its cash is held, so the next look sees what's left),
+    // and pass on the others it isn't bidding in, so they can end early.
+    let bidding = false;
     for (const sale of obs.sales) {
-      const bid = this.bid(obs, sale.company);
+      const bid = bidding ? null : this.bid(obs, sale.company);
       if (bid) {
         out.push(bid);
-        break;
-      }
+        bidding = true;
+      } else if (obs.books[sale.company].bid?.player !== this.me && !sale.passed.includes(this.me) && !this.wantsToBid(obs, sale.company))
+        out.push({ type: 'pass', company: sale.company });
     }
     if (obs.elapsed - this.lastThink < this.thinkEverySec) return out;
     this.lastThink = obs.elapsed;
@@ -331,6 +334,11 @@ export class Bot {
     const book = obs.books[company];
     const beat = book.bid ? book.bid.price + this.cfg.auctions.minRaise : this.cfg.auctions.openingBid;
     return { company, highBid: book.bid?.price ?? 0, highBidder: book.bid?.player ?? null, min: Math.max(beat, obs.minPrice[company]) };
+  }
+
+  /** Whether it means to bid in this sale (it doesn't pass on sales it started, until it has bid). */
+  private wantsToBid(obs: Observation, company: number): boolean {
+    return (this.raiseFloor.has(company) || this.buyInBid.has(company)) && obs.books[company].bid?.player !== this.me;
   }
 
   private bid(obs: Observation, company: number): Action | null {

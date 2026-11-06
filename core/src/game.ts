@@ -84,6 +84,8 @@ export type Action =
   | { type: 'buy'; company: number }
   /** Sell one of your shares at once: to the standing bid, or back to the company at its bid price. */
   | { type: 'sell'; company: number; to: 'bid' | 'company' }
+  /** Done bidding in a company's sale (until someone bids again). */
+  | { type: 'pass'; company: number }
   /** Start a sale of one of a company's own shares. Anyone may. */
   | { type: 'startSale'; company: number };
 
@@ -410,6 +412,7 @@ export class Game {
         book.bid = { player, price: amount };
         // A bid near the end of a sale gives the others a moment to answer, up to the sale's limit.
         const sale = this.sales.find((x) => x.company === c.id);
+        if (sale) sale.passed = []; // everyone else may answer the new bid
         if (sale && sale.timeLeft < this.cfg.auctions.softCloseSec) {
           const cap = Math.max(0, this.cfg.auctions.maxSec - sale.age);
           sale.timeLeft = Math.min(this.cfg.auctions.softCloseSec, Math.max(sale.timeLeft, cap));
@@ -490,6 +493,18 @@ export class Game {
           this.emit('all', { type: 'trade', t: this.t, company: c.id, buyer: bid.player, seller: player, price: bid.price });
         }
         this.afterSale(c.id, player);
+        break;
+      }
+      case 'pass': {
+        const sale = this.sales.find((x) => x.company === action.company);
+        if (!sale) return reject('that company has no sale running');
+        if (this.books[sale.company].bid?.player === player) return reject("you're the highest bidder");
+        if (sale.passed.includes(player)) return;
+        sale.passed.push(player);
+        this.emit('all', { type: 'pass', t: this.t, company: sale.company, player });
+        // Everyone who could still bid has passed: it ends now.
+        const leader = this.books[sale.company].bid?.player;
+        if (this.players.every((p) => p.id === leader || sale.passed.includes(p.id))) sale.timeLeft = 0;
         break;
       }
       case 'startSale': {
@@ -573,7 +588,7 @@ export class Game {
 
   private startSale(company: number, startedBy: number | 'bank', opening: boolean) {
     const cfg = this.cfg.auctions;
-    const sale: Sale = { company, startedBy, timeLeft: opening ? cfg.openingClockSec : cfg.clockSec, age: 0, opening };
+    const sale: Sale = { company, startedBy, timeLeft: opening ? cfg.openingClockSec : cfg.clockSec, age: 0, opening, passed: [] };
     this.sales.push(sale);
     this.emit('all', { type: 'saleStart', t: this.t, company, startedBy, opening, timeLeft: sale.timeLeft, minPrice: this.minPrice(company) });
   }
@@ -870,7 +885,7 @@ export class Game {
           .filter((l) => l.kind === 'depot' && !this.depotOwner.has(l.id))
           .map((l) => [l.id, this.companies.map((c) => this.depotPriceFor(c.id, l.id))]),
       ),
-      sales: this.sales.map((x) => ({ ...x })),
+      sales: this.sales.map((x) => ({ ...x, passed: [...x.passed] })),
       books: this.books.map((b) => ({ bid: b.bid ? { ...b.bid } : null, ask: b.ask ? { ...b.ask } : null })),
       companyBid: this.companies.map((c) => this.companyBid(c.id)),
       minPrice: this.companies.map((c) => this.minPrice(c.id)),

@@ -282,3 +282,4 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #companies .co:not(:hover):not(:focus-within):not(.pinned) .broker .quick .from { display: none; }
 /* With no share to sell, the sell spot stays empty so Buy keeps its place on the right. */
 #companies .broker .quick .sell-now.empty { visibility: hidden; }
+#players .pl.me b { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }
