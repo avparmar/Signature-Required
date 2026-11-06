@@ -937,6 +937,10 @@ function handleEvents(evs: GameEvent[]) {
     } else if (e.type === 'closing') {
       text = `[${at(e.location)}] A ${bizName(e.location)} is about to close: serve it to save it`;
       cls = 'bad';
+    } else if (e.type === 'siteOpened') {
+      text = `[${at(e.site)}] A new factory site is up for grabs`;
+      const site = g.town.locations[e.site];
+      renderer.puff(site.x, site.y);
     } else if (e.type === 'boughtDepot') {
       text = `[${at(e.site)}] ${coName(e.company)} bought a factory for ${money(e.price)}`;
       const site = g.town.locations[e.site];
@@ -1040,7 +1044,7 @@ const GUIDE: { img?: string[]; icons?: GuideIcons; title: string; text: string }
   {
     img: ['factory'],
     title: 'Unclaimed factories!',
-    text: `<p>The white factories are <b>unclaimed</b>: any company can buy one, at full price $${session.cfg.depots.depotBase}. But a company that <span class="hl">serves the producers and shops nearby</span> gets a discount, up to ${Math.round(100 * session.cfg.depots.maxSubsidy)}% off.</p><p>Hover over a site, or over a company card, to see how close each company is. A <b>★</b> means the full discount.</p>`,
+    text: `<p>The white factories are <b>unclaimed</b>: any company can buy one, at full price $${session.cfg.depots.depotBase}. But a company that <span class="hl">serves the producers and shops nearby</span> gets a discount, up to ${Math.round(100 * session.cfg.depots.maxSubsidy)}% off.</p><p>Hover over a site, or over a company card, to see how close each company is. A <b>★</b> means the full discount. New sites turn up every few minutes in the parts of town no factory reaches.</p>`,
   },
   {
     img: ['buy'],

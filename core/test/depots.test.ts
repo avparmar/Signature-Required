@@ -186,3 +186,20 @@ describe('buying', () => {
     expect(g.drainEvents(0).some((e) => e.type === 'delivered')).toBe(true);
   });
 });
+
+describe('new factory sites', () => {
+  it('appear every few minutes on empty lots, away from other factories', () => {
+    const g = newGame({ seed: 4, auctions: { openingRound: false } });
+    const before = g.town.locations.filter((l) => l.kind === 'depot').length;
+    g.runToEnd();
+    const opened = g.drainEvents(0).filter((e) => e.type === 'siteOpened') as { site: number }[];
+    // Every 3 minutes, not in the last two: at 3, 6, 9 and 12 minutes.
+    expect(opened).toHaveLength(Math.floor((g.cfg.durationSec - 120) / g.cfg.depots.newSiteEverySec));
+    expect(g.town.locations.filter((l) => l.kind === 'depot').length).toBe(before + opened.length);
+    for (const { site } of opened) {
+      const s = g.town.locations[site];
+      const others = g.town.locations.filter((l) => l.kind === 'depot' && l.id !== site);
+      expect(Math.min(...others.map((o) => Math.hypot(o.x - s.x, o.y - s.y)))).toBeGreaterThanOrEqual(g.town.cfg.depotGap - 1e-9);
+    }
+  });
+});
