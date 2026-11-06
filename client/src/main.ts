@@ -30,7 +30,7 @@ const names = (good: number) => {
  * three-letter ticker for tight spots like a player's holdings.
  */
 const COMPANY_NAMES: [string, string][] = [
-  ['Red Rocket Haulage', 'RRH'],
+  ['Red Rocket Hauling', 'RRH'],
   ['Bluebird Express', 'BBX'],
   ['Greenway Freight', 'GWF'],
   ['Purple Pony Transport', 'PPT'],
@@ -83,6 +83,7 @@ const renderer = new Renderer($<HTMLCanvasElement>('map'), session.game.town);
 renderer.via = session.cfg.trucks.viaDepot;
 renderer.serviceSec = session.cfg.trucks.serviceSec;
 renderer.processSec = session.cfg.trucks.signOffSec;
+renderer.palletPrice = session.cfg.money.palletPrice;
 let last = performance.now();
 let lastUi = 0;
 
@@ -1010,7 +1011,7 @@ const GUIDE: { img?: string[]; icons?: GuideIcons; title: string; text: string }
     img: ['route-2'],
     icons: 'shops',
     title: 'Then a shop that buys the final product!',
-    text: "<p>Now click a <b>shop</b> that sells what your producer's material becomes: <span class=\"hl\">timber → furniture, wheat → bread, crude oil → fuel</span>.</p>",
+    text: "<p>Now click a <b>shop</b> that sells what your producer's material becomes: <span class=\"hl\">timber → furniture, wheat → bread, crude oil → fuel</span>.</p><p>Shops with a gold <b>$</b> coin are premium: they pay half as much again for each pallet.</p>",
   },
   {
     img: ['route-3'],
@@ -1175,6 +1176,7 @@ function beginMatch(m: Match) {
   renderer.via = session.cfg.trucks.viaDepot;
   renderer.serviceSec = session.cfg.trucks.serviceSec;
   renderer.processSec = session.cfg.trucks.signOffSec;
+  renderer.palletPrice = session.cfg.money.palletPrice;
   renderer.resize(true);
   $('log').innerHTML = '';
   $('overlay').hidden = true;

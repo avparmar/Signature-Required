@@ -363,21 +363,21 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
     for (let k = 0; k < nc; k++) place({ kind: 'consumer', good: g, level: 1, bays: cfg.bays, startCompany: null });
   });
   const nd = rng.int(...cfg.extraDepotSites);
-  // Spread spare depot sites out: each goes near the best of a few random spots, the one furthest
-  // from every depot placed so far (so with only a handful of sites they don't bunch up).
+  // Spare depot sites go where they make companies compete: the town centre first, then between
+  // each pair of neighbouring starting depots, then between non-neighbours (an inner ring nearer the
+  // centre). Each lands near its spot, loosely (a block or so of jitter).
+  const starts = locations.filter((l) => l.kind === 'depot');
+  const mid = (a: Vec, b: Vec): Vec => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  const n = starts.length;
+  const neighbours = starts.map((s, i) => mid(s, starts[(i + 1) % n]));
+  const others: Vec[] = [];
+  for (let i = 0; i < n; i++) for (let j = i + 2; j < n; j++) if (!(i === 0 && j === n - 1)) others.push(mid(starts[i], starts[j]));
+  const spots: Vec[] = [{ x: cx, y: cy }, ...rng.shuffle(neighbours), ...rng.shuffle(others)];
   for (let k = 0; k < nd; k++) {
-    const depots = locations.filter((l) => l.kind === 'depot');
-    let best: Vec | null = null;
-    let bestD = -1;
-    for (let tries = 0; tries < 16; tries++) {
-      const p = { x: 0.5 + rng.next() * (W - 1), y: 0.5 + rng.next() * (H - 1) };
-      const d = Math.min(...depots.map((l) => Math.hypot(l.x - p.x, l.y - p.y)));
-      if (d > bestD) {
-        bestD = d;
-        best = p;
-      }
-    }
-    place({ kind: 'depot', good: null, level: 1, bays: 0, startCompany: null }, best ?? undefined);
+    const target = spots[k % spots.length];
+    const jitter = () => (rng.next() - 0.5) * 2;
+    const p = { x: Math.min(W - 0.5, Math.max(0.5, target.x + jitter())), y: Math.min(H - 0.5, Math.max(0.5, target.y + jitter())) };
+    place({ kind: 'depot', good: null, level: 1, bays: 0, startCompany: null }, p);
   }
   const nl = rng.int(...cfg.emptyLots);
   for (let k = 0; k < nl; k++) place({ kind: 'lot', good: null, level: 0, bays: cfg.bays, startCompany: null });

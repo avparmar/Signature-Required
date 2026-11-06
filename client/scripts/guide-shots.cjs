@@ -1,6 +1,6 @@
 // Captures the walkthrough pictures for the How to play card.
 // Usage (with `npx vite preview --port 4173` running in client/):
-//   node client/scripts/guide-shots.cjs "http://localhost:4173/?seed=7" <out-dir>
+//   node client/scripts/guide-shots.cjs "http://localhost:4173/?seed=5" <out-dir>
 // then convert the PNGs to client/public/guide/*.webp (max 900px wide).
 // It plays your seat directly, and hands you shares and cash for the pictures.
 const { chromium } = require('playwright');
@@ -78,6 +78,15 @@ const out = process.argv[3];
   const centre = { x: (pts.home.x + pts.pr.x + pts.c.x) / 3, y: (pts.home.y + pts.pr.y + pts.c.y) / 3 };
   let cs = await toScreen(centre);
   for (let i = 0; i < 3; i++) { await p.mouse.move(cs.x, cs.y); await p.mouse.wheel(0, -250); await p.waitForTimeout(60); }
+  // Drag the map so the three buildings sit in the middle of the view.
+  {
+    const mb = await (await p.$('#map-wrap')).boundingBox();
+    const from = await toScreen({ x: (Math.min(pts.home.x, pts.pr.x, pts.c.x) + Math.max(pts.home.x, pts.pr.x, pts.c.x)) / 2, y: (Math.min(pts.home.y, pts.pr.y, pts.c.y) + Math.max(pts.home.y, pts.pr.y, pts.c.y)) / 2 });
+    const to = { x: mb.x + mb.width / 2, y: mb.y + mb.height * 0.45 };
+    await p.mouse.move(from.x, from.y); await p.mouse.down();
+    for (let k = 1; k <= 10; k++) { await p.mouse.move(from.x + ((to.x - from.x) * k) / 10, from.y + ((to.y - from.y) * k) / 10); await p.waitForTimeout(16); }
+    await p.mouse.up();
+  }
   await p.mouse.move(5, 5); await tick();
   const sp = await toScreen(pts.pr), sc = await toScreen(pts.c), sh = await toScreen(pts.home);
   const box = await (await p.$('#map-wrap')).boundingBox();
@@ -111,6 +120,7 @@ const out = process.argv[3];
 
   // 5. A free factory site: hover it for the subsidy meters and prices.
   await tick(240);
+  await p.waitForTimeout(3800); // let any payday banner fade
   // The free site where some company is furthest along: zoom in on it so its meter has something to show.
   const best = await p.evaluate(() => {
     const o = window.sr.session.obs(); const t = window.sr.session.game.town;
