@@ -11,12 +11,16 @@ export interface SessionOptions {
   seat?: number;
   /** Personalities for bot seats (by seat index); defaults to a speculator then investors. */
   bots?: (BotPersonality | undefined)[];
+  /** Watch only: a bot plays the human's seat too, and the human's actions are ignored. */
+  watch?: boolean;
 }
 
 export class Session {
   readonly game: Game;
   readonly seat: number;
   readonly bots: (Bot | null)[];
+  /** Watching the bots: every seat is a bot (the screen shows the human seat's view). */
+  readonly watch: boolean;
   paused = false;
   speed = 1;
   /** Real seconds not yet turned into ticks. */
@@ -32,9 +36,11 @@ export class Session {
     const cfg = makeGameConfig({ seed: Math.floor(Math.random() * 2 ** 31), ...opts.overrides });
     this.game = new Game(cfg);
     this.seat = opts.seat ?? 0;
+    this.watch = !!opts.watch;
     let botCount = 0;
     this.bots = Array.from({ length: cfg.players }, (_, p) => {
-      if (p === this.seat) return null;
+      if (p === this.seat && !this.watch) return null;
+      if (p === this.seat) return new Bot(p, this.game.town, cfg, PERSONALITIES.balanced);
       // The same line-up as the bot games: a speculator, a controller, then balanced bots.
       const k = botCount++;
       const personality = opts.bots?.[p] ?? (k === 0 ? PERSONALITIES.speculator : k === 1 ? PERSONALITIES.controller : PERSONALITIES.balanced);
@@ -55,6 +61,7 @@ export class Session {
 
   /** The human acts; it takes effect on the next tick. */
   act(action: Action) {
+    if (this.watch) return; // watching: the seat is the bot's
     this.game.act(this.seat, action);
   }
 
@@ -92,7 +99,7 @@ export class Session {
       const evs = g.drainEvents(p);
       if (p === this.seat) {
         this.mine.push(...evs);
-        continue;
+        if (!this.watch) continue;
       }
       this.pending[p].push(...evs);
       const bot = this.bots[p];

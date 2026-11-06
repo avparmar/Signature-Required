@@ -49,7 +49,9 @@ function overridesFromUrl(): GameConfigOverrides {
   return o;
 }
 
-let session = new Session({ overrides: mergeOverrides(loadSettings(), overridesFromUrl()) });
+/** Watching the bots play (?watch=1, or from the settings or welcome card): every seat is a bot. */
+let watching = new URLSearchParams(location.search).get('watch') === '1';
+let session = new Session({ overrides: mergeOverrides(loadSettings(), overridesFromUrl()), watch: watching });
 const renderer = new Renderer($<HTMLCanvasElement>('map'), session.game.town);
 renderer.via = session.cfg.trucks.viaDepot;
 let last = performance.now();
@@ -106,6 +108,12 @@ function toast(text: string, kind: 'info' | 'error' = 'info') {
 function updateHint(obs: Observation) {
   const g = session.game;
   const hint = $('hint');
+  $('me-title').textContent = watching ? 'Player 1 (a bot: you\'re watching)' : 'You';
+  $('mycos-title').textContent = watching ? "Player 1's companies" : 'Your companies';
+  if (watching) {
+    hint.textContent = 'Watching the bots play. Change the speed at the top; New game to play yourself.';
+    return;
+  }
   if (hl.buyFor !== null) {
     hint.textContent = `Buying a factory for ${coName(hl.buyFor)}: click a highlighted site (Esc to cancel).`;
     return;
@@ -793,7 +801,7 @@ function handleEvents(evs: GameEvent[]) {
         }
     }
     if (e.type === 'rejected') {
-      toast(cap(e.reason) + '.', 'error');
+      if (!watching) toast(cap(e.reason) + '.', 'error'); // a watched bot's mistakes aren't yours
       continue;
     }
     if (e.type === 'payout') {
@@ -831,13 +839,15 @@ function endScreen(obs: Observation) {
   shownEnd = true;
   const ranking = [...obs.players].sort((a, b) => b.cash - a.cash);
   const rows = ranking
-    .map((p, i) => `<tr class="${p.id === obs.me ? 'me' : ''}"><td>${i + 1}</td><td>${p.id === obs.me ? 'You' : `Player ${p.id + 1}`}</td><td>${money(p.cash)}</td></tr>`)
+    .map((p, i) => `<tr class="${p.id === obs.me && !watching ? 'me' : ''}"><td>${i + 1}</td><td>${p.id === obs.me && !watching ? 'You' : `Player ${p.id + 1}`}</td><td>${money(p.cash)}</td></tr>`)
     .join('');
   const place = ranking.findIndex((p) => p.id === obs.me) + 1;
   const ov = $('overlay');
-  ov.innerHTML = `<div class="card"><h1>${place === 1 ? 'You win!' : `You finished ${ordinal(place)}`}</h1><table>${rows}</table><button id="btn-again">Play again</button></div>`;
+  const title = watching ? `Player ${ranking[0].id + 1} wins!` : place === 1 ? 'You win!' : `You finished ${ordinal(place)}`;
+  ov.innerHTML = `<div class="card"><h1>${title}</h1><table>${rows}</table><button id="btn-again">Play${watching ? '' : ' again'}</button>${watching ? ' <button id="btn-watch-again">Watch another</button>' : ''}</div>`;
   ov.hidden = false;
-  $('btn-again').onclick = newGame;
+  $('btn-again').onclick = () => newGame();
+  ov.querySelector<HTMLElement>('#btn-watch-again')?.addEventListener('click', () => newGame(true));
 }
 const ordinal = (n: number) => `${n}${['th', 'st', 'nd', 'rd'][n % 10 > 3 || Math.floor(n / 10) === 1 ? 0 : n % 10]}`;
 
@@ -852,7 +862,8 @@ const GUIDE: { img?: string[]; icons?: GuideIcons; title: string; text: string }
     title: 'Welcome to Signature Required!',
     text: `<p>You're an <b>investor</b> in a busy little town. Trucking companies haul goods from producers to shops, and you <span class="hl">buy shares in them</span>. Every delivery fills their dividend pots, and the pots get paid out to shareholders. After 15 minutes, the <b>richest player wins</b>.</p>
       <p>The next pages show you how to:</p>
-      <ol class="guide-list"><li>take control of a company</li><li>set up a route: producer, factory, shop</li><li>run your routes from the sidebar</li><li>buy more factories</li><li>get paid</li></ol>`,
+      <ol class="guide-list"><li>take control of a company</li><li>set up a route: producer, factory, shop</li><li>run your routes from the sidebar</li><li>buy more factories</li><li>get paid</li></ol>
+      <p class="muted small">Or <a href="#" id="watch-bots">just watch the bots play</a> for a while.</p>`,
   },
   {
     img: ['auction'],
@@ -952,6 +963,11 @@ function showHelp(step = 0) {
   };
   ov.querySelector<HTMLElement>('#btn-close')?.addEventListener('click', close);
   ov.querySelector<HTMLElement>('#btn-skip')?.addEventListener('click', close);
+  ov.querySelector<HTMLElement>('#watch-bots')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    helpWasPaused = null;
+    newGame(true);
+  });
 }
 /** Whether the game was paused before the help card opened (kept while flipping its pages). */
 let helpWasPaused: boolean | null = null;
@@ -995,9 +1011,10 @@ function togglePause() {
   $('btn-pause').textContent = session.paused ? '▶' : '⏸';
 }
 
-function newGame() {
+function newGame(watch = false) {
+  watching = watch;
   const { seed: _replay, ...fresh } = overridesFromUrl(); // a new game gets a new town
-  session = new Session({ overrides: mergeOverrides(loadSettings(), fresh) });
+  session = new Session({ overrides: mergeOverrides(loadSettings(), fresh), watch });
   routeLog.clear();
   waitLog.clear();
   lastWaitSample = -1;
@@ -1030,7 +1047,7 @@ document.addEventListener('pointermove', (e) => {
 });
 $('btn-help').onclick = () => showHelp();
 $<HTMLSelectElement>('speed').onchange = (e) => (session.speed = Number((e.target as HTMLSelectElement).value));
-$('btn-new').onclick = newGame;
+$('btn-new').onclick = () => newGame();
 $('btn-settings').onclick = () => showSettings();
 
 /** The ⚙ card: tune the game, then start a new one with those settings (kept in this browser). */
@@ -1049,7 +1066,7 @@ function showSettings() {
           <span class="set-def">default ${shown(defaults, st)}</span></label>`)).join('')}`,
       )
       .join('')}
-    <div class="set-buttons"><button id="set-start">Start a new game</button><button id="set-reset" class="plain">Reset to defaults</button><button id="set-close" class="plain">Close</button></div></div>`;
+    <div class="set-buttons"><button id="set-start">Start a new game</button><button id="set-watch" class="plain">Watch the bots play</button><button id="set-reset" class="plain">Reset to defaults</button><button id="set-close" class="plain">Close</button></div></div>`;
   ov.hidden = false;
   const wasPaused = session.paused;
   session.paused = true;
@@ -1070,7 +1087,7 @@ function showSettings() {
     for (const inp of inputs) inp.value = shown(defaults, SETTINGS[Number(inp.dataset.i)]);
     mark();
   };
-  $('set-start').onclick = () => {
+  const start = (watch: boolean) => {
     const values = new Map<Setting, number>();
     for (const inp of inputs) {
       const st = SETTINGS[Number(inp.dataset.i)];
@@ -1079,8 +1096,10 @@ function showSettings() {
     }
     saveSettings(overridesFrom(values));
     ov.hidden = true;
-    newGame();
+    newGame(watch);
   };
+  $('set-start').onclick = () => start(false);
+  $('set-watch').onclick = () => start(true);
 }
 window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement) return;
@@ -1096,7 +1115,7 @@ window.addEventListener('resize', () => renderer.resize(false));
 
 renderer.resize(true);
 requestAnimationFrame(frame);
-showHelp();
+if (!watching) showHelp();
 
 // For poking at a running match from the browser console.
 (window as unknown as { sr: unknown }).sr = {
