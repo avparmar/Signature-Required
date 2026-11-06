@@ -47,7 +47,7 @@ let lastUi = 0;
 
 // ------------------------------------------------------------------ selection and input state
 
-const hl: Highlights = { hover: null, picked: [], hoverRoute: null, buyFor: null };
+const hl: Highlights = { hover: null, picked: [], hoverRoute: null, buyFor: null, spotlight: null };
 /** Company the player last acted for (route clicks default to it). */
 let activeCompany: number | null = null;
 /** Smoothed on-screen truck positions (town coordinates). */
@@ -293,7 +293,7 @@ function tooltip(obs: Observation) {
     } else {
       const routes = obs.routes.filter((r) => r.depot === l.id);
       const n = routes.reduce((a, r) => a + r.trucks, 0);
-      html = `<b>${coName(owner)} factory ${at(l.id)}</b><div>${routes.length} route${routes.length === 1 ? '' : 's'}, ${n} truck${n === 1 ? '' : 's'} through here</div><div class="muted">Adds ${g.cfg.depots.capacity} to the company's truck limit</div>`;
+      html = `<b>${coName(owner)} factory ${at(l.id)}</b><div>${routes.length} route${routes.length === 1 ? '' : 's'}, ${n} truck${n === 1 ? '' : 's'} through here</div><div class="muted">Adds ${g.cfg.depots.capacity} to the company's truck limit · shaded: streets within ${g.cfg.town.fairRadius} blocks</div>`;
     }
   } else if (l && l.kind === 'lot') {
     html = '<span class="muted">Empty lot: a business may open here.</span>';
@@ -654,6 +654,7 @@ function frame(now: number) {
     else shown.set(id, { x: s.x + (t.x - s.x) * k, y: s.y + (t.y - s.y) * k, dx: t.dx, dy: t.dy });
   }
   tooltip(obs);
+  hl.spotlight = obs.auction ? obs.auction.company : null;
   renderer.draw(
     obs,
     [...targets.keys()].map((id) => ({ id, ...shown.get(id)! })),

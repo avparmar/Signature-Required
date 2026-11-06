@@ -38,6 +38,8 @@ export interface Highlights {
   hoverRoute: string | null;
   /** Free depot sites to highlight with this company's prices (buy-depot mode). */
   buyFor: number | null;
+  /** Company being auctioned: its factories are ringed and their surroundings shaded. */
+  spotlight: number | null;
 }
 
 export class Renderer {
@@ -232,6 +234,39 @@ export class Renderer {
       ctx.stroke();
     }
 
+    // The area around a factory: the streets within the start-fairness radius (where its routes
+    // will mostly come from). Shown for the company up for auction, and for a hovered factory or
+    // free factory site.
+    const shade = (sites: number[], color: string) => {
+      const radius = town.cfg.fairRadius;
+      ctx.strokeStyle = color;
+      ctx.globalAlpha = 0.28;
+      ctx.lineWidth = roadW * 2.4;
+      ctx.beginPath();
+      for (const site of sites) {
+        const d = this.reachOf(town.locations[site].node);
+        for (const e of town.graph.edges) {
+          if (d[e.a] > radius || d[e.b] > radius || term[e.a] || term[e.b]) continue;
+          const a = town.graph.nodes[e.a];
+          const b = town.graph.nodes[e.b];
+          ctx.moveTo(this.X(a.x), this.Y(a.y));
+          ctx.lineTo(this.X(b.x), this.Y(b.y));
+        }
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    };
+    if (hl.spotlight !== null)
+      shade(
+        Object.entries(obs.depots).filter(([, o]) => o === hl.spotlight).map(([site]) => Number(site)),
+        companyColor(hl.spotlight),
+      );
+    const hovered = hl.hover !== null ? town.locations[hl.hover] : null;
+    if (hovered && hovered.kind === 'depot') {
+      const owner = obs.depots[hovered.id];
+      if (owner !== hl.spotlight || owner === undefined) shade([hovered.id], owner === undefined ? '#8a8273' : companyColor(owner));
+    }
+
     // Routes, along the streets.
     const routes = obs.routes;
     const lines = routes.map((r) => this.routeLine(r, routes));
@@ -300,6 +335,10 @@ export class Renderer {
           }
         }
         if (picked || hovered) ring(ctx, x, y, s * 1.5, picked ? INK : '#8a8273');
+        if (owner !== undefined && owner === hl.spotlight) {
+          const pulse = 0.5 + 0.5 * Math.sin(now * 4);
+          ring(ctx, x, y, s * (1.7 + 0.35 * pulse), companyColor(owner), 3);
+        }
         continue;
       }
       const st = byId.get(l.id);
