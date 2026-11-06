@@ -11,9 +11,26 @@
  */
 import { distancesFrom, routeVia, type Location, type Observation, type Route, type Town } from '@sr/core';
 
-// Company colours stay clear of the goods' colours (wood brown, wheat gold, oil slate).
-// Bright and far apart: red, blue, green, purple, orange, teal (no pink next to the red).
-export const COMPANY_COLORS = ['#e8432f', '#2a86e0', '#25a84a', '#9152e0', '#f5891a', '#14b2a8'];
+// Company colours stay clear of the goods' colours (wood brown, wheat gold, oil slate). Each game
+// uses a few of these (see pickCompanySlots), never two that are easy to mix up.
+export const COMPANY_COLORS = ['#e8432f', '#2a86e0', '#25a84a', '#9152e0', '#f5891a', '#14b2a8', '#d93a8c', '#7cbf2e', '#38b6e8'];
+/** Colours too alike to share a game: red/magenta, green/lime, blue/sky, teal/sky. */
+const CLASHES: [number, number][] = [[0, 6], [2, 7], [1, 8], [5, 8]];
+
+/** This game's palette slot for each company (company index -> COMPANY_COLORS index). */
+let companySlots: number[] = COMPANY_COLORS.map((_, i) => i);
+export const companySlot = (c: number) => companySlots[c % companySlots.length];
+
+/** Choose `n` colours for a game from its seed: shuffled, skipping any that clash with one already picked. */
+export function pickCompanySlots(n: number, seed: number) {
+  let x = (seed >>> 0) || 1;
+  const rand = () => ((x = (Math.imul(x, 1103515245) + 12345) >>> 0) / 2 ** 32);
+  const order = COMPANY_COLORS.map((_, i) => i).sort(() => rand() - 0.5);
+  const picked: number[] = [];
+  for (const i of order) if (picked.length < n && !picked.some((j) => CLASHES.some(([a, b]) => (a === i && b === j) || (a === j && b === i)))) picked.push(i);
+  for (const i of order) if (picked.length < n && !picked.includes(i)) picked.push(i); // more companies than clash-free colours
+  companySlots = picked.sort((a, b) => a - b);
+}
 export const GOOD_COLORS = ['#b07a4a', '#f0cf6a', '#4a5470', '#8fbf5a', '#b05bb0'];
 /** Producer icons (raw material) and shop icons (product), by good. */
 export const RAW_ICONS = ['🪵', '🌾', '🛢️'];
@@ -27,7 +44,7 @@ const INK = '#23201b';
 const ROAD = '#d9d2c3';
 const WATER = '#9cc3e0';
 
-export const companyColor = (c: number) => COMPANY_COLORS[c % COMPANY_COLORS.length];
+export const companyColor = (c: number) => COMPANY_COLORS[companySlot(c)];
 export const goodColor = (g: number) => GOOD_COLORS[g % GOOD_COLORS.length];
 
 export interface Highlights {
@@ -542,6 +559,29 @@ export class Renderer {
       if (picked || hovered) ring(ctx, x, y, r * 1.6, picked ? INK : '#8a8273');
     }
 
+    // Puffs of smoke where factories were just bought.
+    this.puffs = this.puffs.filter((p) => now - p.t0 < 1.2);
+    for (const p of this.puffs) {
+      const f = (now - p.t0) / 1.2;
+      const px = this.X(p.x);
+      const py = this.Y(p.y);
+      for (let k = 0; k < 10; k++) {
+        const a = (k / 10) * Math.PI * 2 + k * 0.4;
+        const d = this.r * (0.9 + 2.2 * Math.sqrt(f));
+        const rad = this.r * (0.5 + 0.8 * f) * (k % 2 ? 0.75 : 1);
+        const cx = px + Math.cos(a) * d;
+        const cy = py + Math.sin(a) * d - f * this.r * 1.2;
+        ctx.fillStyle = `rgba(140, 133, 122, ${0.7 * (1 - f)})`;
+        ctx.beginPath();
+        ctx.arc(cx, cy, rad, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = `rgba(250, 248, 242, ${0.8 * (1 - f)})`;
+        ctx.beginPath();
+        ctx.arc(cx - rad * 0.25, cy - rad * 0.25, rad * 0.55, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
     // Route truck counts (on top of buildings), halfway along the longer leg of each route (so they
     // don't pile up on the factory in the middle).
     for (const [i, rt] of routes.entries()) {
@@ -630,17 +670,44 @@ export class Renderer {
         ctx.fillRect(bx, -th / 2 + rim, bw, th - 2 * rim);
       }
       ctx.restore();
-      // Being processed at the factory.
-      if (t.state === 'processing') {
-        ctx.fillStyle = '#5b6b7a';
+      // Loading, unloading or being processed: a pie fills up beside the truck as the job goes on.
+      // While loading or unloading, a little crate also hops between the building and the truck.
+      if (t.state === 'servicing' || t.state === 'processing') {
+        const total = t.state === 'servicing' ? this.serviceSec : this.processSec;
+        const done = Math.max(0, Math.min(1, 1 - (t.busyUntil - obs.t) / Math.max(0.01, total)));
+        const pr = Math.max(4, tw * 0.3);
+        const px = x + tw * 0.55;
+        const py = y - th * 0.95;
+        ctx.fillStyle = 'rgba(255,255,255,0.95)';
+        ctx.strokeStyle = INK;
+        ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.arc(x + tw * 0.55, y - th * 0.9, Math.max(3, tw * 0.28), 0, Math.PI * 2);
+        ctx.arc(px, py, pr, 0, Math.PI * 2);
         ctx.fill();
-        ctx.fillStyle = '#fff';
-        ctx.font = `800 ${Math.max(6, tw * 0.36)}px system-ui, sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('⚙', x + tw * 0.55, y - th * 0.9 + 0.5);
+        ctx.stroke();
+        ctx.fillStyle = t.state === 'processing' ? '#5b6b7a' : companyColor(t.company);
+        ctx.beginPath();
+        ctx.moveTo(px, py);
+        ctx.arc(px, py, pr - 1.5, -Math.PI / 2, -Math.PI / 2 + done * Math.PI * 2);
+        ctx.closePath();
+        ctx.fill();
+        if (t.state === 'servicing' && t.at !== null) {
+          const l = this.town.locations[t.at];
+          const loading = l.kind === 'producer';
+          const bx = this.X(l.x);
+          const by = this.Y(l.y);
+          // Three hops per job, building -> truck when loading, truck -> building when unloading.
+          let f = (done * 3) % 1;
+          if (!loading) f = 1 - f;
+          const hop = Math.min(this.scale * 0.25, Math.hypot(x - bx, y - by) * 0.35);
+          const cx = bx + (x - bx) * f;
+          const cy = by + (y - by) * f - Math.sin(f * Math.PI) * hop;
+          const cs = Math.max(5, tw * 0.38);
+          ctx.fillStyle = goodColor(l.good ?? 0);
+          ctx.strokeStyle = INK;
+          ctx.fillRect(cx - cs / 2, cy - cs / 2, cs, cs);
+          ctx.strokeRect(cx - cs / 2, cy - cs / 2, cs, cs);
+        }
       }
     }
   }
@@ -657,6 +724,17 @@ export class Renderer {
     this.nodeAtCache = { town: this.town, map };
     return map;
   }
+
+  /** Smoke puffs in progress (world position, start time in seconds). */
+  private puffs: { x: number; y: number; t0: number }[] = [];
+  /** A puff of smoke at a site (a factory was just bought there). */
+  puff(x: number, y: number) {
+    this.puffs.push({ x, y, t0: performance.now() / 1000 });
+  }
+
+  /** How long loading/unloading and factory processing take (seconds), for the progress pies. */
+  serviceSec = 3;
+  processSec = 3;
 
   /** Parking spots each truck holds at a building or factory, kept while it waits there. */
   private parked = new Map<string, { spots: number; at: Map<number, number> }>();

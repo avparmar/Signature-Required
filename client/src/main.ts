@@ -10,7 +10,7 @@
  * - Auction panel (#35): bid on the running auction; presidents can put bank-held shares up.
  */
 import { distancesFrom, makeGameConfig, minimumBid, stillBidding, type GameConfig, type GameConfigOverrides, type GameEvent, type Location, type Observation } from '@sr/core';
-import { Renderer, companyColor, coordOf, drawBusiness, drawFactory, goodColor, type Highlights } from './render.js';
+import { Renderer, companyColor, companySlot, coordOf, drawBusiness, drawFactory, goodColor, pickCompanySlots, type Highlights } from './render.js';
 import { Session } from './session.js';
 import { SETTINGS, loadSettings, mergeOverrides, overridesFrom, saveSettings, valueIn, type Setting } from './settings.js';
 
@@ -34,13 +34,17 @@ const COMPANY_NAMES: [string, string][] = [
   ['Purple Pony Transport', 'PPT'],
   ['Orange Owl Logistics', 'OOL'],
   ['Tealwater Trucking', 'TWT'],
+  ['Magenta Moth Movers', 'MMM'],
+  ['Lime Lizard Lines', 'LLL'],
+  ['Skyhook Shipping', 'SKY'],
 ];
-const coName = (c: number) => COMPANY_NAMES[c % COMPANY_NAMES.length][0];
-const coTicker = (c: number) => COMPANY_NAMES[c % COMPANY_NAMES.length][1];
+const coName = (c: number) => COMPANY_NAMES[companySlot(c)][0];
+const coTicker = (c: number) => COMPANY_NAMES[companySlot(c)][1];
 /** A holding as a chip in the company's colour: ticker, shares, and a crown for its president. */
 const holdingChip = (c: number, n: number, pres: boolean) =>
   `<span class="chip co-chip${pres ? ' pres' : ''}" style="background:${companyColor(c)}" title="${coName(c)}: ${n} share${n === 1 ? '' : 's'}${pres ? ', president' : ''}">${pres ? '♔ ' : ''}${coTicker(c)} ×${n}</span>`;
-const playerName = (p: number, me: number) => (p === me ? 'you' : `player ${p + 1}`);
+// While watching the bots, Player 1 isn't you.
+const playerName = (p: number, me: number) => (p === me && !watching ? 'you' : `player ${p + 1}`);
 const fmtClock = (sec: number) => {
   const s = Math.max(0, Math.ceil(sec));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -68,8 +72,11 @@ function overridesFromUrl(): GameConfigOverrides {
 /** Watching the bots play (?watch=1, or from the settings or welcome card): every seat is a bot. */
 let watching = new URLSearchParams(location.search).get('watch') === '1';
 let session = new Session({ overrides: mergeOverrides(loadSettings(), overridesFromUrl()), watch: watching });
+pickCompanySlots(session.cfg.companies, session.cfg.seed);
 const renderer = new Renderer($<HTMLCanvasElement>('map'), session.game.town);
 renderer.via = session.cfg.trucks.viaDepot;
+renderer.serviceSec = session.cfg.trucks.serviceSec;
+renderer.processSec = session.cfg.trucks.signOffSec;
 let last = performance.now();
 let lastUi = 0;
 
@@ -450,11 +457,12 @@ function refreshPanels(obs: Observation) {
           .map((pl) => {
             const pres = c.presidents.includes(pl);
             const n = holders.get(pl)!;
-            return `<span class="chip${pl === obs.me ? ' you' : ''}${pres ? ' pres' : ''}" title="${pl === obs.me ? 'You' : `Player ${pl + 1}`}: ${n} share${n === 1 ? '' : 's'}${pres ? ', president' : ''}">${pres ? '♔ ' : ''}${pl === obs.me ? 'You' : `P${pl + 1}`} ×${n}</span>`;
+            const you = pl === obs.me && !watching;
+            return `<span class="chip${you ? ' you' : ''}${pres ? ' pres' : ''}" title="${you ? 'You' : `Player ${pl + 1}`}: ${n} share${n === 1 ? '' : 's'}${pres ? ', president' : ''}">${pres ? '♔ ' : ''}${you ? 'You' : `P${pl + 1}`} ×${n}</span>`;
           })
           .join('') + (bank ? `<span class="chip bank" title="Still with the bank">bank ×${bank}</span>` : '');
       const routes = obs.routes.filter((r) => r.company === c.id).length;
-      return `<div class="co" data-cohover="${c.id}"><div class="row"><span>${sw(c.id)}<b>${coName(c.id)}</b></span><span>${money(c.treasury)}</span></div><div class="chips">${chips}</div><div class="row muted small"><span>${trucks} trucks · ${depots} factor${depots === 1 ? 'y' : 'ies'} · ${routes} route${routes === 1 ? '' : 's'}</span></div><div class="row muted small"><span>Next dividend</span><span>${money(c.dividendPerShare)}/share</span></div></div>`;
+      return `<div class="co" data-cohover="${c.id}"><div class="row"><span>${sw(c.id)}<b>${coName(c.id)}</b></span><span>${money(c.treasury)}</span></div><div class="chips">${chips}</div><div class="row muted small"><span>${trucks} trucks · ${depots} factor${depots === 1 ? 'y' : 'ies'} · ${routes} route${routes === 1 ? '' : 's'}</span></div><div class="row muted small"><span>Dividend: last · next</span><span>${lastDividend.has(c.id) ? money(lastDividend.get(c.id)!) : '–'} · ${money(c.dividendPerShare)}/share</span></div></div>`;
     })
     .join('');
 
@@ -473,12 +481,14 @@ function refreshAuction(obs: Observation) {
   const box = $('auction');
   let html = '';
   if (a) {
-    const leading = a.highBidder === obs.me;
+    const leading = a.highBidder === obs.me && !watching;
     html += `<div class="row big"><span>${sw(a.company)}${coName(a.company)}</span><b>${Math.ceil(a.timeLeft)}s</b></div>`;
     html += `<div class="row muted small"><span>Selling</span><span>${a.seller === null ? 'a bank share' : `a share from ${playerName(a.seller, obs.me)}`}</span></div>`;
     html += `<div class="row"><span>High bid</span><span>${a.highBidder === null ? 'none yet' : `${money(a.highBid)} (${playerName(a.highBidder, obs.me)})`}</span></div>`;
     const c = obs.companies[a.company];
     html += `<div class="row muted small"><span>Treasury · trucks</span><span>${money(c.treasury)} · ${obs.trucks.filter((t) => t.company === c.id).length}</span></div>`;
+    // What a share paid last time: about the least to expect from the next payout.
+    html += `<div class="row small"><span>Last dividend</span><b>${lastDividend.has(c.id) ? `${money(lastDividend.get(c.id)!)}/share` : 'none yet'}</b></div>`;
     if (leading) html += '<div class="good small">You’re the high bidder.</div>';
     // Who's still in: it ends early once everyone but the high bidder has passed.
     const still = stillBidding(a, obs.players.length);
@@ -692,7 +702,7 @@ function showPayout(paid: { company: number; amount: number; final: boolean }[])
         .sort((a, b) => b.amount - a.amount)
         .map((p) => `<span>${sw(p.company)}${coName(p.company)} ${money(p.amount)}</span>`)
         .join('')}</div>`
-    : `<div class="pay-title">Dividends paid</div><div class="pay-rows"><span>You hold no shares that paid this time.</span></div>`;
+    : `<div class="pay-title">Dividends paid</div><div class="pay-rows"><span>${watching ? 'Player 1 holds' : 'You hold'} no shares that paid this time.</span></div>`;
   banner.classList.remove('show');
   void banner.offsetWidth; // restart the animation
   banner.classList.add('show');
@@ -757,6 +767,76 @@ function waiting(key: string): { share: number; saturated: boolean; where: 'prod
   return { share, saturated: share > SATURATED, where: p >= c ? 'producer' : 'shop' };
 }
 
+/**
+ * The game's story for the end-of-game charts: every 10 seconds of play, each player's cash and
+ * each company's value (treasury plus what it paid for trucks and factories), total earnings, and
+ * earnings over the last minute.
+ */
+const history: { t: number; cash: number[]; value: number[]; earned: number[]; perMin: number[] }[] = [];
+/** Delivery income so far, by company. */
+const earned = new Map<number, number>();
+let lastHistory = -Infinity;
+
+function sampleHistory(obs: Observation) {
+  if (obs.phase === 'opening' || obs.t - lastHistory < 10) return;
+  lastHistory = obs.t;
+  const total = obs.companies.map((c) => earned.get(c.id) ?? 0);
+  const minuteAgo = [...history].reverse().find((h) => h.t <= obs.t - 60);
+  history.push({
+    t: obs.t,
+    cash: obs.players.map((p) => p.cash),
+    value: obs.companies.map((c) => c.treasury + c.assets),
+    earned: total,
+    perMin: total.map((x, i) => (minuteAgo ? (x - minuteAgo.earned[i]) * (60 / (obs.t - minuteAgo.t)) : history.length ? x * (60 / obs.t) : 0)),
+  });
+}
+
+/** A simple line chart: one line per series, time along the bottom. */
+function drawChart(cv: HTMLCanvasElement, series: { label: string; color: string; points: [number, number][] }[], fmt: (v: number) => string) {
+  const dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth;
+  const H = cv.clientHeight;
+  cv.width = W * dpr;
+  cv.height = H * dpr;
+  const ctx = cv.getContext('2d')!;
+  ctx.scale(dpr, dpr);
+  const pad = { l: 46, r: 22, t: 10, b: 24 };
+  const all = series.flatMap((s) => s.points);
+  if (!all.length) return;
+  const tMax = Math.max(...all.map((p) => p[0]), 1);
+  const vMax = Math.max(1, ...all.map((p) => p[1])) * 1.08;
+  const X = (t: number) => pad.l + (t / tMax) * (W - pad.l - pad.r);
+  const Y = (v: number) => H - pad.b - (v / vMax) * (H - pad.t - pad.b);
+  ctx.font = '11px system-ui, sans-serif';
+  ctx.fillStyle = '#7d766b';
+  ctx.strokeStyle = '#e2dccf';
+  ctx.lineWidth = 1;
+  for (let k = 0; k <= 4; k++) {
+    const v = (vMax / 4) * k;
+    ctx.beginPath();
+    ctx.moveTo(pad.l, Y(v));
+    ctx.lineTo(W - pad.r, Y(v));
+    ctx.stroke();
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(fmt(v), pad.l - 6, Y(v));
+  }
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'top';
+  for (let m = 0; m <= tMax / 60; m += tMax > 900 ? 5 : 3) ctx.fillText(`${m}:00`, X(m * 60), H - pad.b + 6);
+  for (const s of series) {
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = 2.5;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    s.points.forEach(([t, v], k) => (k ? ctx.lineTo(X(t), Y(v)) : ctx.moveTo(X(t), Y(v))));
+    ctx.stroke();
+  }
+}
+
+/** What each company's last payout paid per share. */
+const lastDividend = new Map<number, number>();
+
 /** Deliveries per route (time, price), for its earnings per minute. */
 const routeLog = new Map<string, { since: number; hits: { t: number; price: number }[] }>();
 /** Seconds of history a route's earnings rate is taken over. */
@@ -797,6 +877,7 @@ function handleEvents(evs: GameEvent[]) {
   let payoutSeen = false;
   for (const e of evs) {
     if (e.type === 'delivered') {
+      earned.set(e.company, (earned.get(e.company) ?? 0) + e.price);
       const key = truckRoute.get(e.truck);
       if (key) {
         const log = routeLog.get(key) ?? { since: e.t, hits: [] };
@@ -822,6 +903,7 @@ function handleEvents(evs: GameEvent[]) {
     }
     if (e.type === 'payout') {
       payoutSeen = true;
+      lastDividend.set(e.company, e.perShare + e.bonusPerShare);
       if (e.paid[session.seat]) paidNow.push({ company: e.company, amount: e.paid[session.seat], final: !!e.final });
     }
     if (e.type === 'auctionWon') text = `${cap(playerName(e.player, obs.me))} bought a share of ${coName(e.company)} for ${money(e.amount)}`;
@@ -835,7 +917,11 @@ function handleEvents(evs: GameEvent[]) {
     } else if (e.type === 'closing') {
       text = 'A business is about to close: serve it to save it';
       cls = 'bad';
-    } else if (e.type === 'boughtDepot') text = `${coName(e.company)} bought a factory for ${money(e.price)}`;
+    } else if (e.type === 'boughtDepot') {
+      text = `${coName(e.company)} bought a factory for ${money(e.price)}`;
+      const site = g.town.locations[e.site];
+      renderer.puff(site.x, site.y);
+    }
     else if (e.type === 'end') text = 'Game over';
     if (!text) continue;
     const li = document.createElement('li');
@@ -860,8 +946,29 @@ function endScreen(obs: Observation) {
   const place = ranking.findIndex((p) => p.id === obs.me) + 1;
   const ov = $('overlay');
   const title = watching ? `Player ${ranking[0].id + 1} wins!` : place === 1 ? 'You win!' : `You finished ${ordinal(place)}`;
-  ov.innerHTML = `<div class="card"><h1>${title}</h1><table>${rows}</table><button id="btn-again">Play${watching ? '' : ' again'}</button>${watching ? ' <button id="btn-watch-again">Watch another</button>' : ''}</div>`;
+  // The final sample, so the charts run to the end.
+  lastHistory = -Infinity;
+  sampleHistory({ ...obs, phase: 'running' } as Observation);
+  const tabs: [string, string][] = [['cash', 'Players: cash'], ['value', 'Companies: value'], ['earned', 'Companies: total earned'], ['perMin', 'Companies: earnings per minute']];
+  ov.innerHTML = `<div class="card end"><h1>${title}</h1><table>${rows}</table>
+    <div class="chart-tabs">${tabs.map(([k, l], i) => `<button data-chart="${k}" class="${i === 0 ? 'on' : ''}">${l}</button>`).join('')}</div>
+    <canvas id="end-chart"></canvas><div class="chart-legend" id="end-legend"></div>
+    <button id="btn-again">Play${watching ? '' : ' again'}</button>${watching ? ' <button id="btn-watch-again">Watch another</button>' : ''}</div>`;
   ov.hidden = false;
+  const show = (key: string) => {
+    ov.querySelectorAll<HTMLElement>('[data-chart]').forEach((b) => b.classList.toggle('on', b.dataset.chart === key));
+    const players = key === 'cash';
+    const n = players ? obs.players.length : obs.companies.length;
+    const series = Array.from({ length: n }, (_, i) => ({
+      label: players ? (i === obs.me && !watching ? 'You' : `Player ${i + 1}`) : `${coTicker(i)} · ${coName(i)}`,
+      color: players ? ['#23201b', '#8a8273', '#c9a24a', '#5f86a8'][i % 4] : companyColor(i),
+      points: history.map((h) => [h.t, (h as unknown as Record<string, number[]>)[key][i]] as [number, number]),
+    }));
+    drawChart($<HTMLCanvasElement>('end-chart'), series, (v) => (key === 'perMin' ? `$${v.toFixed(0)}/m` : `$${Math.round(v)}`));
+    $('end-legend').innerHTML = series.map((s) => `<span><i style="background:${s.color}"></i>${s.label}</span>`).join('');
+  };
+  ov.querySelectorAll<HTMLElement>('[data-chart]').forEach((b) => (b.onclick = () => show(b.dataset.chart!)));
+  show('cash');
   $('btn-again').onclick = () => newGame();
   ov.querySelector<HTMLElement>('#btn-watch-again')?.addEventListener('click', () => newGame(true));
 }
@@ -997,6 +1104,7 @@ function frame(now: number) {
   const obs = session.obs();
   handleEvents(session.takeEvents());
   sampleWaiting(obs);
+  sampleHistory(obs);
   // Ease drawn truck positions towards where they are (smooth between ticks, and into queues).
   const targets = renderer.truckTargets(obs);
   const k = 1 - Math.exp(-dt * 14);
@@ -1031,13 +1139,20 @@ function newGame(watch = false) {
   watching = watch;
   const { seed: _replay, ...fresh } = overridesFromUrl(); // a new game gets a new town
   session = new Session({ overrides: mergeOverrides(loadSettings(), fresh), watch });
+  pickCompanySlots(session.cfg.companies, session.cfg.seed);
   routeLog.clear();
+  lastDividend.clear();
+  history.length = 0;
+  earned.clear();
+  lastHistory = -Infinity;
   waitLog.clear();
   lastWaitSample = -1;
   hl.saturated = new Set();
   session.speed = Number($<HTMLSelectElement>('speed').value);
   renderer.setTown(session.game.town);
   renderer.via = session.cfg.trucks.viaDepot;
+  renderer.serviceSec = session.cfg.trucks.serviceSec;
+  renderer.processSec = session.cfg.trucks.signOffSec;
   renderer.resize(true);
   $('log').innerHTML = '';
   $('overlay').hidden = true;
