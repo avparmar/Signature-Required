@@ -612,6 +612,34 @@ export class Renderer {
     }
   }
 
+  /** Parking spots each truck holds at a building or factory, kept while it waits there. */
+  private parked = new Map<string, { spots: number; at: Map<number, number> }>();
+
+  /** Kerbside spots round a block centred at (cx, cy): the near lane clockwise, then the far lane. */
+  private parkingSpots(cx: number, cy: number): { x: number; y: number; dx: number; dy: number }[] {
+    const spacing = (this.truckSize.w / this.scale) * 1.2;
+    const quarter = this.roadWidth / this.scale / 4;
+    const out: { x: number; y: number; dx: number; dy: number }[] = [];
+    for (const [o, dir] of [[0.5 - quarter, 1], [0.5 + quarter, -1]] as const) {
+      const side = 2 * o;
+      const n = Math.max(1, Math.floor(side / spacing)); // spots per side, spread evenly
+      for (let k = 0; k < 4; k++)
+        for (let m = 0; m < n; m++) {
+          const along = ((m + 0.5) / n) * side;
+          const h = o;
+          const pts: [number, number, number, number][] = [
+            [cx - h + along, cy - h, 1, 0],
+            [cx + h, cy - h + along, 0, 1],
+            [cx + h - along, cy + h, -1, 0],
+            [cx - h, cy + h - along, 0, -1],
+          ];
+          const [x, y, dx, dy] = pts[k];
+          out.push({ x, y, dx: dx * dir, dy: dy * dir });
+        }
+    }
+    return out;
+  }
+
   /**
    * Where each truck should be drawn: its road position, or, when queued or loading at a
    * building, a slot in a neat row beside it (and likewise when parked at a depot). The facing is
@@ -620,47 +648,45 @@ export class Renderer {
   truckTargets(obs: Observation): Map<number, { x: number; y: number; dx: number; dy: number }> {
     const out = new Map<number, { x: number; y: number; dx: number; dy: number }>();
     const tById = new Map(obs.trucks.map((t) => [t.id, t]));
-    // Trucks waiting or loading at a building park along the kerbs around its block, grouped by
-    // company (a gap between companies), going clockwise from the top-left corner. When the kerbside
-    // lane is full they double-park in the far lane of the same streets, and beyond that bunch up
-    // there (never further out, which would put them on the next block).
-    const park = (cx: number, cy: number, ids: number[]) => {
-      const truckLen = this.truckSize.w / this.scale;
-      const spacing = truckLen * 1.2;
-      // The lane nearest the block (half a block out, less a quarter of the road's width), then the far lane.
-      const kerb = 0.5 - this.roadWidth / this.scale / 4;
-      const lanes = [kerb, 0.5 + this.roadWidth / this.scale / 4];
-      const ordered = [...ids].sort((a, b) => tById.get(a)!.company - tById.get(b)!.company || ids.indexOf(a) - ids.indexOf(b));
-      let pos = spacing / 2;
-      let ring = 0;
-      let prevCompany: number | null = null;
-      for (const id of ordered) {
-        const c = tById.get(id)!.company;
-        if (prevCompany !== null && c !== prevCompany) pos += spacing * 0.5; // gap between companies
-        prevCompany = c;
-        const perim = 8 * lanes[Math.min(ring, 1)];
-        if (pos > perim - spacing / 2) {
-          ring++;
-          pos = ring >= 2 ? spacing * (0.5 + 0.5 * (ring - 1)) : spacing / 2; // bunching up: offset each pass
-        }
-        const side = 2 * lanes[Math.min(ring, 1)];
-        const along = pos % side;
-        const k = Math.floor(pos / side);
-        const h = side / 2;
-        const pts: [number, number, number, number][] = [
-          [cx - h + along, cy - h, 1, 0],
-          [cx + h, cy - h + along, 0, 1],
-          [cx + h - along, cy + h, -1, 0],
-          [cx - h, cy + h - along, 0, -1],
-        ];
-        const [x, y, dx, dy] = pts[k % 4];
-        out.set(id, { x, y, dx, dy });
-        pos += spacing;
+    // Trucks waiting or loading at a building park along the kerbs around its block. Each truck
+    // takes the free spot nearest to where it pulled up and keeps it until it leaves. Spots run
+    // round the kerbside lane first (facing clockwise, the way traffic goes in that lane), then the
+    // far lane of the same streets (facing the other way); past that, trucks double up there.
+    const park = (key: string, cx: number, cy: number, ids: number[]) => {
+      const spots = this.parkingSpots(cx, cy);
+      let held = this.parked.get(key);
+      if (!held || held.spots !== spots.length) {
+        held = { spots: spots.length, at: new Map() };
+        this.parked.set(key, held);
       }
+      seen.add(key);
+      const here = new Set(ids);
+      for (const id of [...held.at.keys()]) if (!here.has(id)) held.at.delete(id);
+      const taken = new Set(held.at.values());
+      for (const id of ids) {
+        if (held.at.has(id)) continue;
+        const t = tById.get(id)!;
+        let best = -1;
+        let bestD = Infinity;
+        spots.forEach((p, k) => {
+          if (taken.has(k)) return;
+          const d = Math.hypot(p.x - t.x, p.y - t.y);
+          if (d < bestD) {
+            bestD = d;
+            best = k;
+          }
+        });
+        // All taken: double up in the far lane.
+        if (best < 0) best = spots.length - 1 - (held.at.size % Math.max(1, Math.floor(spots.length / 2)));
+        held.at.set(id, best);
+        taken.add(best);
+      }
+      for (const [id, k] of held.at) out.set(id, spots[k]);
     };
+    const seen = new Set<string>();
     for (const [loc, ids] of Object.entries(obs.queues)) {
       const l = this.town.locations[Number(loc)];
-      park(l.x, l.y, ids);
+      park(`b${loc}`, l.x, l.y, ids);
     }
     const atDepot = new Map<number, number[]>();
     for (const t of obs.trucks) {
@@ -681,8 +707,9 @@ export class Renderer {
     }
     for (const [node, ids] of atDepot) {
       const n = this.town.graph.nodes[node];
-      park(n.x, n.y, ids);
+      park(`n${node}`, n.x, n.y, ids);
     }
+    for (const key of [...this.parked.keys()]) if (!seen.has(key)) this.parked.delete(key);
     return out;
   }
 }

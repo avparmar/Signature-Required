@@ -362,6 +362,8 @@ function refreshPanels(obs: Observation) {
       : obs.phase === 'ended'
         ? 'Game over'
         : `Next payout in ${fmtClock(obs.nextPayoutAt - obs.t)}`;
+  // The last 10 seconds before a payout: the countdown lights up.
+  $('phase').classList.toggle('soon', obs.phase === 'running' && obs.nextPayoutAt - obs.t <= 10);
 
   // You: cash and shares.
   let html = `<div class="row big"><span>Cash</span><b>${money(me.cash)}</b></div>`;
@@ -578,7 +580,7 @@ function refreshMyCompanies(obs: Observation) {
       }
       if (open) for (const r of routes) {
         const p = g.town.locations[r.producer];
-        html += `<div class="row small route-row${hl.hoverRoute === r.key ? ' hot' : ''}" data-routerow="${r.key}"><span><span class="dot" style="background:${goodColor(p.good!)}"></span>${cap(names(p.good!).product)} ${at(r.producer)} → ${at(r.depot)} → ${at(r.consumer)}</span><span><button data-unroute="${r.key}">−</button> ${r.trucks} <button data-route="${r.key}" ${freeTrucks(obs, id) ? '' : 'disabled'}>+</button></span></div>`;
+        html += `<div class="row small route-row${hl.hoverRoute === r.key ? ' hot' : ''}" data-routerow="${r.key}"><span><span class="dot" style="background:${goodColor(p.good!)}"></span>${cap(names(p.good!).product)} ${at(r.producer)} → ${at(r.depot)} → ${at(r.consumer)}<span class="rate" title="What this route earned per minute over the last ${RATE_WINDOW / 60} minutes">${routeRate(r.key, obs.t, r.trucks)}</span></span><span class="route-ctl"><button data-unroute="${r.key}">−</button> ${r.trucks} <button data-route="${r.key}" ${freeTrucks(obs, id) ? '' : 'disabled'}>+</button></span></div>`;
       }
     }
     html += '</div>';
@@ -639,12 +641,72 @@ document.addEventListener('click', (e) => {
 
 // ------------------------------------------------------------------ log
 
+/**
+ * Payday: a banner over the map with what you were paid, company by company, a "+$" that floats up
+ * from your cash, and the cash itself flashing. Dividends are the big moment of each 3 minutes.
+ */
+function showPayout(paid: { company: number; amount: number; final: boolean }[]) {
+  const total = paid.reduce((a, p) => a + p.amount, 0);
+  const banner = $('payout');
+  const final = paid.some((p) => p.final);
+  banner.innerHTML = total
+    ? `<div class="pay-title">${final ? 'Final dividends!' : 'Payday!'}</div><div class="pay-total">+${money(total)}</div><div class="pay-rows">${paid
+        .sort((a, b) => b.amount - a.amount)
+        .map((p) => `<span>${sw(p.company)}${coName(p.company)} ${money(p.amount)}</span>`)
+        .join('')}</div>`
+    : `<div class="pay-title">Dividends paid</div><div class="pay-rows"><span>You hold no shares that paid this time.</span></div>`;
+  banner.classList.remove('show');
+  void banner.offsetWidth; // restart the animation
+  banner.classList.add('show');
+  if (!total) return;
+  const me = $('me');
+  me.classList.remove('paid');
+  void me.offsetWidth;
+  me.classList.add('paid');
+  const plus = document.createElement('div');
+  plus.className = 'pay-float';
+  plus.textContent = `+${money(total)}`;
+  me.appendChild(plus);
+  setTimeout(() => plus.remove(), 1800);
+}
+
+/** Deliveries per route (time, price), for its earnings per minute. */
+const routeLog = new Map<string, { since: number; hits: { t: number; price: number }[] }>();
+/** Seconds of history a route's earnings rate is taken over. */
+const RATE_WINDOW = 120;
+
+/** A route's earnings per minute over the last RATE_WINDOW seconds (or since it started, once it's had a minute). */
+function routeRate(key: string, now: number, trucks: number): string {
+  let log = routeLog.get(key);
+  if (!log) {
+    log = { since: now, hits: [] };
+    routeLog.set(key, log);
+  }
+  log.hits = log.hits.filter((h) => h.t > now - RATE_WINDOW);
+  const span = Math.min(RATE_WINDOW, now - log.since);
+  if (span < 60) return 'earning… (give it a minute)';
+  const perMin = (log.hits.reduce((a, h) => a + h.price, 0) * 60) / span;
+  const each = trucks ? perMin / trucks : 0;
+  return `$${perMin.toFixed(1)}/min · $${each.toFixed(1)} per truck`;
+}
+
 function handleEvents(evs: GameEvent[]) {
   const obs = session.obs();
   const g = session.game;
   const mine = new Set(myCompanies(obs));
   const ol = $('log');
+  const truckRoute = new Map(obs.trucks.map((t) => [t.id, t.route]));
+  const paidNow: { company: number; amount: number; final: boolean }[] = [];
+  let payoutSeen = false;
   for (const e of evs) {
+    if (e.type === 'delivered') {
+      const key = truckRoute.get(e.truck);
+      if (key) {
+        const log = routeLog.get(key) ?? { since: e.t, hits: [] };
+        log.hits.push({ t: e.t, price: e.price });
+        routeLog.set(key, log);
+      }
+    }
     let text: string | null = null;
     let cls = '';
     // A pickup or delivery by any company: blink its arc on the free sites whose zone it's in.
@@ -660,6 +722,10 @@ function handleEvents(evs: GameEvent[]) {
     if (e.type === 'rejected') {
       toast(cap(e.reason) + '.', 'error');
       continue;
+    }
+    if (e.type === 'payout') {
+      payoutSeen = true;
+      if (e.paid[session.seat]) paidNow.push({ company: e.company, amount: e.paid[session.seat], final: !!e.final });
     }
     if (e.type === 'auctionWon') text = `${cap(playerName(e.player, obs.me))} bought a share of ${coName(e.company)} for ${money(e.amount)}`;
     else if (e.type === 'payout' && e.paid[session.seat]) {
@@ -681,6 +747,7 @@ function handleEvents(evs: GameEvent[]) {
     ol.prepend(li);
   }
   while (ol.children.length > 120) ol.lastChild!.remove();
+  if (payoutSeen) showPayout(paidNow);
 }
 
 // ------------------------------------------------------------------ end screen
@@ -857,6 +924,7 @@ function togglePause() {
 function newGame() {
   const { seed: _replay, ...fresh } = overridesFromUrl(); // a new game gets a new town
   session = new Session({ overrides: fresh });
+  routeLog.clear();
   session.speed = Number($<HTMLSelectElement>('speed').value);
   renderer.setTown(session.game.town);
   renderer.via = session.cfg.trucks.viaDepot;
