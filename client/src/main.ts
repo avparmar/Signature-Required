@@ -174,6 +174,8 @@ function updateHint(obs: Observation) {
 let paint: { add: boolean } | null = null;
 /** The area before each of the last few strokes (a double-click to focus undoes its two clicks). */
 const before: number[][] = [];
+/** Holding Space while editing an area: drag moves the map instead of painting. */
+let spaceHeld = false;
 
 function startAreaEdit(company: number) {
   const obs = session.obs();
@@ -185,6 +187,8 @@ function startAreaEdit(company: number) {
 
 function endAreaEdit() {
   hl.areaEdit = null;
+  spaceHeld = false;
+  $('map').classList.remove('panning');
   hl.hoverBlock = null;
   paint = null;
   $('area-bar').hidden = true;
@@ -210,7 +214,7 @@ function showAreaBar() {
   const c = hl.areaEdit.company;
   bar.innerHTML = `<span class="sw" style="background:${companyColor(c)}"></span><b>${coName(c)}: delivery area</b>
     <button id="area-clear">Clear</button><button id="area-done" class="go">Done</button>
-    <div class="area-hint">Click or drag over blocks to add them; right-click or right-drag to take them out. Double-click a producer or shop to focus on it (up to ${session.cfg.maxFocus}). No area: it delivers anywhere. <span class="gold">Gold arrows</span> point to the factory sites that deliveries there make cheaper.</div>`;
+    <div class="area-hint">Click or drag over blocks to add them; right-click or right-drag to take them out. Double-click a producer or shop to focus on it (up to ${session.cfg.maxFocus}). No area: it delivers anywhere. <span class="gold">Gold arrows</span> point to the factory sites that deliveries there make cheaper. Hold Space (or the middle button) and drag to move the map.</div>`;
   bar.hidden = false;
   $('area-clear').onclick = () => {
     if (!hl.areaEdit) return;
@@ -255,6 +259,12 @@ function click(sx: number, sy: number, right: boolean) {
 const canvas = $<HTMLCanvasElement>('map');
 let drag: { x: number; y: number; moved: boolean } | null = null;
 canvas.addEventListener('mousedown', (e) => {
+  // The middle button always moves the map, and so does any drag with Space held while editing.
+  if (e.button === 1 || (hl.areaEdit && spaceHeld && e.button === 0)) {
+    e.preventDefault();
+    drag = { x: e.clientX, y: e.clientY, moved: true };
+    return;
+  }
   if (hl.areaEdit && (e.button === 0 || e.button === 2)) {
     // Editing an area: press and drag paints blocks in (left) or out (right).
     before.push([...hl.areaEdit.blocks]);
@@ -289,6 +299,10 @@ window.addEventListener('mouseup', (e) => {
   if (paint) {
     paint = null;
     commitArea();
+    return;
+  }
+  if (drag && (e.button === 1 || hl.areaEdit)) {
+    drag = null; // a pan, not a click
     return;
   }
   if (e.button !== 0 || !drag) return;
@@ -750,6 +764,16 @@ function refreshMyCompanies(obs: Observation) {
   const g = session.game;
   const mine = myCompanies(obs);
   if (obs.phase === 'running') runningSince ??= obs.t;
+  // On the map: edit the area of the company you're looking at (or your first).
+  const mapEdit = $('map-edit');
+  const cur = currentCompany(obs);
+  const editFor = cur !== null && mine.includes(cur) ? cur : mine[0];
+  const showEdit = editFor !== undefined && obs.phase === 'running' && !hl.areaEdit;
+  mapEdit.hidden = !showEdit;
+  if (showEdit && mapEdit.dataset.company !== String(editFor)) {
+    mapEdit.dataset.company = String(editFor);
+    mapEdit.innerHTML = `<span class="sw" style="background:${companyColor(editFor)}"></span>Edit ${coName(editFor)}'s delivery area`;
+  }
   const box = $('mycos');
   let html = '';
   if (!mine.length) html = '<div class="muted small">You aren’t president of any company. Own the most shares of one to run it.</div>';
@@ -1544,7 +1568,12 @@ function showSettings() {
 }
 window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement) return;
-  if (e.key === 'p' || e.key === 'P' || e.key === ' ') {
+  if (e.key === ' ' && hl.areaEdit) {
+    // While editing, Space is for moving the map (P still pauses).
+    e.preventDefault();
+    spaceHeld = true;
+    canvas.classList.add('panning');
+  } else if (e.key === 'p' || e.key === 'P' || e.key === ' ') {
     e.preventDefault();
     togglePause();
   } else if (e.key === 'Escape') {
@@ -1552,6 +1581,15 @@ window.addEventListener('keydown', (e) => {
     hl.buyFor = null;
     endAreaEdit();
   }
+});
+$('map-edit').addEventListener('click', () => {
+  const c = Number($('map-edit').dataset.company);
+  if (!Number.isNaN(c)) startAreaEdit(c);
+});
+window.addEventListener('keyup', (e) => {
+  if (e.key !== ' ') return;
+  spaceHeld = false;
+  canvas.classList.remove('panning');
 });
 window.addEventListener('resize', () => renderer.resize(false));
 

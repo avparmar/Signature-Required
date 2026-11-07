@@ -367,3 +367,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #mycos .spend button { flex: 1; }
 #mycos .sites { align-items: center; }
 #area-bar .gold { color: #8a6a12; font-weight: 600; }
+#map-edit { position: absolute; left: 50%; bottom: 46px; transform: translateX(-50%); z-index: 4; display: inline-flex; align-items: center; gap: 7px; padding: 6px 14px; border-radius: 999px; background: #fff; border: 1.5px solid var(--line); box-shadow: 0 2px 8px rgba(0,0,0,0.12); font-size: 14px; white-space: nowrap; }
+#map-edit[hidden] { display: none; }
+#map-edit .sw { width: 12px; height: 12px; border-radius: 3px; }
+#map-edit:hover { border-color: var(--ink); }
+#map.panning { cursor: grab; }
