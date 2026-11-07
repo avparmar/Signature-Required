@@ -640,7 +640,7 @@ function refreshCompanies(obs: Observation) {
       saleBtn = `<button class="mini" data-startsale="${c.id}" ${cooldown > 0 ? 'disabled' : ''} title="Put one of the company's own shares up for sale. The best bid at the end gets it, if it's at least ${money(obs.minPrice[c.id])}; the money goes to the company.">${cooldown > 0 ? `Sale in ${Math.ceil(cooldown)}s` : 'Start a sale'}</button>`;
     }
     html += `<div class="chips">${chips}${saleBtn}</div>`;
-    html += `<div class="row small quick-stats"><span title="Next dividend per share, so far">Div <b>${money(c.dividendPerShare)}</b></span><span title="${trucks} trucks, ${depots} factor${depots === 1 ? 'y' : 'ies'}">🚚 <b>${trucks}</b> 🏭 <b>${depots}</b></span></div>`;
+    html += `<div class="row small quick-stats"><span title="Next dividend per share, so far">Div <b>${money(c.dividendPerShare)}</b></span><span title="${depots} factor${depots === 1 ? 'y' : 'ies'}">🏭 <b>${depots}</b></span></div>`;
     // Folded, the card stops here (plus a line for a running sale); hovering or pinning shows the rest.
     if (sale) {
       const best = book.bid;
@@ -809,10 +809,11 @@ function truckOffer(obs: Observation, id: number) {
 function refreshCardTabs(obs: Observation, mine: number[]) {
   for (const [id, k] of cards) {
     let tabs = k.root.querySelector<HTMLElement>('.co-tabs');
-    if (!mine.includes(id) || obs.phase !== 'running') {
+    if (obs.phase !== 'running') {
       tabs?.remove();
       continue;
     }
+    const own = mine.includes(id);
     if (!tabs) {
       tabs = document.createElement('div');
       tabs.className = 'co-tabs';
@@ -826,7 +827,7 @@ function refreshCardTabs(obs: Observation, mine: number[]) {
         else startAreaEdit(id);
       });
       truck.addEventListener('pointerdown', (e) => {
-        if (e.button !== 0 || truck.disabled) return;
+        if (e.button !== 0 || !truck.classList.contains('can')) return;
         e.stopPropagation();
         const o = truckOffer(session.obs(), id);
         if (o.home === undefined) return;
@@ -837,22 +838,31 @@ function refreshCardTabs(obs: Observation, mine: number[]) {
     }
     tabs.style.setProperty('--co', companyColor(id));
     const [area, truck] = [...tabs.children] as HTMLButtonElement[];
+    // The area tab: only on companies you run.
+    area.hidden = !own;
     const editing = hl.areaEdit?.company === id;
     const areaHtml = `${areaIcon(companyColor(id))}${editing ? 'Done' : '<span class="long">Delivery area</span><span class="short">Area</span>'}`;
     if (area.dataset.html !== areaHtml) (area.innerHTML = areaHtml), (area.dataset.html = areaHtml);
     area.classList.toggle('on', editing);
     area.title = editing ? 'Finish editing the delivery area' : 'Choose which blocks it delivers to';
+    // The truck tab: on every card, its fleet (trucks/limit). On yours, the next truck's price too,
+    // and the whole tab turns into a green button when it has the room and the money.
     const o = truckOffer(obs, id);
-    const truckHtml = `${truckIcon(companyColor(id))}<span class="count">${o.trucks}/${o.limit}</span><span class="px">${o.full ? 'Full' : money(o.price)}</span>`;
+    const can = own && !o.full && o.afford && o.home !== undefined;
+    const pill = !own ? '' : `<span class="px">${o.full ? 'Full' : can ? `+ ${money(o.price)}` : money(o.price)}</span>`;
+    const truckHtml = `${truckIcon(companyColor(id))}<span class="count">${o.trucks}/${o.limit}</span>${pill}`;
     if (truck.dataset.html !== truckHtml) (truck.innerHTML = truckHtml), (truck.dataset.html = truckHtml);
-    const can = !o.full && o.afford && o.home !== undefined;
-    truck.disabled = !can;
+    truck.classList.toggle('own', own);
     truck.classList.toggle('can', can);
-    truck.title = o.full
-      ? `Fleet full: ${o.trucks}/${o.limit} trucks. Each factory adds ${session.game.cfg.depots.capacity}: click a free factory site on the map to buy one.`
-      : !o.afford
-        ? `Another truck costs ${money(o.price)}, and the treasury has ${money(obs.companies[id].treasury)} (${o.trucks}/${o.limit} trucks)`
-        : `Buy another truck for ${money(o.price)} (${o.trucks}/${o.limit} trucks)`;
+    truck.setAttribute('aria-disabled', String(!can));
+    const cap = session.game.cfg.depots.capacity;
+    truck.title = !own
+      ? `${o.trucks} trucks, room for ${o.limit} (each factory adds ${cap})`
+      : o.full
+        ? `Fleet full: ${o.trucks}/${o.limit} trucks. Each factory adds ${cap}: click a free factory site on the map to buy one.`
+        : !o.afford
+          ? `Another truck costs ${money(o.price)}, and the treasury has ${money(obs.companies[id].treasury)} (${o.trucks}/${o.limit} trucks)`
+          : `Buy another truck for ${money(o.price)} (${o.trucks}/${o.limit} trucks)`;
   }
 }
 

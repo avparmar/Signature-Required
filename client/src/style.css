@@ -376,10 +376,17 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #companies .co-tab.truck .count { font-variant-numeric: tabular-nums; }
 #companies .co-tab:hover:not(:disabled) { background: #fff; }
 #companies .co-tab.on { background: var(--co); color: #fff; border-color: var(--co); }
+/* Not yours (or nothing to buy): a quiet label. */
+#companies .co-tab.truck { cursor: default; color: var(--muted); border-color: var(--line); background: #f6f3ec; }
+#companies .co-tab.truck:hover { background: #f6f3ec; }
 #companies .co-tab.truck .px { font-weight: 700; font-size: 12px; padding: 1px 7px; border-radius: 999px; background: var(--line); color: var(--muted); }
-#companies .co-tab.truck.can .px { background: #2e8a3e; color: #fff; }
-#companies .co-tab.truck:disabled { opacity: 1; cursor: default; color: var(--muted); }
-#companies .co-tab.truck:disabled .truck-icon { opacity: 0.55; }
+#companies .co-tab.truck.own { color: var(--ink); border-color: var(--ink); background: var(--panel); }
+#companies .co-tab.truck.own:hover { background: var(--panel); }
+/* You can buy one: a green button, lifted a little. */
+#companies .co-tab.truck.can { cursor: pointer; background: #2e8a3e; border-color: #1f6a2c; color: #fff; box-shadow: inset 0 -2px 0 rgba(0,0,0,0.18); transform: translateY(-2px); }
+#companies .co-tab.truck.can:hover { background: #33994a; }
+#companies .co-tab.truck.can:active { transform: translateY(0); }
+#companies .co-tab.truck.can .px { background: #fff; color: #1f6a2c; }
 #companies .co-tab .short { display: none; }
 @container (max-width: 225px) { #companies .co-tab .long { display: none; } #companies .co-tab .short { display: inline; } }
 /* Narrower still: the area tab goes to just its icon (the truck count stays). */
@@ -400,3 +407,4 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #site-pop .note { color: var(--muted); font-size: 12px; margin-top: 5px; }
 #map.panning { cursor: grab; }
 #companies .quick button.blank { visibility: hidden; }
+#companies .co-tab[hidden] { display: none; }
