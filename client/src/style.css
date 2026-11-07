@@ -83,7 +83,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #map-wrap { position: relative; padding: 0; overflow: hidden; display: block; }
 #map { display: block; background: transparent; box-shadow: none; border-radius: 0; cursor: crosshair; }
 #hint {
-  position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); pointer-events: none;
+  position: absolute; left: 50%; bottom: 36px; transform: translateX(-50%); pointer-events: none;
   font-size: 13px; color: var(--ink); background: rgba(255, 255, 255, 0.9); border: 1px solid var(--line);
   border-radius: 999px; padding: 5px 14px; white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,0.08);
 }
@@ -252,7 +252,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #payout .pay-close { font-size: 11px; color: var(--muted); margin-top: 6px; }
 
 /* The share market, in the company cards. */
-#companies .co.selling { background: #fff7dc; border-color: #d4b048; box-shadow: inset 0 3px 0 #d4b048; }
+#companies .co.selling { background: #fff7dc; border-color: #d4b048; box-shadow: inset 0 5px 0 #f1e3b3; }
 .co .sale { margin: 4px 0 2px; }
 .co .actions { justify-content: flex-end; gap: 4px; }
 .co .row .mini { font-size: 11px; padding: 1px 8px; line-height: 1.4; }
@@ -283,7 +283,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #companies .broker .quick button.note { background: transparent !important; border-color: transparent !important; color: var(--muted); opacity: 1; cursor: default; justify-content: center; gap: 4px; font-weight: 500; }
 /* Companies you run stand out in the strip. */
 #companies .co.yours { border-color: var(--ink); box-shadow: inset 0 3px 0 var(--ink); }
-#companies .co.yours.selling { box-shadow: inset 0 3px 0 #d4b048; }
+#companies .co.yours.selling { box-shadow: inset 0 5px 0 #f1e3b3; }
 
 #companies .broker .quick button[hidden] { display: none; }
 #companies .broker .quick .from { font-weight: 500; color: var(--muted); margin-left: auto; padding-left: 6px; }
@@ -368,16 +368,23 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #mycos .sites { align-items: center; }
 #area-bar .gold { color: #8a6a12; font-weight: 600; }
 /* Tabs atop your companies' cards: its delivery area, and buying a truck. */
-#companies .co-tabs { position: absolute; top: -27px; left: 10px; display: flex; gap: 5px; z-index: 1; }
-#companies .co-tab { height: 28px; display: inline-flex; align-items: center; gap: 6px; padding: 0 11px 0 8px; border: 1.5px solid var(--ink); border-bottom: none; border-radius: 9px 9px 0 0; background: var(--panel); font-size: 13px; font-weight: 600; white-space: nowrap; }
+#companies .co { container-type: inline-size; }
+#companies .co-tabs { position: absolute; top: -27px; left: 8px; right: 8px; display: flex; gap: 4px; z-index: 1; pointer-events: none; }
+#companies .co-tab { pointer-events: auto; height: 28px; display: inline-flex; align-items: center; gap: 6px; padding: 0 9px 0 7px; border: 1.5px solid var(--ink); border-bottom: none; border-radius: 9px 9px 0 0; background: var(--panel); font-size: 13px; font-weight: 600; white-space: nowrap; flex: none; }
 #companies .co-tab .area-icon { width: 17px; height: 17px; }
+#companies .co-tab .truck-icon { width: 23px; height: 16px; }
 #companies .co-tab:hover:not(:disabled) { background: #fff; }
 #companies .co-tab.on { background: var(--co); color: #fff; border-color: var(--co); }
-#companies .co-tab.truck { gap: 5px; }
-#companies .co-tab.truck .px { font-weight: 700; }
-#companies .co-tab.truck.can { background: #2e8a3e; border-color: #2e8a3e; color: #fff; }
-#companies .co-tab.truck.can:hover { background: #26762f; }
-#companies .co-tab.truck:disabled { opacity: 1; color: var(--muted); border-color: var(--line); cursor: default; }
+#companies .co-tab.truck .px { font-weight: 700; font-size: 12px; padding: 1px 7px; border-radius: 999px; background: var(--line); color: var(--muted); }
+#companies .co-tab.truck.can .px { background: #2e8a3e; color: #fff; }
+#companies .co-tab.truck:disabled { opacity: 1; cursor: default; color: var(--muted); }
+#companies .co-tab.truck:disabled .truck-icon { opacity: 0.55; }
+#companies .co-tab .short { display: none; }
+@container (max-width: 225px) { #companies .co-tab .long { display: none; } #companies .co-tab .short { display: inline; } }
+@container (max-width: 185px) { #companies .co-tab .word { display: none; } }
+/* A sale's clock along the card's top. */
+#companies .co .sale-bar { position: absolute; left: 0; top: 0; height: 5px; background: #c99a1c; border-radius: 10px 0 0 0; transition: width 0.25s linear; }
+#companies .co .sale-bar.late { background: #d9542c; }
 /* Buying a factory: a little card at the site you clicked. */
 #site-pop { position: absolute; z-index: 7; width: 240px; white-space: normal; text-align: left; background: #fff; border: 1.5px solid var(--ink); border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,0.22); padding: 8px 10px; font-size: 13px; min-width: 200px; }
 #site-pop[hidden] { display: none; }

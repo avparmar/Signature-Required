@@ -174,6 +174,9 @@ function updateHint(obs: Observation) {
 let paint: { add: boolean } | null = null;
 /** The area before each of the last few strokes (a double-click to focus undoes its two clicks). */
 const before: number[][] = [];
+/** A little delivery truck in the company's colour. */
+const truckIcon = (color: string) =>
+  `<svg class="truck-icon" viewBox="0 0 26 18" aria-hidden="true"><rect x="1" y="2" width="15" height="10" rx="1.5" fill="${color}" stroke="#23201b" stroke-width="1.4"/><path d="M16 5h4.5l3.5 4v3h-8z" fill="#fff" stroke="#23201b" stroke-width="1.4" stroke-linejoin="round"/><circle cx="6" cy="14" r="2.4" fill="#23201b"/><circle cx="19.5" cy="14" r="2.4" fill="#23201b"/></svg>`;
 /** A little map of blocks, some in the company's colour: the delivery-area icon. */
 const areaIcon = (color: string) =>
   `<svg class="area-icon" viewBox="0 0 24 24" aria-hidden="true"><g stroke="${color}" stroke-width="1.6"><rect x="2" y="2" width="9" height="9" rx="1.5" fill="${hexA(color, 0.3)}"/><rect x="13" y="2" width="9" height="9" rx="1.5" fill="${hexA(color, 0.3)}"/><rect x="2" y="13" width="9" height="9" rx="1.5" fill="${hexA(color, 0.3)}"/><rect x="13" y="13" width="9" height="9" rx="1.5" fill="none" stroke-dasharray="2.5 2"/></g></svg>`;
@@ -692,6 +695,21 @@ function refreshCompanies(obs: Observation) {
       k.info.dataset.html = html;
     }
     k.root.classList.toggle('selling', !!sale);
+    // A sale's clock: a bar along the card's top that shortens as time runs out (and grows back when a late bid extends it).
+    let bar = k.root.querySelector<HTMLElement>(':scope > .sale-bar');
+    if (sale && !bar) {
+      bar = document.createElement('div');
+      bar.className = 'sale-bar';
+      k.root.append(bar);
+    }
+    if (bar) {
+      if (!sale) bar.remove();
+      else {
+        const full = sale.opening ? session.game.cfg.auctions.openingClockSec : session.game.cfg.auctions.clockSec;
+        bar.style.width = `${Math.max(0, Math.min(1, sale.timeLeft / full)) * 100}%`;
+        bar.classList.toggle('late', sale.timeLeft <= 5);
+      }
+    }
     k.root.classList.toggle('yours', c.presidents.includes(obs.me) && !watching);
     // Open: pinned, or the opening round's company being sold (nothing else is happening then).
     k.root.classList.toggle('pinned', pinned || (sale?.opening === true && acting));
@@ -816,21 +834,21 @@ function refreshCardTabs(obs: Observation, mine: number[]) {
     tabs.style.setProperty('--co', companyColor(id));
     const [area, truck] = [...tabs.children] as HTMLButtonElement[];
     const editing = hl.areaEdit?.company === id;
-    const areaHtml = `${areaIcon(companyColor(id))}${editing ? 'Done' : 'Delivery area'}`;
+    const areaHtml = `${areaIcon(companyColor(id))}${editing ? 'Done' : '<span class="long">Delivery area</span><span class="short">Area</span>'}`;
     if (area.dataset.html !== areaHtml) (area.innerHTML = areaHtml), (area.dataset.html = areaHtml);
     area.classList.toggle('on', editing);
     area.title = editing ? 'Finish editing the delivery area' : 'Choose which blocks it delivers to';
     const o = truckOffer(obs, id);
-    const truckHtml = `🛻 ${o.trucks}/${o.limit} <span class="px">${money(o.price)}</span>`;
+    const truckHtml = `${truckIcon(companyColor(id))}<span class="word">Truck</span><span class="px">${o.full ? 'Full' : money(o.price)}</span>`;
     if (truck.dataset.html !== truckHtml) (truck.innerHTML = truckHtml), (truck.dataset.html = truckHtml);
     const can = !o.full && o.afford && o.home !== undefined;
     truck.disabled = !can;
     truck.classList.toggle('can', can);
     truck.title = o.full
-      ? `Fleet full (${o.trucks}/${o.limit}): each factory adds ${session.game.cfg.depots.capacity}. Click a free factory site on the map to buy one.`
+      ? `Fleet full: ${o.trucks}/${o.limit} trucks. Each factory adds ${session.game.cfg.depots.capacity}: click a free factory site on the map to buy one.`
       : !o.afford
-        ? `Another truck costs ${money(o.price)}: the treasury has ${money(obs.companies[id].treasury)}`
-        : `Buy another truck for ${money(o.price)}`;
+        ? `Another truck costs ${money(o.price)}, and the treasury has ${money(obs.companies[id].treasury)} (${o.trucks}/${o.limit} trucks)`
+        : `Buy another truck for ${money(o.price)} (${o.trucks}/${o.limit} trucks)`;
   }
 }
 
