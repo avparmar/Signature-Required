@@ -46,12 +46,26 @@ describe('Game loop', () => {
     expect(g.players[0].icon).toBe(0); // not once the game is running
   });
 
-  it('treats tied largest shareholders as co-presidents', () => {
+  it('one president: the most shares, and a tie goes to whoever got there first', () => {
     const g = newGame({ players: 3 });
-    g.companies[0].shares = [0, 0, 1, 1, 2];
-    expect(g.presidents(0)).toEqual([0, 1]);
-    g.companies[0].shares = [0, 1, 1, 2, null];
+    const c = g.companies[0];
+    c.shares = [0, null, null, null, null];
+    expect(g.presidents(0)).toEqual([0]);
+    c.shares = [0, 1, null, null, null]; // a tie: the president keeps it
+    expect(g.presidents(0)).toEqual([0]);
+    c.shares = [0, 1, 1, null, null]; // more shares: player 1 takes over
     expect(g.presidents(0)).toEqual([1]);
+    c.shares = [0, 1, 1, 0, null]; // catching up isn't enough
+    expect(g.presidents(0)).toEqual([1]);
+    // The president sells out: the longest-standing of the biggest holders, not the new buyer.
+    c.shares = [0, 2, null, 0, null];
+    expect(g.presidents(0)).toEqual([0]);
+    c.shares = [2, 2, 1, null, null];
+    expect(g.presidents(0)).toEqual([2]);
+    c.shares = [2, null, 1, null, 0]; // 2 sold one: everyone holds one; 1 has held theirs longest
+    expect(g.presidents(0)).toEqual([1]);
+    c.shares = [null, null, null, null, null];
+    expect(g.presidents(0)).toEqual([]);
   });
 
   it('applies actions at the start of the next tick, in the order they arrived', () => {
