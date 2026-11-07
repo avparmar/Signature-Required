@@ -50,6 +50,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #companies .co:not(:hover):not(:focus-within):not(.pinned) .more,
 #companies .co:not(:hover):not(:focus-within):not(.pinned) .broker .slide,
 #companies .co:not(:hover):not(:focus-within):not(.pinned) .broker .order,
+#companies .co:not(:hover):not(:focus-within):not(.pinned) .broker .offer,
 #companies .co:not(:hover):not(:focus-within):not(.pinned) .pin,
 #companies .co:not(:hover):not(:focus-within):not(.pinned) [data-startsale] { display: none; }
 #companies .co:not(:hover):not(:focus-within):not(.pinned) .row > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
@@ -427,3 +428,17 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #companies .head .tk { display: none; letter-spacing: 0.04em; }
 #companies .co:not(:hover):not(:focus-within):not(.pinned) .head .nm { display: none; }
 #companies .co:not(:hover):not(:focus-within):not(.pinned) .head .tk { display: inline; }
+/* Offering a company share: a gold button at the bottom of the card. While it waits after the last
+   one, it's muted and a band shows the time left. */
+#companies .broker .offer { position: relative; overflow: hidden; display: flex; align-items: center; gap: 9px; width: 100%; margin-top: 8px; padding: 6px 10px; border: 1.5px solid #c99a1c; border-radius: 9px; background: linear-gradient(#fff6d6, #fbe9a9); color: #5c4508; text-align: left; box-shadow: inset 0 -2px 0 rgba(176,138,30,0.25); }
+#companies .broker .offer[hidden] { display: none; }
+#companies .broker .offer:hover:not(:disabled) { background: linear-gradient(#fff2c4, #f7df8a); }
+#companies .broker .offer:active:not(:disabled) { box-shadow: none; transform: translateY(1px); }
+#companies .broker .offer .share-icon { width: 26px; height: 22px; flex: none; }
+#companies .broker .offer .txt { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
+#companies .broker .offer .txt b { font-size: 13px; }
+#companies .broker .offer .hint { font-size: 11px; color: #8a6a12; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#companies .broker .offer:disabled { opacity: 1; background: #f6f3ec; border-color: var(--line); color: var(--muted); box-shadow: none; cursor: default; }
+#companies .broker .offer:disabled .share-icon { opacity: 0.5; filter: grayscale(1); }
+#companies .broker .offer:disabled .hint { color: var(--muted); }
+#companies .broker .offer:disabled::after { content: ''; position: absolute; left: 0; bottom: 0; height: 3px; width: calc(var(--wait, 0) * 100%); background: #d4b048; transition: width 0.25s linear; }

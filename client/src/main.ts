@@ -174,6 +174,8 @@ function updateHint(obs: Observation) {
 let paint: { add: boolean } | null = null;
 /** The area before each of the last few strokes (a double-click to focus undoes its two clicks). */
 const before: number[][] = [];
+/** A share certificate: a gold-edged sheet with a seal. */
+const shareIcon = `<svg class="share-icon" viewBox="0 0 24 20" aria-hidden="true"><rect x="1.5" y="2" width="21" height="15" rx="2" fill="#fff8de" stroke="#b08a1e" stroke-width="1.5"/><rect x="4" y="4.5" width="16" height="10" rx="1" fill="none" stroke="#d9bb5c" stroke-width="1"/><path d="M6.5 8h7M6.5 11h5" stroke="#b08a1e" stroke-width="1.4" stroke-linecap="round"/><circle cx="17" cy="11.5" r="2.6" fill="#d9542c"/><path d="M15.8 13.6l-.8 3.4 2-1 2 1-.8-3.4" fill="#d9542c"/></svg>`;
 /** A little box truck: the cargo box in the company's colour, a cab with a window, speed lines. */
 const truckIcon = (color: string) =>
   `<svg class="truck-icon" viewBox="0 0 32 20" aria-hidden="true"><g stroke="#23201b" stroke-width="1.4" stroke-linejoin="round"><path d="M1 6.5h3M2 10h3" stroke-linecap="round" opacity="0.5"/><rect x="6" y="2" width="15" height="11.5" rx="1.6" fill="${color}"/><path d="M8.5 9.5h10" stroke="#fff" stroke-width="1.6" stroke-linecap="round" opacity="0.7"/><path d="M21 5.5h5l3.5 4.2v3.8H21z" fill="#fbf9f4"/><path d="M23 7.2h2.6l2 2.5H23z" fill="#9fc4dd" stroke-width="1"/><circle cx="10.5" cy="15.5" r="2.8" fill="#23201b"/><circle cx="25" cy="15.5" r="2.8" fill="#23201b"/></g><circle cx="10.5" cy="15.5" r="1" fill="#fbf9f4"/><circle cx="25" cy="15.5" r="1" fill="#fbf9f4"/></svg>`;
@@ -567,7 +569,7 @@ function card(id: number): Card {
   const info = document.createElement('div');
   const form = document.createElement('div');
   form.className = 'broker';
-  form.innerHTML = `<div class="quick"><button type="button" class="sell-now"></button><button type="button" class="buy-now"></button></div><div class="slide"><span class="lo"></span><input type="range" min="1" max="2" step="1" aria-label="Price for your order" /><span class="hi"></span></div><div class="order"><b class="px"></b><button type="button" class="place-buy"></button><button type="button" class="place-sell"></button></div>`;
+  form.innerHTML = `<div class="quick"><button type="button" class="sell-now"></button><button type="button" class="buy-now"></button></div><div class="slide"><span class="lo"></span><input type="range" min="1" max="2" step="1" aria-label="Price for your order" /><span class="hi"></span></div><div class="order"><b class="px"></b><button type="button" class="place-buy"></button><button type="button" class="place-sell"></button></div><button type="button" class="offer" hidden></button>`;
   root.append(info, form);
   const q = <T extends HTMLElement>(sel: string) => form.querySelector<T>(sel)!;
   k = { slot, root, info, form, quick: q('.quick'), buyNow: q('.buy-now'), sellNow: q('.sell-now'), slider: q('input'), price: q('.px'), lo: q('.lo'), hi: q('.hi'), placeBuy: q('.place-buy'), placeSell: q('.place-sell'), key: '' };
@@ -632,15 +634,25 @@ function refreshCompanies(obs: Observation) {
     const pinBtn = `<button class="pin${pinned ? ' on' : ''}" data-pin="${c.id}" title="${pinned ? 'Unpin: fold this card back down' : 'Pin this card open'}">${pinned ? 'Unpin' : 'Pin'}</button>`;
     // Open, the card has a top row (Pin) so the name gets its own line, with its ticker.
     let html = `<div class="row head-open"><span>${pinBtn}</span></div>`;
-    let saleBtn = '';
-    if (acting && obs.phase === 'running' && own && !sale && c.presidents.length) {
-      const cooldown = obs.saleCooldownUntil[c.id] - obs.elapsed;
-      saleBtn = `<button class="mini" data-startsale="${c.id}" ${cooldown > 0 ? 'disabled' : ''} title="Offer one of the company's own shares. The best bid at the end gets it, if it's at least ${money(obs.minPrice[c.id])}; the money goes to the company.">${cooldown > 0 ? `Offer again in ${Math.ceil(cooldown)}s` : 'Offer company share'}</button>`;
+    // Offering one of the company's own shares: at the bottom of the card, with the trading. Any
+    // shareholder can, while the company still owns a share; after one, it waits a while.
+    const offerBtn = k.form.querySelector<HTMLButtonElement>('.offer')!;
+    const canOffer = acting && obs.phase === 'running' && own && !sale && c.presidents.length > 0 && c.shares.includes(null);
+    offerBtn.hidden = !canOffer;
+    if (canOffer) {
+      const cooldown = Math.max(0, obs.saleCooldownUntil[c.id] - obs.elapsed);
+      const wait = session.cfg.auctions.saleCooldownSec;
+      const html = `${shareIcon}<span class="txt"><b>${cooldown > 0 ? `Offer again in ${Math.ceil(cooldown)}s` : 'Offer company share'}</b><span class="hint">the money goes to the company</span></span>`;
+      if (offerBtn.dataset.html !== html) (offerBtn.innerHTML = html), (offerBtn.dataset.html = html);
+      offerBtn.dataset.startsale = String(c.id);
+      offerBtn.disabled = cooldown > 0;
+      offerBtn.style.setProperty('--wait', String(wait > 0 ? cooldown / wait : 0));
+      offerBtn.title = `Offer one of the company's own shares. Everyone has ${session.cfg.auctions.clockSec} seconds to bid; the best bid gets it if it's at least ${money(obs.minPrice[c.id])}, and the money goes to the company.`;
     }
     // Name and shares on the left; the company's money in a box on the right: its treasury, the
     // dividend per share so far, and its factories.
     const coBox = `<div class="co-box"><b class="tr" title="The company's treasury: what it has to spend on trucks and factories, and to buy shares back">${money(c.treasury)}</b><span class="stats"><span title="Next dividend per share, so far">div <b>${money(c.dividendPerShare)}</b></span><span title="${depots} factor${depots === 1 ? 'y' : 'ies'}">🏭 <b>${depots}</b></span></span></div>`;
-    html += `<div class="top"><div class="left"><div class="row head"><span title="${coName(c.id)}">${sw(c.id)}<b class="nm">${coName(c.id)}</b><b class="tk">${COMPANY_NAMES[companySlot(c.id)][1]}</b> <span class="ticker">${COMPANY_NAMES[companySlot(c.id)][1]}</span></span></div><div class="chips">${chips}${saleBtn}</div></div>${coBox}</div>`;
+    html += `<div class="top"><div class="left"><div class="row head"><span title="${coName(c.id)}">${sw(c.id)}<b class="nm">${coName(c.id)}</b><b class="tk">${COMPANY_NAMES[companySlot(c.id)][1]}</b> <span class="ticker">${COMPANY_NAMES[companySlot(c.id)][1]}</span></span></div><div class="chips">${chips}</div></div>${coBox}</div>`;
     // Folded, the card stops here (plus a line for a running sale); hovering or pinning shows the rest.
     if (sale) {
       const best = book.bid;
