@@ -656,7 +656,7 @@ function refreshCompanies(obs: Observation) {
     // Folded, the card stops here (plus a line for a running sale); hovering or pinning shows the rest.
     if (sale) {
       const best = book.bid;
-      html += `<div class="row small sale-line fold-only"><b>${sale.opening ? 'Opening' : 'Offering'} ${Math.ceil(sale.timeLeft)}s</b><span>${best ? `<span title="Highest bid: ${best.player === obs.me && !watching ? 'yours' : seatName(best.player)}">top bid <b>${money(best.price)}</b> ${seatIcon(best.player)}</span>` : 'no bids yet'}</span></div>`;
+      html += `<div class="row small sale-line fold-only"><b>${sale.opening ? 'Opening' : 'Offering'} ${Math.ceil(sale.timeLeft)}s</b><span>${best ? `<span title="Highest bid: ${best.player === obs.me && !watching ? 'yours' : seatName(best.player)}">top bid <b>${money(best.price)}</b> ${seatIcon(best.player)}</span>` : 'no bids'}</span></div>`;
     }
     // Folded: the standing orders at a glance, laid out like the Sell for / Buy for buttons (buy order
     // on the left, sell order on the right). Watching the bots, there are no buttons, so all of them;
@@ -677,17 +677,17 @@ function refreshCompanies(obs: Observation) {
     html += '<div class="more">';
     // Opened: its income lately, and its last dividend (the next one so far is in the box).
     const income = obs.phase === 'running' ? companyRate(c.id, obs.t) : null;
-    html += `<div class="row small muted"><span title="What its deliveries earned per minute over the last ${RATE_WINDOW / 60} minutes (half to the treasury, half to dividends)">Income ${income === null ? 'earning…' : `<b>${money(income)}</b>/min`}</span><span title="Dividend per share: the last one paid">last div ${lastDividend.has(c.id) ? money(lastDividend.get(c.id)!) : '—'}</span></div>`;
+    html += `<div class="row small muted"><span title="What its deliveries earned per minute over the last ${RATE_WINDOW / 60} minutes (half to the treasury, half to dividends)">Income ${income === null ? '—' : `<b>${money(income)}</b>/min`}</span><span title="Dividend per share: the last one paid">last div ${lastDividend.has(c.id) ? money(lastDividend.get(c.id)!) : '—'}</span></div>`;
     // A sale running: the share goes to the best bid at the end, if it's at least the minimum.
     if (sale) {
       const best = book.bid;
       const enough = best !== null && best.price >= obs.minPrice[c.id];
       const last = sale.age + sale.timeLeft >= session.cfg.auctions.maxSec - 0.05 && sale.timeLeft < session.cfg.auctions.softCloseSec;
       html += `<div class="sale"><div class="row"><b title="One of the company's own shares, to the highest bid at the end">${sale.opening ? 'Opening offering' : 'Share offering'}</b><b>${Math.ceil(sale.timeLeft)}s</b></div>`;
-      html += `<div class="row small"><span>Highest bid</span><span>${best ? `${money(best.price)} (${who(best.player)})` : 'none yet'}</span></div>`;
-      if (obs.minPrice[c.id] > 0) html += `<div class="row small muted"><span>Sells for at least</span><span>${money(obs.minPrice[c.id])}${best && !enough ? ' · not met yet' : ''}</span></div>`;
-      if (best?.player === obs.me && !watching) html += `<div class="good small">${enough ? 'You’re winning it.' : 'Your bid is below the minimum.'}</div>`;
-      if (sale.passed.length) html += `<div class="row small muted"><span>Passed</span><span>${sale.passed.map((pl) => (pl === obs.me && !watching ? 'you' : seatIcon(pl))).join(' ')}</span></div>`;
+      // The top bid and who's passed, on one line (the minimum is where the slider starts).
+      const passed = sale.passed.length ? `<span class="muted" title="Passed: ${sale.passed.map((pl) => (pl === obs.me && !watching ? 'you' : seatName(pl))).join(', ')}">passed ${sale.passed.map((pl) => seatIcon(pl)).join('')}</span>` : '';
+      html += `<div class="row small"><span>${best ? `<span title="Highest bid: ${best.player === obs.me && !watching ? 'yours' : seatName(best.player)}">top bid <b>${money(best.price)}</b> ${seatIcon(best.player)}</span>` : '<span class="muted">no bids</span>'}</span>${passed}</div>`;
+      if (best?.player === obs.me && !watching) html += `<div class="good small">${enough ? 'You’re winning it.' : `Your bid is below the minimum (${money(obs.minPrice[c.id])}).`}</div>`;
       if (last) html += `<div class="muted small">Final seconds: bids no longer add time.</div>`;
       html += `</div>`;
     }
