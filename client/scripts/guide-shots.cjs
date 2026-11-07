@@ -1,7 +1,8 @@
 // Captures the walkthrough pictures for the How to play card.
 // Usage (with `npx vite preview --port 4173` running in client/):
 //   node client/scripts/guide-shots.cjs "http://localhost:4173/?seed=5" <out-dir>
-// then convert the PNGs to client/public/guide/*.webp (max 900px wide).
+// then convert the PNGs to client/public/guide/*.webp (max 900px wide; crop overview to the town itself,
+// leaving off the empty page either side, since it shares its row with the diagram).
 // It plays your seat directly, and hands you shares and cash for the pictures.
 const { chromium } = require('playwright');
 const out = process.argv[3];
