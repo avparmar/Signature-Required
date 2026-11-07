@@ -601,14 +601,20 @@ function refreshCompanies(obs: Observation) {
       const best = book.bid;
       html += `<div class="row small sale-line fold-only"><b>${sale.opening ? 'Opening sale' : 'Sale'} ${Math.ceil(sale.timeLeft)}s</b><span>${best ? `highest bid ${money(best.price)}${best.player === obs.me && !watching ? ' (you)' : ''}` : 'no bids yet'}</span></div>`;
     }
-    // Folded, with no Sell for / Buy for buttons (watching the bots): the standing orders at a glance,
-    // where those buttons would be. (Opened, they're listed in full below.)
-    if (!acting && obs.phase === 'running' && !sale && (book.bid || book.ask)) {
-      // Laid out like the Sell for / Buy for buttons: the buy order on the left, the sell order on the right.
-      const cell = (label: string, o: { player: number; price: number } | null, tip: string) =>
-        o ? `<span title="${tip}">${label} <b>${money(o.price)}</b><span class="from">${o.player === obs.me && !watching ? 'you' : seatIcon(o.player)}</span></span>` : '<span></span>';
-      const parts = [cell('Buying', book.bid, 'Standing buy order'), cell('Selling', book.ask, 'Standing sell order')];
-      html += `<div class="row small orders-line fold-only">${parts.join('')}</div>`;
+    // Folded: the standing orders at a glance, laid out like the Sell for / Buy for buttons (buy order
+    // on the left, sell order on the right). Watching the bots, there are no buttons, so all of them;
+    // playing, the buttons show everyone else's, so just yours. (Opened, they're listed in full below.)
+    if (obs.phase === 'running' && !sale) {
+      const shown = (o: { player: number } | null) => o !== null && (!acting || o.player === obs.me);
+      const bid = shown(book.bid) ? book.bid : null;
+      const ask = shown(book.ask) ? book.ask : null;
+      if (bid || ask) {
+        const cell = (label: string, o: { player: number; price: number } | null, tip: string) =>
+          o ? `<span title="${tip}">${label} <b>${money(o.price)}</b><span class="from">${o.player === obs.me && !watching ? 'you' : seatIcon(o.player)}</span></span>` : '<span></span>';
+        const mine = acting ? 'Your ' : 'Standing ';
+        const parts = [cell('Buying', bid, `${mine}buy order`), cell('Selling', ask, `${mine}sell order`)];
+        html += `<div class="row small orders-line fold-only">${parts.join('')}</div>`;
+      }
     }
     html += '<div class="more">';
     html += `<div class="row small muted"><span>${routes} route${routes === 1 ? '' : 's'}</span><span title="Dividend per share: the last one paid (the next one so far is above)">last div ${lastDividend.has(c.id) ? money(lastDividend.get(c.id)!) : '—'}</span></div>`;
@@ -1290,9 +1296,8 @@ function frame(now: number) {
   sampleWaiting(obs);
   sampleHistory(obs);
   // Where to draw each truck: on its route in its lane (smooth between ticks), or in a building's line.
-  const moving = session.paused ? 0 : session.speed;
   const ahead = Math.max(0, session.renderT - obs.t);
-  const drawn = motion.update(obs, ahead, session.cfg.trucks.speed * dt * moving, session.cfg.trucks.speed);
+  const drawn = motion.update(obs, ahead, session.cfg.trucks, session.cfg.tickSec);
   shown.clear();
   for (const [id, sp] of drawn) shown.set(id, sp);
 

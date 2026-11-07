@@ -1,343 +1,157 @@
 /**
- * Where trucks are drawn, frame by frame. Trucks never leave the road:
+ * Where trucks are drawn, frame by frame: exactly where the game has them, moving smoothly from
+ * where they were at the last tick to where they are at this one (drawn a tick behind, so a truck
+ * that starts or stops moving between ticks doesn't lurch). Nothing here decides where a truck goes; the game does (core trucks.ts and
+ * kerbs.ts), including stopping in a building's line, moving up, U-turns and pulling out.
  *
- * - On the road, a truck is drawn exactly where the game has it along its route (carried on
- *   smoothly between game ticks), in the right-hand lane of the street it's on. At a junction it
- *   follows a curve from one lane to the next, or a half circle when it turns back the way it came.
- * - At a building, trucks wait in a line along the kerb of its street (see Renderer.queuePoint). One
- *   coming in on the near side stops at its place as it gets there; one coming in on the far side
- *   drives on up beside its place and U-turns into it. They move up along the street, and a truck
- *   leaving drives along the line to the kerb and joins its route there.
+ * - On the road: along its route in the right-hand lane, from the node it came from, rounding the
+ *   corners (a half circle where it turns back the way it came).
+ * - In a building's line: at its place along the street, in its lane, partway through a U-turn if
+ *   it's changing lanes. A truck moving up past one that's stopped swings out into the other lane.
  */
-import type { Observation } from '@sr/core';
+import { berthGoal, kerbLine, linePoint, atGoal, type Berth, type KerbLine, type Observation, type TruckConfig } from '@sr/core';
 import type { Renderer, Spot } from './render.js';
 
 type Pt = { x: number; y: number };
-type LinePos = NonNullable<Spot['q']>;
-
-interface Drawn {
-  /** In a building's line, or null on the road. */
-  line: LinePos | null;
-  /** On the road: how far behind the game's position it's drawn (catching up after leaving a line). */
-  lag: number;
-  /** Where it was last drawn; a gap to close (see the end of update); and whether one opened this frame. */
-  last?: Pt;
-  lastFrame?: number;
-  nudge?: Pt;
-  ease?: boolean;
-  /** The street its lag already reaches (see bridge). */
-  bridged?: number;
-  /** Road points behind the truck's current node (the last junction, or the line it pulled out of): it may still be drawn there. */
-  trail: Pt[];
-  /** The node it was at, to notice when it moves on, and the route it had from there. */
-  node: number;
-  path: number[];
-  /** The building it pulled in at, and the street (kerb node) it came in by: it waits on that street. */
-  arrived: { node: number; kerb: number } | null;
-  /** The building it's driving to, and the kerb it'll pull in from. */
-  heading?: { node: number; kerb: number };
-}
+type ObsTruck = Observation['trucks'][number];
 
 export class TruckMotion {
-  private drawn = new Map<number, Drawn>();
-  private speed = 0.35;
-  private frame = 0;
-  private lastT = -Infinity;
+  private lines = new Map<string, KerbLine | null>();
+  /** Everyone's pose at the last two ticks we've seen. */
+  private before = new Map<number, Spot>();
+  private now = new Map<number, Spot>();
+  private nowT = -Infinity;
+  private gap = 0.1;
 
   constructor(private r: Renderer) {}
 
   reset() {
-    this.drawn.clear();
+    this.lines.clear();
+    this.before.clear();
+    this.now.clear();
+    this.nowT = -Infinity;
   }
 
   /**
-   * Where to draw every truck now. `ahead`: how far game time has run on since the observation
-   * (seconds); `step`: how far a truck moves along a line this frame (blocks); `speed`: trucks' speed.
+   * Where to draw every truck: partway from its pose at the tick before to its pose at this one.
+   * `ahead`: how far game time has run on since this tick (seconds), out of `tickSec`.
    */
-  update(obs: Observation, ahead: number, step: number, speed: number): Map<number, Spot> {
-    const r = this.r;
-    const g = r.town.graph;
-    this.speed = speed;
-    // A jump in game time (the tab was hidden, or a fast-forward): nothing to ease from.
-    if (Math.abs(obs.t - this.lastT) > 1) this.frame += 2;
-    this.lastT = obs.t;
-    const out = new Map<number, Spot>();
-    const live = new Set<number>();
-    for (const t of obs.trucks) {
-      live.add(t.id);
-      let d = this.drawn.get(t.id);
-      if (!d) {
-        d = { line: null, lag: 0, trail: [], node: t.node, path: [...t.path], arrived: null };
-        this.drawn.set(t.id, d);
-      }
-      if (t.node !== d.node) {
-        // Moved on to the next node: the one it left joins the trail behind it (not a building).
-        // Pulled in at a building: by the street its route came in on (the kerb next to it; the
-        // driveway is so short it often reaches the kerb and the building in the same tick).
-        if (g.terminal[t.node]) {
-          const from = [d.node, ...d.path].slice(0, Math.max(1, d.path.indexOf(t.node) + 1)).filter((n) => !g.terminal[n]).pop();
-          const kerb = d.heading?.node === t.node ? d.heading.kerb : from !== undefined && g.adj[t.node].some((e) => e.to === from) ? from : undefined;
-          d.arrived = kerb !== undefined ? { node: t.node, kerb } : null;
-        }
-        // The nodes it went through: the one it left, and any it passed in the same tick (a short
-        // street, or a kerb on its way into a building), as its route had them.
-        const passed = [d.node];
-        const k = d.path.indexOf(t.node);
-        if (k > 0) passed.push(...d.path.slice(0, k));
-        for (const n of passed) {
-          if (g.terminal[n]) continue;
-          this.link(d, n, false);
-          const p = g.nodes[n];
-          const last = d.trail[d.trail.length - 1];
-          if (!last || Math.hypot(last.x - p.x, last.y - p.y) > 1e-6) d.trail.push({ x: p.x, y: p.y });
-        }
-        d.node = t.node;
-        d.bridged = undefined;
-        this.trimTrail(d);
-      }
-      d.path = [...t.path];
-      // Heading for a building: remember which street it'll pull in from.
-      const dest = t.path[t.path.length - 1];
-      if (t.state === 'driving' && dest !== undefined && g.terminal[dest]) d.heading = { node: dest, kerb: t.path.length >= 2 ? t.path[t.path.length - 2] : t.node };
+  update(obs: Observation, ahead: number, cfg: TruckConfig, tickSec: number): Map<number, Spot> {
+    if (obs.t !== this.nowT) {
+      // A jump in time (a skip, or a new game): nothing to move from.
+      // (Online, views can come a few ticks apart: move across the whole gap.)
+      const gap = obs.t - this.nowT;
+      this.before = gap > 0 && gap <= tickSec * 5 + 1e-9 ? this.now : new Map();
+      this.gap = gap > 0 ? gap : tickSec;
+      this.now = this.poses(obs, cfg);
+      this.nowT = obs.t;
     }
-    const targets = r.truckTargets(obs, (id, node) => {
-      const d = this.drawn.get(id);
-      return d?.arrived?.node === node ? d.arrived.kerb : undefined;
-    });
-    for (const t of obs.trucks) {
-      const d = this.drawn.get(t.id)!;
-      const target = targets.get(t.id);
-      // At (or stopping for) a building: in its line.
-      // Waiting to pull out, already drawn on the road (it never got into the line): stays there.
-      const leaving = t.state === 'driving' && t.path.length > 0 && !d.line;
-      if (target?.parked && target.q && !leaving) {
-        if (!d.line || d.line.node !== target.q.node || d.line.kerb !== target.q.kerb) {
-          // Still drawn behind on the road (it pulled out of somewhere close by): drive on up to
-          // the kerb first, then into the line.
-          if (!d.line && d.lag > 0) d.lag = Math.max(0, d.lag - step * 1.5);
-          // From another building's line (next door): from where it's drawn there, or, if that's
-          // not on this street, out of that line and round to this one.
-          let here = (d.line && linePoint(r, d.line)) || this.roadPose(t, d, ahead);
-          let p = here ? r.queueProject(target.q.node, here.x, here.y, target.q.kerb) : null;
-          if (d.line && !(p && p.off < 0.2)) {
-            const line = d.line;
-            d.line = null;
-            this.leave(d, t, line, target.q.kerb, true, ahead);
-            here = this.roadPose(t, d, ahead);
-            p = here ? r.queueProject(target.q.node, here.x, here.y, target.q.kerb) : null;
-          }
-          if (!d.line && here && !(p && p.off < 0.2)) {
-            // Drawn on another street (it came in another way than it's drawn): on round to this one.
-            const end = d.trail[d.trail.length - 1];
-            const from = end ? this.nodeAt(end) : -1;
-            const kerb = target.q.kerb;
-            if (from >= 0 && kerb !== undefined && from !== kerb) {
-              let prev = end;
-              for (const n of roadPath(g, from, kerb).slice(1)) {
-                d.trail.push(g.nodes[n]);
-                d.lag += Math.hypot(g.nodes[n].x - prev.x, g.nodes[n].y - prev.y);
-                prev = g.nodes[n];
-              }
-              here = this.roadPose(t, d, ahead);
-              p = here ? r.queueProject(target.q.node, here.x, here.y, target.q.kerb) : null;
-            }
-          }
-          if (!d.line && d.lag > 0 && here && !(p && p.off < 0.2 && p.s <= target.q.s + 1e-6)) {
-            out.set(t.id, here);
-            continue;
-          }
-          d.line = p && p.off < 0.2 ? { node: target.q.node, kerb: target.q.kerb, s: p.s, side: p.side } : { ...target.q };
-          d.ease = true; // into the line from wherever it was drawn: ease across the gap
-        }
-        d.line = stepAlongLine(d.line, target.q, step, r.laneOffset);
-        d.lag = 0;
-        d.trail = [];
-        const at = linePoint(r, d.line);
-        if (at) out.set(t.id, at);
+    const f = Math.max(0, Math.min(1, ahead / Math.max(tickSec, this.gap)));
+    const out = new Map<number, Spot>();
+    for (const [id, b] of this.now) {
+      const a = this.before.get(id);
+      if (!a || Math.hypot(b.x - a.x, b.y - a.y) > 1) {
+        out.set(id, b);
         continue;
       }
-      if (d.line) {
-        // Pulling out: along the line to the kerb, then on along its route, drawn behind the
-        // game's position and catching up.
-        const line = d.line;
-        d.line = null;
-        this.leave(d, t, line, g.terminal[t.node] ? t.path[0] : t.node, false, ahead);
-      }
-      this.bridge(d, t);
-      if (d.lag > 0) d.lag = Math.max(0, d.lag - step * 0.5);
-      const pose = this.roadPose(t, d, ahead);
-      if (pose) out.set(t.id, pose);
-      else if (target) out.set(t.id, target);
-    }
-    for (const id of [...this.drawn.keys()]) if (!live.has(id)) this.drawn.delete(id);
-    // Easing: where a truck changes from road to line, it's drawn from where it was, closing the gap quickly.
-    this.frame++;
-    const fade = Math.exp(-Math.max(0, step) / Math.max(1e-6, speed) / 0.15);
-    for (const [id, sp] of out) {
-      const d = this.drawn.get(id)!;
-      if (d.ease && d.last && d.lastFrame === this.frame - 1) d.nudge = { x: d.last.x - sp.x, y: d.last.y - sp.y };
-      d.ease = false;
-      if (d.nudge) {
-        if (Math.hypot(d.nudge.x, d.nudge.y) > 1.5) d.nudge = undefined; // too far to slide: just be there
-        else {
-          sp.x += d.nudge.x;
-          sp.y += d.nudge.y;
-          d.nudge = { x: d.nudge.x * fade, y: d.nudge.y * fade };
-          if (Math.hypot(d.nudge.x, d.nudge.y) < 1e-3) d.nudge = undefined;
-        }
-      }
-      d.last = { x: sp.x, y: sp.y };
-      d.lastFrame = this.frame;
+      // Facing: turned partway between the two.
+      const la = Math.hypot(a.dx, a.dy) || 1;
+      const lb = Math.hypot(b.dx, b.dy) || 1;
+      out.set(id, { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, dx: (a.dx / la) * (1 - f) + (b.dx / lb) * f, dy: (a.dy / la) * (1 - f) + (b.dy / lb) * f });
     }
     return out;
   }
 
-
-
-  /**
-   * Out of a building's line: its trail becomes the street from its place back to the kerb, then
-   * round the block to the kerb it leaves by (`out`, a road node; included in the trail when
-   * `withOut`, i.e. when the truck isn't on the road there yet), and it's drawn that far behind.
-   */
-  private leave(d: Drawn, t: Observation['trucks'][number], line: LinePos, out: number | undefined, withOut: boolean, ahead: number) {
-    const r = this.r;
-    const g = r.town.graph;
-    const q = r.queueLine(line.node, line.kerb);
-    if (!q) return;
-    const pts: Pt[] = [];
-    const from = r.queuePoint(line.node, line.s, 'near', line.kerb);
-    // The street from its place back to the kerb, on the centre line.
-    let k = q.cum.findIndex((c) => c >= line.s);
-    if (k < 0) k = q.cum.length - 1;
-    if (from) {
-      const lane = r.laneOffset;
-      pts.push({ x: from.x - -from.dy * lane, y: from.y - from.dx * lane });
-    }
-    for (let i = k - 1; i >= 1; i--) pts.push(q.pts[i]);
-    pts.push(q.pts[0]);
-    d.trail = pts;
-    // Leaving by another street round the block: round the block to it, on the road.
-    const waitedAt = line.kerb ?? r.defaultKerb(line.node);
-    if (out !== undefined && waitedAt !== undefined && out !== waitedAt) {
-      const way = roadPath(g, waitedAt, out).slice(1);
-      if (!withOut) way.pop();
-      for (const n of way) d.trail.push(g.nodes[n]);
-    }
-    // Drawn at its place: as far behind as the game has it from there.
-    d.lag = this.trailLength(d, t) + (g.terminal[t.node] ? 0 : this.distAlong(t, ahead));
-    d.bridged = this.route(t)[0];
+  private line(building: number, kerb: number): KerbLine | null {
+    const key = `${building}:${kerb}`;
+    if (!this.lines.has(key)) this.lines.set(key, kerbLine(this.r.town.graph, building, kerb));
+    return this.lines.get(key)!;
   }
 
-  /**
-   * A truck still drawn on its way into a building when the game already has it pulling out (by
-   * whichever street): the way on from where its trail ends to that street, added to the trail and
-   * to how far behind it's drawn, so it carries on from where it is.
-   */
-  private bridge(d: Drawn, t: Observation['trucks'][number]) {
+  /** Where every truck is at this tick. */
+  private poses(obs: Observation, cfg: TruckConfig): Map<number, Spot> {
+    const out = new Map<number, Spot>();
+    // Where everyone in a line is (carried on), to see who's moving past whom.
+    const inLine = new Map<string, { id: number; s: number; side: string; moving: boolean }[]>();
+    const berths = new Map<number, { line: KerbLine; b: Berth }>();
+    for (const t of obs.trucks) {
+      if (!t.berth) continue;
+      const line = this.line(t.node, t.berth.kerb);
+      if (!line) continue;
+      const goal = berthGoal(line, t.berth, cfg);
+      const b = t.berth;
+      berths.set(t.id, { line, b });
+      const key = `${t.node}:${t.berth.kerb}`;
+      (inLine.get(key) ?? inLine.set(key, []).get(key)!).push({ id: t.id, s: b.s, side: b.side, moving: !atGoal(b, goal) });
+    }
+    for (const t of obs.trucks) {
+      const at = berths.get(t.id);
+      if (at) {
+        // Swing out past a truck stopped in the same lane.
+        let swing = 0;
+        if (at.b.side === 'near' && at.b.turn === 0) {
+          const me = inLine.get(`${t.node}:${t.berth!.kerb}`)!.find((x) => x.id === t.id)!;
+          if (me.moving)
+            for (const o of inLine.get(`${t.node}:${t.berth!.kerb}`)!) {
+              if (o.id === t.id || o.moving || o.side !== 'near') continue;
+              const f = 1 - Math.abs(o.s - me.s) / cfg.spacing;
+              if (f > 0) swing = Math.max(swing, f * f * (3 - 2 * f));
+            }
+        }
+        out.set(t.id, this.berthPose(at.line, at.b, cfg.lane, swing));
+        continue;
+      }
+      out.set(t.id, this.roadPose(t, cfg.lane));
+    }
+    return out;
+  }
+
+  /** A truck in a line: in its lane at `s`, or partway through a U-turn; `swing` (0..1) out towards the other lane. */
+  private berthPose(line: KerbLine, b: Pick<Berth, 's' | 'side' | 'turn'>, lane: number, swing: number): Spot {
     const g = this.r.town.graph;
-    const first = this.route(t)[0];
-    if (first === undefined || !d.trail.length) return;
-    // Pulling out of a building it hadn't been drawn reaching: the whole way on counts as behind.
-    const whole = g.terminal[t.node] && d.bridged !== first;
-    if (g.terminal[t.node]) d.bridged = first;
-    this.link(d, first, whole);
-  }
-
-  /**
-   * No tunnelling: the trail's last point and `node` (next on the way) must be neighbours on the
-   * road. If they aren't (the game cut through a building's driveways, or several streets went by
-   * in one tick), the trail goes the long way round by the streets, and the truck is drawn further
-   * behind by the extra distance (`whole`: by all of it), so it never jumps.
-   */
-  private link(d: Drawn, node: number, whole: boolean) {
-    const g = this.r.town.graph;
-    const end = d.trail[d.trail.length - 1];
-    if (!end) return;
-    const from = this.nodeAt(end);
-    const N = g.nodes[node];
-    const direct = Math.hypot(N.x - end.x, N.y - end.y);
-    if (from < 0 || from === node) {
-      if (whole) d.lag += direct;
-      return;
+    const c = linePoint(g, line, b.s);
+    const lanePt = (side: 'near' | 'far') => {
+      // Near lane: facing downstream (-u); far lane: facing upstream (u). Keep right.
+      const h = side === 'near' ? { x: -c.ux, y: -c.uy } : { x: c.ux, y: c.uy };
+      return { x: c.x - h.y * lane, y: c.y + h.x * lane, dx: h.x, dy: h.y };
+    };
+    const from = lanePt(b.side);
+    if (!b.turn) {
+      if (!swing) return from;
+      const to = lanePt(b.side === 'near' ? 'far' : 'near');
+      return { x: from.x + (to.x - from.x) * swing * 0.9, y: from.y + (to.y - from.y) * swing * 0.9, dx: from.dx, dy: from.dy };
     }
-    if (!whole && g.adj[from].some((e) => e.to === node)) return;
-    const way = roadPath(g, from, node);
-    let len = 0;
-    let prev = end;
-    for (const n of way.slice(1)) {
-      if (n !== node) d.trail.push(g.nodes[n]);
-      len += Math.hypot(g.nodes[n].x - prev.x, g.nodes[n].y - prev.y);
-      prev = g.nodes[n];
-    }
-    d.lag += whole ? len : Math.max(0, len - direct);
+    // Half a circle across the road, bulging the way it was going.
+    const to = lanePt(b.side === 'near' ? 'far' : 'near');
+    const cx = (from.x + to.x) / 2;
+    const cy = (from.y + to.y) / 2;
+    const rx = (from.x - cx) / lane;
+    const ry = (from.y - cy) / lane;
+    const th = b.turn * Math.PI;
+    return {
+      x: cx + rx * lane * Math.cos(th) + from.dx * lane * Math.sin(th),
+      y: cy + ry * lane * Math.cos(th) + from.dy * lane * Math.sin(th),
+      dx: -rx * Math.sin(th) + from.dx * Math.cos(th),
+      dy: -ry * Math.sin(th) + from.dy * Math.cos(th),
+    };
   }
 
-  /** The road node at a point (-1 if it isn't one). */
-  private nodeAt(p: Pt): number {
-    const g = this.r.town.graph;
-    if (!this.nodeIndex || this.nodeIndexFor !== g) {
-      this.nodeIndexFor = g;
-      this.nodeIndex = new Map();
-      g.nodes.forEach((n, i) => {
-        if (!g.terminal[i]) this.nodeIndex!.set(`${n.x},${n.y}`, i);
-      });
-    }
-    return this.nodeIndex.get(`${p.x},${p.y}`) ?? -1;
-  }
-  private nodeIndex?: Map<string, number>;
-  private nodeIndexFor?: unknown;
-
-  /** How far a truck is along its current street (plus how far it has run on since the tick). */
-  private distAlong(t: Observation['trucks'][number], ahead: number) {
-    return t.state === 'driving' && t.path.length ? t.progress + ahead * this.speed : t.progress;
-  }
-
-  /** Length of the trail behind the truck, up to its current node. */
-  private trailLength(d: Drawn, t: Observation['trucks'][number]) {
-    const first = this.route(t)[0];
-    const pts = first === undefined ? [...d.trail] : [...d.trail, this.r.town.graph.nodes[first]];
-    let len = 0;
-    for (let i = 1; i < pts.length; i++) len += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
-    return len;
-  }
-
-  /** Keep just enough trail: what it's still drawn on (its lag), plus the last junction to turn through. */
-  private trimTrail(d: Drawn) {
-    while (d.trail.length > 1) {
-      let len = 0;
-      for (let i = 2; i < d.trail.length; i++) len += Math.hypot(d.trail[i].x - d.trail[i - 1].x, d.trail[i].y - d.trail[i - 1].y);
-      if (len < d.lag + 0.5) break;
-      d.trail.shift();
-    }
-  }
-
-  /** The road nodes a truck is at and will drive through, leaving out buildings (they sit off the road). */
-  private route(t: Observation['trucks'][number]): number[] {
-    const term = this.r.town.graph.terminal;
-    return [t.node, ...(t.state === 'driving' ? t.path : [])].filter((n) => !term[n]);
-  }
-
-  /** A truck on the road: its trail, the node it's at and the rest of its route, and how far along that it's drawn. */
-  private roadPose(t: Observation['trucks'][number], d: Drawn, ahead: number): Spot | null {
+  /** A truck on the road: from the node it came from, through the node it's at, along its route. */
+  private roadPose(t: ObsTruck, lane: number): Spot {
     const g = this.r.town.graph;
     const nodes: Pt[] = [];
-    const push = (p: Pt) => {
+    const push = (n: number) => {
+      if (g.terminal[n]) return;
+      const p = g.nodes[n];
       const last = nodes[nodes.length - 1];
       if (!last || Math.hypot(last.x - p.x, last.y - p.y) > 1e-6) nodes.push(p);
     };
-    for (const p of d.trail) push(p);
-    // Where the node it's at falls in the list (the trail may already end there).
-    let here = nodes.length - 1;
-    this.route(t).forEach((n, i) => {
-      push(g.nodes[n]);
-      if (i === 0) here = nodes.length - 1;
-    });
-    if (!nodes.length) return null;
-    let before = 0;
-    for (let i = 1; i <= here; i++) before += Math.hypot(nodes[i].x - nodes[i - 1].x, nodes[i].y - nodes[i - 1].y);
-    // On a building's zero-length driveway the game has it at the building: that's the kerb.
-    const along = g.terminal[t.node] ? 0 : this.distAlong(t, ahead);
-    return poseAlong(nodes, Math.max(0, before + along - d.lag), this.r.laneOffset);
+    push(t.from);
+    const before = nodes.length ? Math.hypot(g.nodes[t.node].x - nodes[0].x, g.nodes[t.node].y - nodes[0].y) : 0;
+    push(t.node);
+    if (t.state === 'driving') for (const n of t.path) push(n);
+    if (!nodes.length) return { x: t.x, y: t.y, dx: 1, dy: 0 };
+    return poseAlong(nodes, before + t.progress, lane);
   }
 }
 
@@ -355,7 +169,7 @@ export function poseAlong(nodes: Pt[], dist: number, lane: number): Spot {
     at += len;
   }
   if (!segs.length) return { x: nodes[0].x, y: nodes[0].y, dx: 1, dy: 0 };
-  dist = Math.min(dist, at);
+  dist = Math.max(0, Math.min(dist, at));
   const right = (u: Pt) => ({ x: -u.y, y: u.x });
   // A corner: how far either side of each junction the turn takes.
   const R = (i: number) => Math.min(0.2, segs[i].len / 2, segs[i + 1].len / 2);
@@ -407,65 +221,4 @@ export function poseAlong(nodes: Pt[], dist: number, lane: number): Spot {
   const f = dist - s.at;
   const ra = right(s.u);
   return { x: s.a.x + s.u.x * f + ra.x * lane, y: s.a.y + s.u.y * f + ra.y * lane, dx: s.u.x, dy: s.u.y };
-}
-
-/** Move a truck in a waiting line towards `goal` (same lane: along the street; the other lane: along, then a U-turn). */
-export function stepAlongLine(q: LinePos, goal: { s: number; side: 'near' | 'far' }, budget: number, lane: number): LinePos {
-  const out = { ...q };
-  const ds = goal.s - out.s;
-  // The near lane runs towards the building (s going down), the far lane away from it (s going up).
-  // Changing lanes the way it faces: drive there, then U-turn; the other way: U-turn first, then drive.
-  const turnFirst = out.side !== goal.side && (out.side === 'near' ? ds > 1e-6 : ds < -1e-6);
-  if (turnFirst || out.turn) {
-    out.turn = Math.min(1, (out.turn ?? 0) + budget / (Math.PI * lane));
-    if (out.turn < 1) return out;
-    return stepAlongLine({ node: out.node, kerb: out.kerb, s: out.s, side: out.side === 'near' ? 'far' : 'near' }, goal, 0, lane);
-  }
-  const mv = Math.sign(ds) * Math.min(Math.abs(ds), budget);
-  out.s += mv;
-  budget -= Math.abs(mv);
-  if (out.side !== goal.side && Math.abs(goal.s - out.s) < 1e-6 && budget > 0) return stepAlongLine({ ...out, turn: 1e-6 }, goal, budget, lane);
-  return out;
-}
-
-/** Where a truck in a waiting line is drawn: in its lane, or partway through a U-turn to the other one. */
-export function linePoint(r: Renderer, q: LinePos): Spot | null {
-  if (!q.turn) return r.queuePoint(q.node, q.s, q.side, q.kerb);
-  const from = r.queuePoint(q.node, q.s, q.side, q.kerb);
-  const to = r.queuePoint(q.node, q.s, q.side === 'near' ? 'far' : 'near', q.kerb);
-  if (!from || !to) return from;
-  const lane = r.laneOffset;
-  const th = q.turn * Math.PI;
-  // Half a circle across the road, bulging the way it was going.
-  const cx = (from.x + to.x) / 2;
-  const cy = (from.y + to.y) / 2;
-  const rx = (from.x - cx) / lane;
-  const ry = (from.y - cy) / lane;
-  return {
-    x: cx + rx * lane * Math.cos(th) + from.dx * lane * Math.sin(th),
-    y: cy + ry * lane * Math.cos(th) + from.dy * lane * Math.sin(th),
-    dx: -rx * Math.sin(th) + from.dx * Math.cos(th),
-    dy: -ry * Math.sin(th) + from.dy * Math.cos(th),
-    parked: true,
-    q,
-  };
-}
-
-/** Shortest way along the streets from one road node to another (buildings aren't streets), nodes from a to b. */
-function roadPath(g: Renderer['town']['graph'], a: number, b: number): number[] {
-  const prev = new Map<number, number>([[a, -1]]);
-  const todo = [a];
-  while (todo.length) {
-    const n = todo.shift()!;
-    if (n === b) break;
-    for (const e of g.adj[n]) {
-      if (g.terminal[e.to] || prev.has(e.to)) continue;
-      prev.set(e.to, n);
-      todo.push(e.to);
-    }
-  }
-  if (!prev.has(b)) return [a, b];
-  const path = [b];
-  while (path[0] !== a) path.unshift(prev.get(path[0])!);
-  return path;
 }

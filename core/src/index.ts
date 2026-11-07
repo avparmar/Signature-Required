@@ -10,6 +10,7 @@ export * from './config.js';
 export * from './game.js';
 export * from './economy.js';
 export * from './trucks.js';
+export * from './kerbs.js';
 export * from './depots.js';
 export * from './money.js';
 export * from './auctions.js';
