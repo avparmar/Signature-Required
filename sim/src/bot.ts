@@ -82,8 +82,8 @@ function deliveriesPerTruckMin(cfg: GameConfig): number {
 }
 function trucksPerRoute(cfg: GameConfig): number {
   const c = cfg.cycles;
-  const demand = ((c.demandPerLevel[0] + c.demandPerLevel[1]) / 2) * c.startLevel;
-  const supply = c.producePerLevel * c.startLevel;
+  const demand = c.palletsPerLevel * c.startLevel;
+  const supply = c.palletsPerLevel * c.startLevel;
   const palletsPerMin = (Math.min(demand, supply) * 60) / ((cfg.cycles.cycleSec[0] + cfg.cycles.cycleSec[1]) / 2);
   return Math.max(1, Math.round(palletsPerMin / deliveriesPerTruckMin(cfg) * 0.75));
 }
@@ -147,13 +147,16 @@ export class Bot {
       this.startedAt.delete(c);
     }
     const out: Action[] = [];
-    // Sales running: bid on at most one per look (its cash is held, so the next look sees what's left).
+    // Sales running: bid on at most one per look (its cash is held, so the next look sees what's left),
+    // and pass on the others it isn't bidding in, so they can end early.
+    let bidding = false;
     for (const sale of obs.sales) {
-      const bid = this.bid(obs, sale.company);
+      const bid = bidding ? null : this.bid(obs, sale.company);
       if (bid) {
         out.push(bid);
-        break;
-      }
+        bidding = true;
+      } else if (obs.books[sale.company].bid?.player !== this.me && !sale.passed.includes(this.me) && !this.wantsToBid(obs, sale.company))
+        out.push({ type: 'pass', company: sale.company });
     }
     if (obs.elapsed - this.lastThink < this.thinkEverySec) return out;
     this.lastThink = obs.elapsed;
@@ -190,7 +193,9 @@ export class Bot {
       : Object.values(obs.depots).filter((o) => o === company).length * this.cfg.depots.capacity;
     // The company will also raise money from its other unsold shares, at about this price.
     const unsoldAfter = Math.max(0, c.shares.filter((s) => s === null).length - 1);
-    const assumed = optimistic ? Math.max(extraCash, this.personality.speculator?.assumedSharePrice ?? 0) : extraCash;
+    // A cheap bid today doesn't mean the company stays broke: its other shares will sell too, for at
+    // least about a truck's price each (enough to get it going), whatever this one goes for.
+    const assumed = optimistic ? Math.max(extraCash, this.personality.speculator?.assumedSharePrice ?? 0) : Math.max(extraCash, this.cfg.depots.truckPrice);
     const futureRaise = unsoldAfter * assumed;
     const routes = new Set(this.routesFor(obs, company).map((r) => `${r.producer}-${r.consumer}`)).size;
     const m = this.cfg.money;
@@ -331,6 +336,11 @@ export class Bot {
     const book = obs.books[company];
     const beat = book.bid ? book.bid.price + this.cfg.auctions.minRaise : this.cfg.auctions.openingBid;
     return { company, highBid: book.bid?.price ?? 0, highBidder: book.bid?.player ?? null, min: Math.max(beat, obs.minPrice[company]) };
+  }
+
+  /** Whether it means to bid in this sale (it doesn't pass on sales it started, until it has bid). */
+  private wantsToBid(obs: Observation, company: number): boolean {
+    return (this.raiseFloor.has(company) || this.buyInBid.has(company)) && obs.books[company].bid?.player !== this.me;
   }
 
   private bid(obs: Observation, company: number): Action | null {
@@ -676,7 +686,7 @@ export class Bot {
       if (book.bid?.player === this.me) continue;
       const value = this.holdValue(obs, c.id) * this.personality.greed;
       const price = Math.floor(value * 0.7);
-      if (price < Math.max(1, (book.bid?.price ?? 0) + cfg.minRaise) || (book.ask && price >= book.ask.price)) continue;
+      if (price < Math.max(1, (book.bid?.price ?? 0) + cfg.minRaise, obs.minPrice[c.id]) || (book.ask && price >= book.ask.price)) continue;
       if (price * 3 > spare * this.personality.maxCashPerBid) continue;
       const gain = value / price;
       if (!best || gain > best.gain) best = { company: c.id, price, gain };

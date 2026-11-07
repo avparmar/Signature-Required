@@ -13,7 +13,7 @@ import {
 
 // Fixed demand so the arithmetic is exact: 2 pallets per level, level 3 = 6 per cycle.
 // Also pins the original 4-cycle window and no grace period, which these tests were written against.
-const cfg: CycleConfig = { ...DEFAULT_CYCLES, demandPerLevel: [2, 2], window: 4, graceSec: 0 };
+const cfg: CycleConfig = { ...DEFAULT_CYCLES, palletsPerLevel: 2, window: 4, graceSec: 0 };
 
 function loc(kind: 'producer' | 'consumer', o: Partial<LocationState> = {}): LocationState {
   return {
@@ -62,16 +62,15 @@ describe('cycles', () => {
     expect(c.demand).toBe(6);
   });
 
-  it('consumer demand varies within its range, scaled by level', () => {
+  it('a producer and a consumer at the same level make and want the same each cycle', () => {
     const rng = new Rng(5);
-    const c = loc('consumer', { level: 1 });
-    const seen = new Set<number>();
-    for (let i = 0; i < 40; i++) {
-      c.demand = 0;
-      updateCycles([c], i * 45, { ...DEFAULT_CYCLES, window: 1000 }, rng);
-      seen.add(c.cycleAmount);
+    for (const level of [1, 2, 3, 4, 5]) {
+      const p = loc('producer', { level, stock: 0 });
+      const c = loc('consumer', { level, demand: 0 });
+      updateCycles([p, c], 0, { ...DEFAULT_CYCLES, window: 1000 }, rng);
+      expect(p.cycleAmount).toBe(DEFAULT_CYCLES.palletsPerLevel * level);
+      expect(c.cycleAmount).toBe(p.cycleAmount);
     }
-    expect([...seen].sort()).toEqual([1, 2, 3]);
   });
 
   it('pallets are first come, first served at producers', () => {
@@ -212,7 +211,7 @@ describe('the town over a game', () => {
 
 describe('grace period', () => {
   it("a new location can't level down or close during its grace period, but can level up", () => {
-    const g = { ...DEFAULT_CYCLES, demandPerLevel: [2, 2] as [number, number], window: 2, graceSec: 120 };
+    const g = { ...DEFAULT_CYCLES, palletsPerLevel: 2, window: 2, graceSec: 120 };
     const c: LocationState = {
       id: 2, kind: 'consumer', good: 0, level: 1, cycleSec: 45, nextCycleAt: 0, stock: 0, demand: 0,
       cycleAmount: 0, served: 0, history: [], price: 0, closingIn: null, closed: false, graceUntil: 120,

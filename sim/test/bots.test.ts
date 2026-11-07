@@ -8,11 +8,11 @@ const SLOW = 60_000;
 
 describe('bots', () => {
   it('play a game: buy shares, buy trucks, deliver, and earn dividends', () => {
-    const r = runGame({ seed: 2, durationSec: 360 });
+    const r = runGame({ seed: 2, durationSec: 420 });
     expect(r.auctions.length).toBeGreaterThan(5);
     expect(r.companies.some((c) => c.trucks > 0)).toBe(true);
     expect(r.companies.reduce((s, c) => s + c.deliveries, 0)).toBeGreaterThan(50);
-    expect(r.payouts).toHaveLength(2);
+    expect(r.payouts).toHaveLength(3); // at 3 and 6 minutes, and at the end
     expect(Math.max(...r.cash)).toBeGreaterThan(100);
   }, SLOW);
 
