@@ -453,3 +453,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #companies .co .sale-line { font-size: 12px; font-weight: 600; line-height: 1; align-items: center; }
 #companies .co:not(:hover):not(:focus-within):not(.pinned) .broker .quick button *,
 #companies .co .sale-line * { line-height: 1; }
+#companies .co .sale-line > b { font-weight: 600; }
+#companies .co:not(:hover):not(:focus-within):not(.pinned) .broker .quick button { font-family: inherit; }
+#companies .co:not(:hover):not(:focus-within):not(.pinned) .broker .quick button b,
+#companies .co .sale-line span b { font-weight: 700; }
