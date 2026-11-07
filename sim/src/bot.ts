@@ -82,8 +82,8 @@ function deliveriesPerTruckMin(cfg: GameConfig): number {
 }
 function trucksPerRoute(cfg: GameConfig): number {
   const c = cfg.cycles;
-  const demand = ((c.demandPerLevel[0] + c.demandPerLevel[1]) / 2) * c.startLevel;
-  const supply = c.producePerLevel * c.startLevel;
+  const demand = c.palletsPerLevel * c.startLevel;
+  const supply = c.palletsPerLevel * c.startLevel;
   const palletsPerMin = (Math.min(demand, supply) * 60) / ((cfg.cycles.cycleSec[0] + cfg.cycles.cycleSec[1]) / 2);
   return Math.max(1, Math.round(palletsPerMin / deliveriesPerTruckMin(cfg) * 0.75));
 }
@@ -686,7 +686,7 @@ export class Bot {
       if (book.bid?.player === this.me) continue;
       const value = this.holdValue(obs, c.id) * this.personality.greed;
       const price = Math.floor(value * 0.7);
-      if (price < Math.max(1, (book.bid?.price ?? 0) + cfg.minRaise) || (book.ask && price >= book.ask.price)) continue;
+      if (price < Math.max(1, (book.bid?.price ?? 0) + cfg.minRaise, obs.minPrice[c.id]) || (book.ask && price >= book.ask.price)) continue;
       if (price * 3 > spare * this.personality.maxCashPerBid) continue;
       const gain = value / price;
       if (!best || gain > best.gain) best = { company: c.id, price, gain };

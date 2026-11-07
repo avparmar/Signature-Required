@@ -17,10 +17,8 @@ import type { Location } from './town.js';
 export interface CycleConfig {
   /** Cycle length range in seconds; each location gets its own length and a random phase. */
   cycleSec: [number, number];
-  /** Pallets a producer makes per cycle, per level. */
-  producePerLevel: number;
-  /** Pallets a consumer wants per cycle, per level: a random amount in this range. */
-  demandPerLevel: [number, number];
+  /** Pallets per cycle, per level: what a producer makes and a consumer wants (the same at the same level). */
+  palletsPerLevel: number;
   /** Level new and starting locations begin at. */
   startLevel: number;
   /** Highest level. */
@@ -41,8 +39,7 @@ export interface CycleConfig {
 
 export const DEFAULT_CYCLES: CycleConfig = {
   cycleSec: [45, 45],
-  producePerLevel: 2,
-  demandPerLevel: [1, 3],
+  palletsPerLevel: 2,
   startLevel: 3,
   maxLevel: 5,
   carryCycles: 2,
@@ -88,15 +85,9 @@ export type CycleEvent =
   | { type: 'closing'; t: number; location: number }
   | { type: 'closed'; t: number; location: number };
 
-/** Pallets per cycle for a location at its level (never below 1). */
-export function cycleRate(s: Pick<LocationState, 'kind' | 'level'>, cfg: CycleConfig, rng?: Rng): number {
-  const perLevel =
-    s.kind === 'producer'
-      ? cfg.producePerLevel
-      : rng
-        ? rng.int(...cfg.demandPerLevel)
-        : (cfg.demandPerLevel[0] + cfg.demandPerLevel[1]) / 2;
-  return Math.max(1, Math.round(perLevel * s.level));
+/** Pallets per cycle for a location at its level: the same for producers and consumers. */
+export function cycleRate(s: Pick<LocationState, 'kind' | 'level'>, cfg: CycleConfig): number {
+  return Math.max(1, Math.round(cfg.palletsPerLevel * s.level));
 }
 
 /** Fresh state for a producer or consumer (a town location, or one that just opened). */
@@ -153,7 +144,7 @@ export function updateCycles(states: LocationState[], t: number, cfg: CycleConfi
         const e = applyLevel(s, at, cfg);
         if (e) events.push(e);
       }
-      const amount = cycleRate(s, cfg, rng);
+      const amount = cycleRate(s, cfg);
       const cap = amount * cfg.carryCycles;
       if (s.kind === 'producer') s.stock = Math.min(cap, s.stock + amount);
       else s.demand = Math.min(cap, s.demand + amount);

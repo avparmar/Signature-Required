@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { distancesFrom, newGame, routeVia, shortestPath, type Game, type GameEvent } from '../src/index.js';
+import { atGoal, distancesFrom, newGame, routeVia, shortestPath, spotS, type Game, type GameEvent } from '../src/index.js';
 
 /** A game where player 0 is president of company 0 (no auctions yet, so set shares directly). */
 function setup(o: Parameters<typeof newGame>[0] = {}) {
@@ -76,13 +76,22 @@ describe('trucks on routes', () => {
 
   it('drives at the configured speed', () => {
     const { g, depot, producer, consumer } = setup();
-    const dist = distancesFrom(g.town.graph, depot.node)[producer.node];
     assign(g, depot.id, producer.id, consumer.id);
-    const expectSec = dist / g.cfg.trucks.speed;
-    runFor(g, expectSec - 1.2);
-    expect(g.trucks.trucks[0].state).toBe('driving');
-    runFor(g, 1.5);
-    expect(['queued', 'servicing']).toContain(g.trucks.trucks[0].state);
+    const t = g.trucks.trucks[0];
+    // Out on the road: a second covers `speed` blocks along its route.
+    while (t.berth) g.step();
+    const along = (x: typeof t) => {
+      let d = -x.progress;
+      let prev = x.node;
+      for (const n of x.path) {
+        d += Math.hypot(g.town.graph.nodes[n].x - g.town.graph.nodes[prev].x, g.town.graph.nodes[n].y - g.town.graph.nodes[prev].y);
+        prev = n;
+      }
+      return d;
+    };
+    const before = along(t);
+    runFor(g, 1);
+    expect(before - along(t)).toBeCloseTo(g.cfg.trucks.speed, 5);
   });
 
   it('only presidents of the depot\'s company can assign, and the route must make sense', () => {
@@ -118,7 +127,7 @@ describe('trucks on routes', () => {
     expect(g.routes()[0].trucks).toBe(1);
     const freed = g.trucks.trucks.find((t) => t.route === null)!;
     // It may still have a pallet to deliver first (no dumping); then it heads home.
-    expect(freed.orders.every((o) => o.action === 'unload')).toBe(true);
+    expect(freed.orders.every((o) => o.action === 'unload' || o.action === 'signOff')).toBe(true);
     runFor(g, 120);
     expect(freed.state).toBe('idle');
     expect(freed.node).toBe(depot.node);
@@ -135,6 +144,23 @@ describe('trucks on routes', () => {
     expect(g.drainEvents(0).filter((e) => e.type === 'rejected')).toHaveLength(1); // nothing left to remove
   });
 
+  it('a truck taken off its route with a raw pallet still has it processed before delivering it', () => {
+    const { g, depot, producer, consumer } = setup();
+    assign(g, depot.id, producer.id, consumer.id, 1);
+    const t = g.trucks.trucks.find((x) => x.route !== null)!;
+    let delivered: boolean | null = null;
+    for (let i = 0; i < 3000 && !(t.cargo && !t.cargo.processed && t.state === 'driving'); i++) g.step();
+    expect(t.cargo?.processed).toBe(false);
+    g.act(0, { type: 'unassignRoute', depot: depot.id, producer: producer.id, consumer: consumer.id });
+    g.step();
+    expect(t.orders.map((o) => o.action)).toEqual(['signOff', 'unload']);
+    for (let i = 0; i < 3000 && t.cargo; i++) {
+      if (t.state === 'servicing' && t.cargo) delivered = t.cargo.processed;
+      g.step();
+    }
+    expect(delivered).toBe(true);
+  });
+
   it('co-presidents: the last order wins', () => {
     const { g, depot, producer, consumer } = setup();
     g.companies[0].shares = [0, 1, null, null, null];
@@ -146,7 +172,7 @@ describe('trucks on routes', () => {
   });
 
   it('queues at a building: two bays, first come first served, waiting trucks keep their place', () => {
-    const { g, depot, producer, consumer } = setup({ cycles: { producePerLevel: 1, startLevel: 1, cycleSec: [60, 60] } });
+    const { g, depot, producer, consumer } = setup({ cycles: { palletsPerLevel: 1, startLevel: 1, cycleSec: [60, 60] } });
     // Stagger departures so arrival order is known.
     for (let i = 0; i < 4; i++) {
       assign(g, depot.id, producer.id, consumer.id);
@@ -159,7 +185,7 @@ describe('trucks on routes', () => {
   });
 
   it('takes turns between companies at a busy building, however many trucks each has there', () => {
-    const { g, depot, producer, consumer } = setup({ cycles: { producePerLevel: 1, startLevel: 1, cycleSec: [30, 30] } });
+    const { g, depot, producer, consumer } = setup({ cycles: { palletsPerLevel: 1, startLevel: 1, cycleSec: [30, 30] } });
     g.companies[1].shares = [1, null, null, null, null];
     const rival = g.town.locations.find((l) => l.startCompany === 1)!;
     assign(g, depot.id, producer.id, consumer.id, 4);
@@ -172,7 +198,12 @@ describe('trucks on routes', () => {
     let checked = 0;
     let loading = new Set<number>();
     for (let i = 0; i < 9000; i++) {
-      const waiting = new Set(g.trucks.trucks.filter((t) => t.state === 'queued' && t.at === producer.id).map((t) => t.company));
+      // Waiting at a bay, stopped there, ready to load.
+      const atBay = (t: (typeof g.trucks.trucks)[number]) => {
+        const line = t.berth && g.trucks.line(t.node, t.berth.kerb);
+        return !!line && t.berth!.spot < producer.bays && atGoal(t.berth!, { s: spotS(line, t.berth!.spot, g.cfg.trucks), side: 'near' });
+      };
+      const waiting = new Set(g.trucks.trucks.filter((t) => t.state === 'queued' && t.at === producer.id && atBay(t)).map((t) => t.company));
       g.step();
       // Whose turn it was: the trucks that started loading at the producer this step.
       const now = new Set(g.trucks.trucks.filter((t) => t.state === 'servicing' && t.at === producer.id).map((t) => t.id));
@@ -264,12 +295,14 @@ describe('trucks on routes', () => {
   it('reports truck positions and routes in observations', () => {
     const { g, depot, producer, consumer } = setup();
     g.addTruck(0);
-    expect(g.observe(0).trucks[0]).toMatchObject({ x: depot.x, y: depot.y, route: null });
+    const start = g.observe(0).trucks[0];
+    expect(start).toMatchObject({ route: null });
+    expect(Math.hypot(start.x - depot.x, start.y - depot.y)).toBeLessThan(1); // parked outside its depot
     g.act(0, { type: 'assignRoute', depot: depot.id, producer: producer.id, consumer: consumer.id });
     g.step();
     runFor(g, 3);
     const o = g.observe(0);
-    expect(Math.hypot(o.trucks[0].x - depot.x, o.trucks[0].y - depot.y)).toBeGreaterThan(0.3);
+    expect(Math.hypot(o.trucks[0].x - start.x, o.trucks[0].y - start.y)).toBeGreaterThan(0.3);
     expect(o.routes).toHaveLength(1);
     expect(o.trucks[0].route).toBe(o.routes[0].key);
   });
@@ -305,3 +338,64 @@ describe('routes through the depot', () => {
     });
   }
 });
+
+describe('lines at buildings', () => {
+  function assign(g: Game, depot: number, producer: number, consumer: number, n = 1) {
+    for (let i = 0; i < n; i++) {
+      g.addTruck(0);
+      g.act(0, { type: 'assignRoute', depot, producer, consumer });
+    }
+    g.step();
+  }
+
+  it('the first truck drives past the driveway to the far bay, so the next can use the near one', () => {
+    const { g, depot, producer, consumer } = setup({ trucks: { serviceSec: 30 } });
+    assign(g, depot.id, producer.id, consumer.id, 2);
+    for (let i = 0; i < 3000 && g.trucks.trucks.filter((t) => t.state === 'servicing').length < 2; i++) g.step();
+    const serving = g.trucks.trucks.filter((t) => t.state === 'servicing' && t.at === producer.id);
+    expect(serving).toHaveLength(2);
+    // Same street, either side of the driveway: bay 0 past it, bay 1 before it.
+    const [a, b] = serving.map((t) => t.berth!).sort((x, y) => x.spot - y.spot);
+    expect(a.kerb).toBe(b.kerb);
+    expect([a.spot, b.spot]).toEqual([0, 1]);
+    expect(a.s).toBeLessThan(0);
+    expect(b.s).toBeGreaterThan(0);
+    expect(b.s - a.s).toBeCloseTo(g.cfg.trucks.spacing, 6);
+  });
+
+  it('is only served once stopped at a bay, and others wait behind', () => {
+    const { g, depot, producer, consumer } = setup({ trucks: { serviceSec: 30 } });
+    assign(g, depot.id, producer.id, consumer.id, 4);
+    for (let i = 0; i < 4000; i++) {
+      g.step();
+      for (const t of g.trucks.trucks) {
+        if (t.state !== 'servicing' || !t.berth) continue;
+        const line = g.trucks.line(t.node, t.berth.kerb)!;
+        expect(t.berth.spot).toBeLessThan(2);
+        expect(atGoal(t.berth, { s: spotS(line, t.berth.spot, g.cfg.trucks), side: 'near' })).toBe(true);
+      }
+    }
+  });
+
+  it('never drives through a building: off the road only in a line, and pulls out forwards to the next junction', () => {
+    const { g, depot, producer, consumer } = setup();
+    assign(g, depot.id, producer.id, consumer.id, 3);
+    let pulledOut = 0;
+    const was = new Map<number, boolean>();
+    for (let i = 0; i < 4000; i++) {
+      g.step();
+      for (const t of g.trucks.trucks) {
+        if (!t.berth) expect(g.town.graph.terminal[t.node]).toBe(false);
+        if (was.get(t.id) && !t.berth) {
+          pulledOut++;
+          // Back on the street it waited on, heading on downstream.
+          expect(t.state).toBe('driving');
+          expect(t.progress).toBeGreaterThan(0);
+        }
+        was.set(t.id, t.berth !== null);
+      }
+    }
+    expect(pulledOut).toBeGreaterThan(3);
+  });
+});
+

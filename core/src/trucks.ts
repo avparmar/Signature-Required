@@ -3,8 +3,10 @@
  *
  * - A truck carries one pallet.
  * - Orders are a repeating list of stops: load at a producer, unload at a consumer.
- * - Trucks pass each other freely on streets; at a building they queue and hold a bay only while
- *   loading/unloading. Trucks waiting for stock or demand keep their place without blocking a bay.
+ * - Trucks pass each other freely on streets. At a building they stop in a line on the street
+ *   outside (see kerbs.ts): its loading bays either side of the driveway, then the queue behind.
+ *   A truck is only served once it's at a bay, and pulls out forwards to the next junction, so
+ *   parking and pulling out are real driving, at truck speed.
  * - Companies take turns: when trucks from several companies are waiting, the building serves
  *   the next company after the one it served last, so swarming a building with trucks doesn't
  *   let one company hog it. Within a company, trucks go in arrival order.
@@ -14,6 +16,7 @@
  */
 import { deliverPallet, takePallet, type LocationState } from './economy.js';
 import { edgeLength, routeVia, type RoadGraph } from './graph.js';
+import { atGoal, berthGoal, defaultKerb, kerbLine, linePoint, spotS, stepBerth, type Berth, type KerbLine } from './kerbs.js';
 
 export interface TruckConfig {
   /** Driving speed, blocks per second. */
@@ -29,9 +32,10 @@ export interface TruckConfig {
   viaDepot: 'none' | 'loaded' | 'hub';
   /** Seconds processing a load at the factory takes. */
   signOffSec: number;
-  /** Trucks pull out of a building (or factory) one at a time, at least this many seconds apart,
-   *  so trucks sent out together don't drive stacked on top of each other. */
-  departGapSec: number;
+  /** Spots in a building's line are this far apart (blocks): about a truck's length. */
+  spacing: number;
+  /** Lanes are this far either side of the road's centre line (blocks); a U-turn is a half circle this wide. */
+  lane: number;
 }
 
 export const DEFAULT_TRUCKS: TruckConfig = {
@@ -40,7 +44,8 @@ export const DEFAULT_TRUCKS: TruckConfig = {
   takeTurns: true,
   viaDepot: 'loaded',
   signOffSec: 3,
-  departGapSec: 2.5,
+  spacing: 0.575,
+  lane: 0.0775,
 };
 
 export interface Stop {
@@ -72,8 +77,12 @@ export interface Truck {
   /** Depot (town location id) this truck belongs to; counts against its capacity. */
   depot: number;
   state: TruckState;
-  /** Node the truck is at, or last passed. */
+  /** Node the truck is at, or last passed (a building's node while it's in that building's line). */
   node: number;
+  /** The node before `node` (which way it came). */
+  from: number;
+  /** In a building's line (stopped, moving up, or pulling out), or null on the road. */
+  berth: Berth | null;
   /** Remaining road nodes to drive through (next first) while driving. */
   path: number[];
   /** Distance travelled along the current street (from `node` towards path[0]). */
@@ -146,6 +155,8 @@ export class TruckSystem {
       depot,
       state: 'idle',
       node,
+      from: node,
+      berth: null,
       path: [],
       progress: 0,
       cargo: null,
@@ -162,7 +173,129 @@ export class TruckSystem {
       signing: false,
     };
     this.trucks.push(t);
+    // Parked outside its depot, in the next free spot.
+    const kerb = defaultKerb(this.graph, node);
+    const line = kerb !== undefined ? this.line(node, kerb) : null;
+    if (line && kerb !== undefined) {
+      const spot = this.freeSpot(node, kerb);
+      const key = `${node}:${kerb}`;
+      (this.used.get(key) ?? this.used.set(key, new Set()).get(key)!).add(spot);
+      t.berth = { kerb, s: spotS(line, spot, this.cfg), side: 'near', turn: 0, spot, leaving: false, seq: this.seq++ };
+    }
     return t;
+  }
+
+  private lines = new Map<string, KerbLine | null>();
+  private seq = 0;
+  /** Spots taken in each line (building:kerb), this tick. */
+  private used = new Map<string, Set<number>>();
+
+  /** A building's line along one of its streets (cached; the roads never change). */
+  line(building: number, kerb: number): KerbLine | null {
+    const key = `${building}:${kerb}`;
+    if (!this.lines.has(key)) this.lines.set(key, kerbLine(this.graph, building, kerb));
+    return this.lines.get(key)!;
+  }
+
+  private freeSpot(building: number, kerb: number): number {
+    const used = this.used.get(`${building}:${kerb}`);
+    let i = 0;
+    while (used?.has(i)) i++;
+    return i;
+  }
+
+  /** Where a truck's spot is, as a goal for moving along its line. */
+  private goalOf(truck: Truck): { s: number; side: 'near' | 'far' } | null {
+    const b = truck.berth;
+    const line = b ? this.line(truck.node, b.kerb) : null;
+    if (!b || !line) return null;
+    return berthGoal(line, b, this.cfg);
+  }
+
+  /** At a loading bay, stopped: ready to be served. */
+  private docked(truck: Truck, bays: number): boolean {
+    if (!truck.berth) return true;
+    const goal = this.goalOf(truck);
+    return !truck.berth.leaving && truck.berth.spot < bays && goal !== null && atGoal(truck.berth, goal);
+  }
+
+  /**
+   * Everyone's spot in each line: a truck at a bay (being served, or stopped there waiting) keeps
+   * it; the others take the free spots nearest the front, in the order they joined.
+   */
+  private allocate(baysOf: (locationId: number) => number) {
+    this.used.clear();
+    const groups = new Map<string, Truck[]>();
+    for (const t of this.trucks) {
+      if (!t.berth || t.berth.leaving) continue;
+      const key = `${t.node}:${t.berth.kerb}`;
+      (groups.get(key) ?? groups.set(key, []).get(key)!).push(t);
+    }
+    for (const [key, list] of [...groups].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+      list.sort((a, b) => a.berth!.seq - b.berth!.seq);
+      const line = this.line(list[0].node, list[0].berth!.kerb);
+      const bays = Math.max(0, ...list.map((t) => (t.at !== null ? baysOf(t.at) : 0)));
+      const taken = new Set<number>();
+      // A truck with a bay (being served, or waiting at it or on its way to it) keeps it.
+      const keeps = (t: Truck) => line !== null && t.berth!.spot < bays && (t.state === 'servicing' || t.state === 'queued');
+      const kept = new Set<Truck>();
+      for (const t of list)
+        if (keeps(t) && !taken.has(t.berth!.spot)) {
+          taken.add(t.berth!.spot);
+          kept.add(t);
+        }
+      // A free bay goes to whoever's turn it is (companies take turns, as at the bays themselves),
+      // even if that truck has to pull past others to get there; the rest keep their order.
+      const rest = list.filter((t) => !kept.has(t));
+      const location = list.find((t) => t.at !== null)?.at ?? null;
+      let last = location !== null ? (this.lastServed.get(location) ?? -1) : -1;
+      for (let bay = 0; bay < bays; bay++) {
+        if (taken.has(bay)) continue;
+        const waiting = rest.filter((t) => t.state === 'queued');
+        if (!waiting.length) break;
+        const companies = [...new Set(waiting.map((t) => t.company))].sort((a, b) => a - b);
+        const company = this.cfg.takeTurns ? (companies.find((c) => c > last) ?? companies[0]) : waiting[0].company;
+        const t = waiting.find((x) => x.company === company)!;
+        t.berth!.spot = bay;
+        taken.add(bay);
+        rest.splice(rest.indexOf(t), 1);
+        last = company;
+      }
+      for (const t of rest) {
+        let i = 0;
+        while (taken.has(i)) i++;
+        t.berth!.spot = i;
+        taken.add(i);
+      }
+      this.used.set(key, taken);
+    }
+  }
+
+  /** Pulled up at a building (in its line): the end of the drive. */
+  private arriveBuilding(truck: Truck, building: number, kerb: number, s: number, side: 'near' | 'far', now: number) {
+    truck.from = truck.node === building ? truck.from : truck.node;
+    truck.node = building;
+    truck.path = [];
+    truck.progress = 0;
+    const spot = this.freeSpot(building, kerb);
+    const key = `${building}:${kerb}`;
+    (this.used.get(key) ?? this.used.set(key, new Set()).get(key)!).add(spot);
+    truck.berth = { kerb, s, side, turn: 0, spot, leaving: false, seq: this.seq++ };
+    this.endDrive(truck, now);
+  }
+
+  private endDrive(truck: Truck, now: number) {
+    if (truck.toHome) {
+      truck.toHome = false;
+      truck.homing = false;
+      this.goIdle(truck, now, 'home');
+    } else this.arriveAtStop(truck, now);
+  }
+
+  /** Where a truck sets off from: the junction it pulls out to, if it's in a building's line. */
+  private startNode(truck: Truck): number {
+    const line = truck.berth ? this.line(truck.node, truck.berth.kerb) : null;
+    return line ? line.exit : truck.node;
   }
 
   /** Replace a truck's orders (already validated). Mid-street, they apply at the next intersection. */
@@ -222,13 +355,23 @@ export class TruckSystem {
     truck.orderIndex = idx;
     const stop = truck.orders[idx];
     const target = this.nodeOf(stop.location);
-    const route = routeVia(this.graph, [truck.node, ...(stop.via ?? []), target]);
-    if (!route) return this.goIdle(truck, now, 'no route');
     truck.toHome = false;
+    // Already in that building's line: no need to go anywhere.
+    if (truck.berth && target === truck.node) {
+      truck.berth.leaving = false;
+      truck.path = [];
+      truck.progress = 0;
+      truck.state = 'driving';
+      return this.arriveAtStop(truck, now);
+    }
+    const start = this.startNode(truck);
+    const route = routeVia(this.graph, [start, ...(stop.via ?? []), target]);
+    if (!route) return this.goIdle(truck, now, 'no route');
     truck.path = route.slice(1);
     truck.progress = 0;
     truck.state = 'driving';
-    if (truck.path.length === 0) this.arriveAtStop(truck, now);
+    if (truck.berth) truck.berth.leaving = true; // pulls out first
+    else if (truck.path.length === 0) this.arriveAtStop(truck, now);
   }
 
   /** Reached the current stop: queue at a building, or sign off at a depot. */
@@ -285,25 +428,19 @@ export class TruckSystem {
 
   /** Advance every truck by dt seconds, then serve the queues. */
   update(now: number, dt: number, baysOf: (locationId: number) => number) {
+    this.allocate(baysOf);
     for (const truck of this.trucks) {
-      if (truck.state === 'driving') this.drive(truck, this.cfg.speed * dt, now);
-      else if (truck.state === 'servicing' && now >= truck.busyUntil - 1e-9) this.finishService(truck, now);
+      if (truck.berth) this.moveInLine(truck, this.cfg.speed * dt, now);
+      else if (truck.state === 'driving') this.drive(truck, this.cfg.speed * dt, now);
+      if (truck.state === 'servicing' && now >= truck.busyUntil - 1e-9) this.finishService(truck, now);
       else if (truck.state === 'processing' && now >= truck.busyUntil - 1e-9) this.finishSignOff(truck, now);
     }
     // Serve queues in a fixed order (by location id) for determinism.
     for (const location of [...this.queues.keys()].sort((a, b) => a - b)) this.serve(location, now, baysOf(location));
   }
 
-  /** When a truck last pulled out of each building node (for departGapSec). */
-  private leftAt = new Map<number, number>();
-
   private drive(truck: Truck, distance: number, now: number) {
-    // Pulling out of a building: wait for the truck ahead to get going first.
-    if (truck.progress === 0 && truck.path.length && this.graph.terminal[truck.node]) {
-      const last = this.leftAt.get(truck.node);
-      if (last !== undefined && now - last < this.cfg.departGapSec - 1e-9) return;
-      this.leftAt.set(truck.node, now);
-    }
+    if (this.approach(truck, distance, now)) return;
     let left = distance;
     while (left > 0 && truck.path.length) {
       const next = truck.path[0];
@@ -314,6 +451,13 @@ export class TruckSystem {
         return;
       }
       left -= remaining;
+      // Into a building (its driveway): it stops in the line on this street instead, in whichever
+      // lane it came along (the far lane if it came from downstream).
+      if (this.graph.terminal[next] && truck.path.length === 1) {
+        const line = this.line(next, truck.node);
+        if (line) return this.arriveBuilding(truck, next, truck.node, 0, truck.from === line.pts[1] ? 'near' : 'far', now);
+      }
+      truck.from = truck.node;
       truck.node = next;
       truck.path.shift();
       truck.progress = 0;
@@ -323,12 +467,49 @@ export class TruckSystem {
         if (truck.state !== 'driving') return;
       }
     }
-    if (truck.path.length === 0 && truck.state === 'driving') {
-      if (truck.toHome) {
-        truck.toHome = false;
-        truck.homing = false;
-        this.goIdle(truck, now, 'home');
-      } else this.arriveAtStop(truck, now);
+    if (truck.path.length === 0 && truck.state === 'driving') this.endDrive(truck, now);
+  }
+
+  /**
+   * Coming up the near lane of a building's line: stop at the next free spot as it gets there
+   * (a queue spot before the driveway; bay 0 is past it, so it drives on to that). True if it stopped.
+   */
+  private approach(truck: Truck, distance: number, now: number): boolean {
+    const n = truck.path.length;
+    const dest = truck.path[n - 1];
+    if (n < 2 || !this.graph.terminal[dest] || truck.pendingOrders) return false;
+    const kerb = truck.path[n - 2];
+    const line = this.line(dest, kerb);
+    if (!line) return false;
+    // Its way to the kerb, backwards, must be the line itself.
+    const chain = [truck.node, ...truck.path.slice(0, n - 1)];
+    if (chain.length > line.pts.length) return false;
+    for (let i = 0; i < chain.length; i++) if (chain[chain.length - 1 - i] !== line.pts[i]) return false;
+    const s = line.cum[chain.length - 1] - truck.progress;
+    const goal = spotS(line, this.freeSpot(dest, kerb), this.cfg);
+    if (goal <= 0 || s - distance > goal) return false;
+    this.arriveBuilding(truck, dest, kerb, Math.min(s, goal), 'near', now);
+    return true;
+  }
+
+  /** Along its line towards its spot (or, pulling out, to the junction, where it joins the road). */
+  private moveInLine(truck: Truck, budget: number, now: number) {
+    const b = truck.berth!;
+    const goal = this.goalOf(truck);
+    if (!goal) {
+      truck.berth = null;
+      return;
+    }
+    Object.assign(b, stepBerth(b, goal, budget, this.cfg.lane));
+    if (b.leaving && atGoal(b, goal)) {
+      // On the road: on the street from the kerb towards the junction, halfway there.
+      const line = this.line(truck.node, b.kerb)!;
+      truck.from = line.pts[1];
+      truck.node = b.kerb;
+      truck.progress = line.back / 2;
+      if (line.exit !== b.kerb) truck.path = [line.exit, ...truck.path];
+      truck.berth = null;
+      if (truck.state === 'driving' && truck.path.length === 0) this.endDrive(truck, now);
     }
   }
 
@@ -343,7 +524,7 @@ export class TruckSystem {
       const firsts = new Map<number, number>();
       for (const id of q) {
         const t = this.trucks[id];
-        if (t.state === 'queued' && !skip.has(id) && !firsts.has(t.company)) firsts.set(t.company, id);
+        if (t.state === 'queued' && !skip.has(id) && !firsts.has(t.company) && this.docked(t, bays)) firsts.set(t.company, id);
       }
       if (firsts.size === 0) return;
       // Next company after the one served last (wrapping round by company id).
@@ -351,7 +532,7 @@ export class TruckSystem {
       const order = [...firsts.keys()].sort((a, b) => a - b);
       const company = this.cfg.takeTurns
         ? order.find((c) => c > last) ?? order[0]
-        : this.trucks[q.find((id) => this.trucks[id].state === 'queued' && !skip.has(id))!].company;
+        : this.trucks[q.find((id) => this.trucks[id].state === 'queued' && !skip.has(id) && this.docked(this.trucks[id], bays))!].company;
       const id = firsts.get(company)!;
       const truck = this.trucks[id];
       const stop = truck.orders[truck.orderIndex];
@@ -406,15 +587,21 @@ export class TruckSystem {
 
   /**
    * Take a truck off its route: it drives back to its depot and waits there as a free truck.
-   * A truck carrying a pallet delivers it first (no dumping): it keeps only its unload stop, and
+   * A truck carrying a pallet (or loading one) delivers it first (no dumping): it keeps only its
+   * unload stop, and its factory stop before that if the pallet hasn't been processed yet, and
    * heads home once the pallet is gone.
    */
   sendHome(truck: Truck, now: number) {
     truck.route = null;
     truck.homing = true;
     truck.pendingOrders = null;
-    const unload = truck.cargo ? truck.orders.find((s) => s.action === 'unload') : undefined;
-    truck.orders = unload ? [unload] : [];
+    const loading = truck.state === 'servicing' && truck.serving?.action === 'load';
+    const carrying = truck.cargo !== null || loading;
+    const unload = carrying ? truck.orders.find((s) => s.action === 'unload') : undefined;
+    // Still raw: through the factory first (unless it's being processed there right now).
+    const raw = loading ? this.cfg.viaDepot !== 'none' : truck.cargo !== null && !truck.cargo.processed && !truck.signing;
+    const sign = raw ? truck.orders.find((s) => s.action === 'signOff') : undefined;
+    truck.orders = unload ? (sign ? [sign, unload] : [unload]) : [];
     truck.orderIndex = 0;
     if (truck.state === 'servicing') return; // finishService sends it on
     if (truck.signing) return; // goes home (or delivers first) once processing is done
@@ -429,7 +616,12 @@ export class TruckSystem {
   /** Drive to a node with no stop at the end (used to return to the depot). */
   private driveTo(truck: Truck, node: number, now: number) {
     this.leaveQueue(truck);
-    const route = routeVia(this.graph, [truck.node, node]);
+    if (truck.berth && node === truck.node) {
+      truck.berth.leaving = false;
+      truck.homing = false;
+      return this.goIdle(truck, now, 'home');
+    }
+    const route = routeVia(this.graph, [this.startNode(truck), node]);
     if (!route || route.length <= 1) {
       truck.homing = false;
       return this.goIdle(truck, now, 'home');
@@ -438,6 +630,7 @@ export class TruckSystem {
     truck.path = route.slice(1);
     truck.progress = 0;
     truck.state = 'driving';
+    if (truck.berth) truck.berth.leaving = true; // pulls out first
   }
 
   /**
@@ -470,6 +663,11 @@ export class TruckSystem {
 
   /** Where a truck is right now, for drawing. */
   position(truck: Truck): { x: number; y: number } {
+    const line = truck.berth ? this.line(truck.node, truck.berth.kerb) : null;
+    if (truck.berth && line) {
+      const p = linePoint(this.graph, line, truck.berth.s);
+      return { x: p.x, y: p.y };
+    }
     const a = this.graph.nodes[truck.node];
     if (truck.state !== 'driving' || truck.path.length === 0) return { x: a.x, y: a.y };
     const b = this.graph.nodes[truck.path[0]];
