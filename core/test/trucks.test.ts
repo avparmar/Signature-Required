@@ -161,6 +161,22 @@ describe('trucks on routes', () => {
     expect(delivered).toBe(true);
   });
 
+  it("a truck off its route whose shop has closed leaves its pallet and is free again", () => {
+    const { g, depot, producer, consumer } = setup();
+    assign(g, depot.id, producer.id, consumer.id, 1);
+    const t = g.trucks.trucks.find((x) => x.route !== null)!;
+    for (let i = 0; i < 3000 && !(t.cargo && t.state === 'driving'); i++) g.step();
+    expect(t.cargo).not.toBeNull();
+    g.act(0, { type: 'unassignRoute', depot: depot.id, producer: producer.id, consumer: consumer.id });
+    g.step();
+    g.trucks.locationClosed(consumer.id, g.t); // its shop closes before it gets there
+    g.drainEvents(0);
+    for (let i = 0; i < 3000 && t.state !== 'idle'; i++) g.step();
+    expect(t.cargo).toBeNull();
+    expect(t.orders).toEqual([]);
+    expect(t.node).toBe(depot.node); // back home, free
+  });
+
   it('a tie keeps the president: the other holder can\'t direct the trucks', () => {
     const { g, depot, producer, consumer } = setup();
     expect(g.presidents(0)).toEqual([0]);

@@ -118,6 +118,8 @@ export type TruckEvent =
   | { type: 'loaded'; t: number; truck: number; company: number; location: number; good: number }
   | { type: 'delivered'; t: number; truck: number; company: number; location: number; good: number; origin: number; price: number }
   | { type: 'truckIdle'; t: number; truck: number; company: number; reason: string }
+  /** Off its route with a pallet nowhere will take any more (its shop closed): it leaves it, unpaid. */
+  | { type: 'dropped'; t: number; truck: number; company: number; good: number }
   | { type: 'signedOff'; t: number; truck: number; company: number; depot: number; loaded: boolean };
 
 /** Why a set of orders is invalid, or null if it's fine. */
@@ -342,6 +344,14 @@ export class TruckSystem {
    */
   private departForStop(truck: Truck, now: number, advance: boolean) {
     const n = truck.orders.length;
+    // Off its route, and no stop left that takes its pallet: it can't deliver it, so it leaves it
+    // (unpaid) rather than being stuck with it, and is free again.
+    if (truck.cargo && truck.route === null && !truck.orders.some((o) => this.actionable(truck, o) && o.action === 'unload')) {
+      this.emit({ type: 'dropped', t: now, truck: truck.id, company: truck.company, good: truck.cargo.good });
+      truck.cargo = null;
+      truck.orders = [];
+      return this.driveTo(truck, truck.home, now);
+    }
     if (n === 0) return truck.homing ? this.driveTo(truck, truck.home, now) : this.goIdle(truck, now, 'no orders');
     let idx = advance ? (truck.orderIndex + 1) % n : ((truck.orderIndex % n) + n) % n;
     let tries = 0;

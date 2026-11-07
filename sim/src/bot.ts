@@ -13,6 +13,7 @@
  */
 import {
   truckPriceFor,
+  minimumBid,
   distanceToNetwork,
   distancesFrom,
   investCost,
@@ -134,6 +135,37 @@ export class Bot {
   }
 
   decide(obs: Observation, events: GameEvent[]): Action[] {
+    return this.tidy(obs, this.think(obs, events));
+  }
+
+  /**
+   * Last look over its orders against the book as it stands: a bid at or above someone's asking
+   * price buys their share instead (cheaper, and at once); a bid the game would turn down as too
+   * low, or a second bid on the same company, is dropped.
+   */
+  private tidy(obs: Observation, actions: Action[]): Action[] {
+    const out: Action[] = [];
+    const bidOn = new Set<number>();
+    const me = obs.players[this.me];
+    for (const a of actions) {
+      if (a.type !== 'bid') {
+        out.push(a);
+        continue;
+      }
+      if (bidOn.has(a.company)) continue;
+      bidOn.add(a.company);
+      const book = obs.books[a.company];
+      if (book.ask && book.ask.player !== this.me && a.amount >= book.ask.price) {
+        if (obs.phase === 'running' && me.cash - me.held >= book.ask.price) out.push({ type: 'buy', company: a.company });
+        continue;
+      }
+      if (a.amount < Math.max(minimumBid(book, this.me, this.cfg.auctions), obs.minPrice[a.company])) continue;
+      out.push(a);
+    }
+    return out;
+  }
+
+  private think(obs: Observation, events: GameEvent[]): Action[] {
     for (const e of events) {
       if (e.type === 'delivered') this.recent.push({ t: obs.t, company: e.company, price: e.price });
       if (e.type === 'opened' || e.type === 'closed') this.routeCache.clear(); // the map changed
@@ -473,10 +505,13 @@ export class Bot {
     const cfg = this.cfg.depots;
     const load = this.load(obs);
 
-    // Put every free truck (idle at its depot, no route) on the best route from that depot.
+    // Put every free truck (idle at its depot, no route) on the best route from that depot. Free as
+    // the game counts it: no orders and nothing aboard (a truck still delivering its last pallet isn't).
     for (const t of obs.trucks) {
-      if (t.company !== company || t.route !== null || t.state !== 'idle') continue;
-      const r = this.pickRoute(obs, company, load, t.depot);
+      if (t.company !== company || t.route !== null || t.state !== 'idle' || t.orders.length > 0 || t.cargo !== null) continue;
+      // From its own factory if there's anything worth running there; otherwise from another of the
+      // company's factories (trucks are a company-wide pool: the game sends the nearest free one).
+      const r = this.pickRoute(obs, company, load, t.depot) ?? this.pickRoute(obs, company, load);
       if (!r) continue;
       out.push({ type: 'assignRoute', depot: t.depot, producer: r.producer, consumer: r.consumer });
       load.set(r.producer, (load.get(r.producer) ?? 0) + 1);
