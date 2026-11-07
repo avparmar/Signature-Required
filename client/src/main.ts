@@ -1170,7 +1170,7 @@ const GUIDE: { img?: string[]; icons?: GuideIcons; title: string; text: string }
     title: 'Welcome to Signature Required!',
     text: `<p>You're an <b>investor</b> in a busy little town. Trucking companies haul goods from producers to shops, and you <span class="hl">buy shares in them</span>. Every delivery fills their dividend pots, and the pots get paid out to shareholders. After 15 minutes, the <b>richest player wins</b>.</p>
       <p>The next pages show you how to:</p>
-      <ol class="guide-list"><li>take control of a company</li><li>set up a route: producer, factory, shop</li><li>run your routes from the sidebar</li><li>buy more factories</li><li>get paid</li></ol>
+      <ol class="guide-list"><li>take control of a company</li><li>set up a route: producer, factory, shop</li><li>run your routes from the sidebar</li><li>buy more factories</li><li>raise money with a share sale</li><li>get paid</li></ol>
       <p class="muted small">Or <a href="#" id="watch-bots">just watch the bots play</a> for a while. To play with friends, use <b>Play online</b> at the top.</p>`,
   },
   {
@@ -1213,9 +1213,14 @@ const GUIDE: { img?: string[]; icons?: GuideIcons; title: string; text: string }
     text: `<p>Each factory lets your company run <b>${session.cfg.depots.capacity} more trucks</b>. When your company is at its truck limit, or you want to move into another part of town, buy one: in your company's card, click <b>Pick on map…</b>. The sites you can afford light up with your price. Click one and <span class="hl">start sending trucks from it</span>.</p>`,
   },
   {
+    img: ['sale'],
+    title: 'Raise money with a share sale!',
+    text: `<p>A company's <b>empty share boxes</b> are shares it still owns. Anyone can put one up for sale: hover its card and click <b>Start a sale</b>. Everyone then has <span class="hl">${session.cfg.auctions.clockSec} seconds to bid</span> in the card, or <b>Pass</b>. A late bid adds a few seconds, up to ${session.cfg.auctions.maxSec} seconds in all.</p><p>The highest bid gets the share, if it's at least the company's price, and <span class="hl">the money goes to the company</span> to spend on trucks and factories. It's also how you buy into a company you don't run.</p>`,
+  },
+  {
     img: ['shares', 'company'],
     title: 'Get paid!',
-    text: "<p>Half of each delivery goes to the company and half to its <b>dividend pot</b>, which is <span class=\"hl\">paid to shareholders every 3 minutes</span>. Your shares and your next payout show at the top right.</p><p>Shares trade in the <b>company cards</b>: <b>Sell for</b> and <b>Buy for</b> trade at once, and hovering a card lets you place your own price, or <b>start a sale</b> of the company's own shares to raise money. Late on, a company with cash <span class=\"hl\">buys shares back</span>. After 15 minutes, the richest player wins. Good luck!</p>",
+    text: "<p>Half of each delivery goes to the company and half to its <b>dividend pot</b>, which is <span class=\"hl\">paid to shareholders every 3 minutes</span>. Your shares and your next payout show at the top right.</p><p>Shares trade in the <b>company cards</b>: <b>Sell for</b> and <b>Buy for</b> trade at once, and hovering a card lets you place your own price. Late on, a company with cash <span class=\"hl\">buys shares back</span>. After 15 minutes, the richest player wins. Good luck!</p>",
   },
 ];
 

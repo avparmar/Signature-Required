@@ -156,6 +156,11 @@ const out = process.argv[3];
   await p.locator('#companies .co').first().hover(); await tick(); await p.waitForTimeout(300);
   await el('company', '#companies .co');
   await p.mouse.move(5, 5);
+  // 7b. A share sale: start one in that card, and let the bots bid.
+  await p.evaluate(() => { const s = window.sr.session; s.act({ type: 'startSale', company: 0 }); s.paused = false; s.update(0.1); const g = s.game; g.players[1].cash = Math.max(g.players[1].cash, 60); g.act(1, { type: 'bid', company: 0, amount: g.minPrice(0) + 9 }); for (let i = 0; i < 40; i++) s.update(0.1); s.paused = true; });
+  await p.locator('#companies .co').first().hover(); await p.waitForTimeout(400);
+  await el('sale', '#companies .co');
+  await p.mouse.move(5, 5);
   // 8. The whole town, for the welcome page.
   await p.evaluate(() => window.sr.renderer.fit()); await p.mouse.move(5, 5); await tick(); await p.waitForTimeout(300);
   await shot('overview', { x: box.x, y: box.y, width: box.width, height: hintBox.y - 8 - box.y });
