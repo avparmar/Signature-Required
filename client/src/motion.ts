@@ -1,6 +1,7 @@
 /**
- * Where trucks are drawn, frame by frame: exactly where the game has them, carried on smoothly
- * between game ticks. Nothing here decides where a truck goes; the game does (core trucks.ts and
+ * Where trucks are drawn, frame by frame: exactly where the game has them, moving smoothly from
+ * where they were at the last tick to where they are at this one (drawn a tick behind, so a truck
+ * that starts or stops moving between ticks doesn't lurch). Nothing here decides where a truck goes; the game does (core trucks.ts and
  * kerbs.ts), including stopping in a building's line, moving up, U-turns and pulling out.
  *
  * - On the road: along its route in the right-hand lane, from the node it came from, rounding the
@@ -8,7 +9,7 @@
  * - In a building's line: at its place along the street, in its lane, partway through a U-turn if
  *   it's changing lanes. A truck moving up past one that's stopped swings out into the other lane.
  */
-import { berthGoal, kerbLine, linePoint, stepBerth, atGoal, type Berth, type KerbLine, type Observation, type TruckConfig } from '@sr/core';
+import { berthGoal, kerbLine, linePoint, atGoal, type Berth, type KerbLine, type Observation, type TruckConfig } from '@sr/core';
 import type { Renderer, Spot } from './render.js';
 
 type Pt = { x: number; y: number };
@@ -16,11 +17,49 @@ type ObsTruck = Observation['trucks'][number];
 
 export class TruckMotion {
   private lines = new Map<string, KerbLine | null>();
+  /** Everyone's pose at the last two ticks we've seen. */
+  private before = new Map<number, Spot>();
+  private now = new Map<number, Spot>();
+  private nowT = -Infinity;
+  private gap = 0.1;
 
   constructor(private r: Renderer) {}
 
   reset() {
     this.lines.clear();
+    this.before.clear();
+    this.now.clear();
+    this.nowT = -Infinity;
+  }
+
+  /**
+   * Where to draw every truck: partway from its pose at the tick before to its pose at this one.
+   * `ahead`: how far game time has run on since this tick (seconds), out of `tickSec`.
+   */
+  update(obs: Observation, ahead: number, cfg: TruckConfig, tickSec: number): Map<number, Spot> {
+    if (obs.t !== this.nowT) {
+      // A jump in time (a skip, or a new game): nothing to move from.
+      // (Online, views can come a few ticks apart: move across the whole gap.)
+      const gap = obs.t - this.nowT;
+      this.before = gap > 0 && gap <= tickSec * 5 + 1e-9 ? this.now : new Map();
+      this.gap = gap > 0 ? gap : tickSec;
+      this.now = this.poses(obs, cfg);
+      this.nowT = obs.t;
+    }
+    const f = Math.max(0, Math.min(1, ahead / Math.max(tickSec, this.gap)));
+    const out = new Map<number, Spot>();
+    for (const [id, b] of this.now) {
+      const a = this.before.get(id);
+      if (!a || Math.hypot(b.x - a.x, b.y - a.y) > 1) {
+        out.set(id, b);
+        continue;
+      }
+      // Facing: turned partway between the two.
+      const la = Math.hypot(a.dx, a.dy) || 1;
+      const lb = Math.hypot(b.dx, b.dy) || 1;
+      out.set(id, { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f, dx: (a.dx / la) * (1 - f) + (b.dx / lb) * f, dy: (a.dy / la) * (1 - f) + (b.dy / lb) * f });
+    }
+    return out;
   }
 
   private line(building: number, kerb: number): KerbLine | null {
@@ -29,13 +68,9 @@ export class TruckMotion {
     return this.lines.get(key)!;
   }
 
-  /**
-   * Where to draw every truck now. `ahead`: how far game time has run on since the observation
-   * (seconds), so trucks keep moving smoothly between ticks.
-   */
-  update(obs: Observation, ahead: number, cfg: TruckConfig): Map<number, Spot> {
+  /** Where every truck is at this tick. */
+  private poses(obs: Observation, cfg: TruckConfig): Map<number, Spot> {
     const out = new Map<number, Spot>();
-    const run = Math.max(0, ahead) * cfg.speed;
     // Where everyone in a line is (carried on), to see who's moving past whom.
     const inLine = new Map<string, { id: number; s: number; side: string; moving: boolean }[]>();
     const berths = new Map<number, { line: KerbLine; b: Berth }>();
@@ -44,7 +79,7 @@ export class TruckMotion {
       const line = this.line(t.node, t.berth.kerb);
       if (!line) continue;
       const goal = berthGoal(line, t.berth, cfg);
-      const b = run > 0 ? stepBerth(t.berth, goal, run, cfg.lane) : t.berth;
+      const b = t.berth;
       berths.set(t.id, { line, b });
       const key = `${t.node}:${t.berth.kerb}`;
       (inLine.get(key) ?? inLine.set(key, []).get(key)!).push({ id: t.id, s: b.s, side: b.side, moving: !atGoal(b, goal) });
@@ -66,7 +101,7 @@ export class TruckMotion {
         out.set(t.id, this.berthPose(at.line, at.b, cfg.lane, swing));
         continue;
       }
-      out.set(t.id, this.roadPose(t, run, cfg.lane));
+      out.set(t.id, this.roadPose(t, cfg.lane));
     }
     return out;
   }
@@ -102,7 +137,7 @@ export class TruckMotion {
   }
 
   /** A truck on the road: from the node it came from, through the node it's at, along its route. */
-  private roadPose(t: ObsTruck, run: number, lane: number): Spot {
+  private roadPose(t: ObsTruck, lane: number): Spot {
     const g = this.r.town.graph;
     const nodes: Pt[] = [];
     const push = (n: number) => {
@@ -114,10 +149,9 @@ export class TruckMotion {
     push(t.from);
     const before = nodes.length ? Math.hypot(g.nodes[t.node].x - nodes[0].x, g.nodes[t.node].y - nodes[0].y) : 0;
     push(t.node);
-    const driving = t.state === 'driving';
-    if (driving) for (const n of t.path) push(n);
+    if (t.state === 'driving') for (const n of t.path) push(n);
     if (!nodes.length) return { x: t.x, y: t.y, dx: 1, dy: 0 };
-    return poseAlong(nodes, before + t.progress + (driving ? run : 0), lane);
+    return poseAlong(nodes, before + t.progress, lane);
   }
 }
 

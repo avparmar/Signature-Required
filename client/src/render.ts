@@ -473,14 +473,13 @@ export class Renderer {
         pts.forEach((p, k) => (k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
         ctx.stroke();
       }
+      // A see-through solid line (several of one company's routes on a street just overlap).
       ctx.strokeStyle = companyColor(r.company);
-      ctx.globalAlpha = hot ? 1 : 0.6;
-      ctx.lineWidth = Math.max(hot ? 2.5 : 1.5, this.scale * (hot ? 0.09 : 0.045));
-      ctx.setLineDash([this.scale * 0.16, this.scale * 0.13]);
+      ctx.globalAlpha = hot ? 0.95 : 0.45;
+      ctx.lineWidth = Math.max(hot ? 2.5 : 1.5, this.scale * (hot ? 0.08 : 0.05));
       ctx.beginPath();
       pts.forEach((p, k) => (k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
       ctx.stroke();
-      ctx.setLineDash([]);
       ctx.globalAlpha = 1;
     }
 
