@@ -1274,8 +1274,13 @@ function showHelp(step = 0) {
     session.paused = wasPaused;
     helpWasPaused = null;
   };
-  ov.querySelector<HTMLElement>('#btn-close')?.addEventListener('click', close);
-  ov.querySelector<HTMLElement>('#btn-skip')?.addEventListener('click', close);
+  // Opened from the start menu: Start playing starts the game; Skip goes back to the menu.
+  ov.querySelector<HTMLElement>('#btn-close')?.addEventListener('click', () => (onStart ? play() : close()));
+  ov.querySelector<HTMLElement>('#btn-skip')?.addEventListener('click', () => {
+    if (!onStart) return close();
+    helpWasPaused = null;
+    showStart();
+  });
   ov.querySelector<HTMLElement>('#watch-bots')?.addEventListener('click', (e) => {
     e.preventDefault();
     helpWasPaused = null;
@@ -1284,6 +1289,41 @@ function showHelp(step = 0) {
 }
 /** Whether the game was paused before the help card opened (kept while flipping its pages). */
 let helpWasPaused: boolean | null = null;
+
+/** The start menu is up (or one of its cards, opened from it): closing those comes back to it. */
+let onStart = false;
+
+/** The first screen: play, learn how, play online, watch the bots, or change the settings. */
+function showStart() {
+  onStart = true;
+  const ov = $('overlay');
+  ov.innerHTML = `<div class="card start"><h1>Signature Required</h1>
+    <p class="muted">Invest in a town's trucking companies and get rich on their deliveries.</p>
+    <div class="start-buttons">
+      <button id="st-play" class="go">Play</button>
+      <button id="st-help" class="plain">How to play</button>
+      <button id="st-online" class="plain">Play online</button>
+      <button id="st-watch" class="plain">Watch the bots</button>
+      <button id="st-settings" class="plain">⚙ Settings</button>
+    </div>
+    <p class="muted small">New here? <b>How to play</b> walks you through it in a minute.</p></div>`;
+  ov.hidden = false;
+  if (!session.multiplayer) session.paused = true; // the game behind waits
+  $('st-play').onclick = play;
+  $('st-help').onclick = () => showHelp();
+  $('st-online').onclick = () => showOnline();
+  $('st-watch').onclick = () => newGame(true);
+  $('st-settings').onclick = () => showSettings();
+}
+
+/** From the start menu into the game waiting behind it. */
+function play() {
+  onStart = false;
+  helpWasPaused = null;
+  $('overlay').hidden = true;
+  if (!session.multiplayer) session.paused = false;
+  $('btn-pause').textContent = session.paused ? '▶' : '⏸';
+}
 
 // ------------------------------------------------------------------ loop and controls
 
@@ -1363,6 +1403,7 @@ function beginMatch(m: Match) {
   viewMoved = false;
   logList.innerHTML = '';
   $('overlay').hidden = true;
+  onStart = false;
   shown.clear();
   reachCache.clear();
   hl.picked = [];
@@ -1423,6 +1464,7 @@ function showSettings() {
   const close = () => {
     ov.hidden = true;
     session.paused = wasPaused;
+    if (onStart) showStart();
   };
   $('set-close').onclick = close;
   $('set-reset').onclick = () => {
@@ -1503,6 +1545,7 @@ function showOnline(joinCode = '') {
     lobby?.close();
     lobby = null;
     ov.hidden = true;
+    if (onStart) showStart();
   };
   $('on-host').onclick = async () => {
     const host = new HostLobby(name(), Math.max(2, Math.min(4, makeGameConfig(loadSettings()).players)));
@@ -1602,7 +1645,7 @@ $('btn-online').onclick = () => showOnline();
 
 const joinParam = new URLSearchParams(location.search).get('join');
 if (joinParam) showOnline(normalizeCode(joinParam));
-else if (!watching) showHelp();
+else if (!watching) showStart();
 
 // For poking at a running match from the browser console.
 (window as unknown as { sr: unknown }).sr = {

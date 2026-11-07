@@ -325,3 +325,10 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #companies .orders-line > span { flex: 1; display: flex; align-items: baseline; gap: 4px; padding: 0 8px; white-space: nowrap; overflow: hidden; font-size: 12px; }
 #companies .orders-line b { color: var(--ink); }
 #companies .orders-line .from { margin-left: auto; padding-left: 6px; }
+
+/* Start menu. */
+.card.start { max-width: 380px; text-align: center; }
+.card.start h1 { font-size: 26px; margin-bottom: 6px; }
+.start-buttons { display: flex; flex-direction: column; gap: 8px; margin: 18px 0 14px; }
+.start-buttons button { padding: 10px 14px; font-size: 15px; }
+.start-buttons button.go { font-size: 17px; padding: 12px 14px; background: var(--ink); color: #fff; border-color: var(--ink); }
