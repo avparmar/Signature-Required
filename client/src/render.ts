@@ -81,6 +81,8 @@ export interface Highlights {
   areaEdit: { company: number; blocks: Set<number> } | null;
   /** The block under the pointer while editing an area. */
   hoverBlock: number | null;
+  /** Outside area editing: a block in one of your companies' areas under the pointer (for its arrows). */
+  areaHover: { company: number; block: number } | null;
 }
 
 export class Renderer {
@@ -343,13 +345,14 @@ export class Renderer {
         ctx.setLineDash([]);
       });
     }
-    // While editing: arrows from the block under the pointer to each free factory site whose subsidy
+    // While editing (or over a block in one of your areas): arrows from the block under the pointer to each free factory site whose subsidy
     // zone it's in, each site ringed with what it would cost this company now. (Not while hovering
     // a free site: then its whole zone is shaded instead.)
     const hovered = hl.hover !== null ? this.town.locations[hl.hover] : null;
     const onSite = hovered?.kind === 'depot' && obs.depots[hovered.id] === undefined;
-    if (hl.areaEdit && hl.hoverBlock !== null && !onSite) {
-      const b = hl.hoverBlock;
+    const arrows = hl.areaEdit ? (hl.hoverBlock !== null ? { company: hl.areaEdit.company, block: hl.hoverBlock } : null) : hl.areaHover;
+    if (arrows && !onSite) {
+      const b = arrows.block;
       const gold = '#b08a1e';
       const cx = this.X((b % W) + 0.5);
       const cy = this.Y(Math.floor(b / W) + 0.5);
@@ -385,7 +388,7 @@ export class Renderer {
         ctx.beginPath();
         ctx.arc(tx, ty, ring, 0, Math.PI * 2);
         ctx.stroke();
-        const price = obs.depotPrices[site.id]?.[hl.areaEdit.company];
+        const price = obs.depotPrices[site.id]?.[arrows.company];
         if (price !== undefined) label(ctx, `$${price}`, tx, ty - ring - 8, '#7a5d10');
       }
     }

@@ -113,6 +113,7 @@ const hl: Highlights = {
   flash: new Map(),
   areaEdit: null,
   hoverBlock: null,
+  areaHover: null,
 };
 /** Company the player last acted for (route clicks default to it). */
 let activeCompany: number | null = null;
@@ -351,6 +352,7 @@ function tooltip(obs: Observation) {
     tip.hidden = true;
     hl.hover = null;
     hl.hoverRoute = null;
+    hl.areaHover = null;
     return;
   }
   const g = session.game;
@@ -358,6 +360,15 @@ function tooltip(obs: Observation) {
   const route = l ? null : renderer.routeAt(mouse.x, mouse.y, obs.routes);
   hl.hover = l && l.kind !== 'lot' ? l.id : null;
   hl.hoverRoute = route?.key ?? null;
+  // A block in one of your companies' delivery areas: its subsidy arrows (the company you're looking at first).
+  hl.areaHover = null;
+  if (!hl.areaEdit && !route) {
+    const b = renderer.blockAt(mouse.x, mouse.y);
+    const cur = currentCompany(obs);
+    const mine = myCompanies(obs).sort((a, c) => Number(c === cur) - Number(a === cur));
+    const co = b === null ? undefined : mine.find((c) => obs.companies[c].area.includes(b));
+    if (co !== undefined) hl.areaHover = { company: co, block: b! };
+  }
   let html = '';
   // A free site's card goes in a corner of the map, away from the site, so it doesn't hide the zone.
   let docked = false;
