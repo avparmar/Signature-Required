@@ -635,7 +635,7 @@ function refreshCompanies(obs: Observation) {
     let saleBtn = '';
     if (acting && obs.phase === 'running' && own && !sale && c.presidents.length) {
       const cooldown = obs.saleCooldownUntil[c.id] - obs.elapsed;
-      saleBtn = `<button class="mini" data-startsale="${c.id}" ${cooldown > 0 ? 'disabled' : ''} title="Offer one of the company's own shares. The best bid at the end gets it, if it's at least ${money(obs.minPrice[c.id])}; the money goes to the company.">${cooldown > 0 ? `Offer in ${Math.ceil(cooldown)}s` : 'Offer a share'}</button>`;
+      saleBtn = `<button class="mini" data-startsale="${c.id}" ${cooldown > 0 ? 'disabled' : ''} title="Offer one of the company's own shares. The best bid at the end gets it, if it's at least ${money(obs.minPrice[c.id])}; the money goes to the company.">${cooldown > 0 ? `Offer again in ${Math.ceil(cooldown)}s` : 'Offer company share'}</button>`;
     }
     // Name and shares on the left; the company's money in a box on the right: its treasury, the
     // dividend per share so far, and its factories.
@@ -1423,7 +1423,7 @@ const GUIDE: { img?: string[]; icons?: GuideIcons; flow?: boolean; title: string
   {
     img: ['sale'],
     title: 'Raise money with a share offering!',
-    text: `<p>A company's <b>empty share boxes</b> are shares it still owns. Anyone can offer one: hover its card and click <b>Offer a share</b>. Everyone then has <span class="hl">${session.cfg.auctions.clockSec} seconds to bid</span> in the card, or <b>Pass</b>. A late bid adds a few seconds, up to ${session.cfg.auctions.maxSec} seconds in all.</p><p>The highest bid gets the share, if it's at least the company's price, and <span class="hl">the money goes to the company</span> to spend on trucks and factories. It's also how you buy into a company you don't run.</p>`,
+    text: `<p>A company's <b>empty share boxes</b> are shares it still owns. Anyone can offer one: hover its card and click <b>Offer company share</b>. Everyone then has <span class="hl">${session.cfg.auctions.clockSec} seconds to bid</span> in the card, or <b>Pass</b>. A late bid adds a few seconds, up to ${session.cfg.auctions.maxSec} seconds in all.</p><p>The highest bid gets the share, if it's at least the company's price, and <span class="hl">the money goes to the company</span> to spend on trucks and factories. It's also how you buy into a company you don't run.</p>`,
   },
   {
     img: ['shares', 'company'],
