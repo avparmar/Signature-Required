@@ -31,6 +31,12 @@ describe('automatic routes', () => {
     expect(delivered).toBeGreaterThan(0);
   });
 
+  it('every company starts with a truck at its starting factory', () => {
+    const g = newGame({ seed: 7 });
+    for (const c of g.companies) expect(g.trucks.trucks.filter((t) => t.company === c.id)).toHaveLength(g.cfg.startingTrucks);
+    expect(g.cfg.startingTrucks).toBe(1);
+  });
+
   it('routes by hand are refused', () => {
     const g = setup(1);
     const depot = g.town.locations.find((l) => l.startCompany === 0)!;

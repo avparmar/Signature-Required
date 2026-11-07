@@ -270,6 +270,8 @@ export class Game {
     this.saleCooldownUntil = this.companies.map(() => 0);
     this.books = this.companies.map(() => ({ bid: null, ask: null }));
     this.phase = cfg.auctions.openingRound ? 'opening' : 'running';
+    // Every company starts with a truck or two at its starting factory (free: it isn't in its value).
+    for (const c of this.companies) for (let i = 0; i < cfg.startingTrucks; i++) this.addTruck(c.id);
     this.emit('all', { type: 'start', t: 0 });
     if (this.phase === 'running') this.emit('all', { type: 'open', t: 0 });
   }

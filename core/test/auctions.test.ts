@@ -10,7 +10,7 @@ function stepFor(g: Game, sec: number) {
 
 /** A running game (opening round skipped) where player 0 owns a share of company 0 and nobody else owns anything. */
 function running(shares: (number | null)[] = [0, null, null, null, null]) {
-  const g = newGame({ seed: 3, auctions: { openingRound: false } });
+  const g = newGame({ seed: 3, startingTrucks: 0, auctions: { openingRound: false } });
   g.companies[0].shares = [...shares];
   // Everyone else's companies owned by player 3, so the bank doesn't hold sales of its own.
   for (const c of [1, 2, 3, 4]) g.companies[c].shares = [3, 3, 3, 3, 3];

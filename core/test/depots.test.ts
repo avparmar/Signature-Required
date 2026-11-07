@@ -3,7 +3,7 @@ import { depotPrice, distancesFrom, DEFAULT_DEPOTS, newGame, subsidisedPrice, ty
 
 function setup(depots: Partial<DepotConfig> = {}) {
   // Pins $30 trucks and 3-truck depots, which these checks were written against.
-  const g = newGame({ seed: 7, autoRoutes: false, auctions: { openingRound: false }, depots: { truckPrice: 30, capacity: 3, ...depots } });
+  const g = newGame({ seed: 7, autoRoutes: false, startingTrucks: 0, auctions: { openingRound: false }, depots: { truckPrice: 30, capacity: 3, ...depots } });
   g.companies[0].shares = [0, null, null, null, null]; // player 0 is president of company 0
   const home = g.town.locations.find((l) => l.startCompany === 0)!;
   return { g, home };

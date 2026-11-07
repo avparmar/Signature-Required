@@ -3,7 +3,7 @@ import { atGoal, distancesFrom, newGame, routeVia, shortestPath, spotS, type Gam
 
 /** A game where player 0 is president of company 0 (no auctions yet, so set shares directly). */
 function setup(o: Parameters<typeof newGame>[0] = {}) {
-  const g = newGame({ seed: 7, autoRoutes: false, ...o, auctions: { openingRound: false, ...o.auctions } });
+  const g = newGame({ seed: 7, autoRoutes: false, startingTrucks: 0, ...o, auctions: { openingRound: false, ...o.auctions } });
   g.companies[0].shares = [0, null, null, null, null];
   const depot = g.town.locations.find((l) => l.startCompany === 0)!;
   const d = distancesFrom(g.town.graph, depot.node);

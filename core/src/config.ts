@@ -26,6 +26,8 @@ export interface GameConfig {
   startingCash: number;
   /** Cash each company's treasury starts with. */
   startingTreasury: number;
+  /** Trucks each company starts with, free, at its starting factory (so no start is dead in the water). */
+  startingTrucks: number;
   /**
    * Companies pick their own routes (see Game.autoRoute): presidents choose a delivery area and
    * places to focus on instead of setting routes by hand. Off, routes are assigned by hand.
@@ -50,6 +52,7 @@ export const DEFAULT_GAME: Omit<GameConfig, 'town' | 'companies' | 'cycles' | 't
   tickSec: 0.1,
   startingCash: 100,
   startingTreasury: 0,
+  startingTrucks: 1,
   autoRoutes: true,
   maxFocus: 3,
 };
