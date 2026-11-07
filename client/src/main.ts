@@ -650,8 +650,9 @@ function refreshCompanies(obs: Observation) {
     // Folded: the standing orders at a glance, laid out like the Sell for / Buy for buttons (buy order
     // on the left, sell order on the right). Watching the bots, there are no buttons, so all of them;
     // playing, the buttons show everyone else's, so just yours. (Opened, they're listed in full below.)
-    if (obs.phase === 'running' && !sale) {
-      const shown = (o: { player: number } | null) => o !== null && (!acting || o.player === obs.me);
+    // Playing, the Buy/Sell buttons carry the other side's icon, so this line is only for watching.
+    if (obs.phase === 'running' && !sale && !acting) {
+      const shown = (o: { player: number } | null) => o !== null;
       const bid = shown(book.bid) ? book.bid : null;
       const ask = shown(book.ask) ? book.ask : null;
       if (bid || ask) {
