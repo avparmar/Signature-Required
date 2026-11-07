@@ -1282,10 +1282,12 @@ function showHelp(step = 0) {
   const base = import.meta.env.BASE_URL;
   const st = GUIDE[step];
   const last = step === GUIDE.length - 1;
-  ov.innerHTML = `<div class="card help wide"><div class="guide-step">
-    ${st.img ? `<div class="guide-imgs">${st.img.map((i) => `<img src="${base}guide/${i}.webp" alt="">`).join('')}${st.flow ? guideFlow() : ''}</div>` : ''}
+  // A page with the how-it-works diagram: picture and words on the left, the diagram down the right.
+  const body = `${st.img ? `<div class="guide-imgs">${st.img.map((i) => `<img src="${base}guide/${i}.webp" alt="">`).join('')}</div>` : ''}
     ${st.icons ? guideIcons(st.icons) : ''}
-    <h2>${step > 0 ? `${step}. ` : ''}${st.title}</h2>${st.text}
+    <h2>${step > 0 ? `${step}. ` : ''}${st.title}</h2>${st.text}`;
+  ov.innerHTML = `<div class="card help wide${st.flow ? ' with-flow' : ''}"><div class="guide-step">
+    ${st.flow ? `<div class="flow-cols"><div class="flow-left">${body}</div><div class="flow-right">${guideFlow()}</div></div>` : body}
     <div class="guide-nav"><button data-step="${step - 1}" ${step === 0 ? 'disabled' : ''}>← Back</button><span class="dots">${GUIDE.map((_, k) => `<span class="${k === step ? 'on' : ''}" data-step="${k}"></span>`).join('')}</span>${last ? '<button id="btn-close" class="go">Start playing</button>' : `<button data-step="${step + 1}" class="go">Next →</button>`}</div>
     ${last ? '' : '<button id="btn-skip" class="link">Skip</button>'}</div></div>`;
   ov.hidden = false;
