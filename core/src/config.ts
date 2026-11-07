@@ -26,6 +26,13 @@ export interface GameConfig {
   startingCash: number;
   /** Cash each company's treasury starts with. */
   startingTreasury: number;
+  /**
+   * Companies pick their own routes (see Game.autoRoute): presidents choose a delivery area and
+   * places to focus on instead of setting routes by hand. Off, routes are assigned by hand.
+   */
+  autoRoutes: boolean;
+  /** Most places a company can focus on at once. */
+  maxFocus: number;
   town: TownConfig;
   cycles: CycleConfig;
   trucks: TruckConfig;
@@ -43,6 +50,8 @@ export const DEFAULT_GAME: Omit<GameConfig, 'town' | 'companies' | 'cycles' | 't
   tickSec: 0.1,
   startingCash: 100,
   startingTreasury: 0,
+  autoRoutes: true,
+  maxFocus: 3,
 };
 
 export type GameConfigOverrides = Partial<Omit<GameConfig, 'town' | 'cycles' | 'trucks' | 'depots' | 'money' | 'auctions' | 'openings'>> & {

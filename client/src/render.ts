@@ -77,6 +77,10 @@ export interface Highlights {
   maxSubsidy: number;
   /** Free sites to flash: site id -> company -> game-clock time of its last pickup or delivery there. */
   flash: Map<number, Map<number, number>>;
+  /** Editing a company's delivery area: the company, and its blocks as they're being painted. */
+  areaEdit: { company: number; blocks: Set<number> } | null;
+  /** The block under the pointer while editing an area. */
+  hoverBlock: number | null;
 }
 
 export class Renderer {
@@ -250,6 +254,76 @@ export class Renderer {
     this.tracks = new Map([...m].map(([k, v]) => [k, [...v].sort((x, y) => x - y)]));
     this.tracksFor = sig;
     return this.tracks;
+  }
+
+  /** The town block under a screen point (x + y * blocksX), or null outside the town. */
+  blockAt(sx: number, sy: number): number | null {
+    const x = Math.floor((sx - this.ox) / this.scale);
+    const y = Math.floor((sy - this.oy) / this.scale);
+    const { blocksX, blocksY } = this.town.cfg;
+    return x >= 0 && y >= 0 && x < blocksX && y < blocksY ? x + y * blocksX : null;
+  }
+
+  /**
+   * Delivery areas: a faint tint over each company's blocks, and a thin border in its colour along
+   * the streets round them (just inside, so two companies' borders on one street sit side by side).
+   * Focused places get a ring in the company's colour. While editing, that company's area is
+   * stronger, and the block under the pointer is outlined.
+   */
+  private drawAreas(obs: Observation, hl: Highlights) {
+    const ctx = this.ctx;
+    const W = this.town.cfg.blocksX;
+    const s = this.scale;
+    for (const c of obs.companies) {
+      const editing = hl.areaEdit?.company === c.id;
+      const blocks = editing ? hl.areaEdit!.blocks : new Set(c.area);
+      if (!blocks.size) continue;
+      const color = companyColor(c.id);
+      ctx.fillStyle = color;
+      ctx.globalAlpha = editing ? 0.16 : 0.05;
+      for (const b of blocks) ctx.fillRect(this.X(b % W), this.Y(Math.floor(b / W)), s, s);
+      const inset = this.roadWidth * 0.22;
+      ctx.globalAlpha = editing ? 1 : 0.8;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(1.5, s * (editing ? 0.06 : 0.04));
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      for (const b of blocks) {
+        const i = b % W;
+        const j = Math.floor(b / W);
+        const x0 = this.X(i);
+        const y0 = this.Y(j);
+        if (j === 0 || !blocks.has(b - W)) (ctx.moveTo(x0, y0 + inset), ctx.lineTo(x0 + s, y0 + inset));
+        if (!blocks.has(b + W)) (ctx.moveTo(x0, y0 + s - inset), ctx.lineTo(x0 + s, y0 + s - inset));
+        if (i === 0 || !blocks.has(b - 1)) (ctx.moveTo(x0 + inset, y0), ctx.lineTo(x0 + inset, y0 + s));
+        if (i === W - 1 || !blocks.has(b + 1)) (ctx.moveTo(x0 + s - inset, y0), ctx.lineTo(x0 + s - inset, y0 + s));
+      }
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+    // Focused places: a ring in the company's colour (one ring per company focusing it).
+    for (const c of obs.companies) {
+      c.focus.forEach((id) => {
+        const l = this.town.locations[id];
+        if (!l) return;
+        const k = obs.companies.filter((o) => o.id < c.id && o.focus.includes(id)).length;
+        ctx.strokeStyle = companyColor(c.id);
+        ctx.lineWidth = Math.max(2, s * 0.06);
+        ctx.setLineDash([s * 0.12, s * 0.07]);
+        ctx.beginPath();
+        ctx.arc(this.X(l.x), this.Y(l.y), s * (0.5 + 0.08 * k), 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      });
+    }
+    if (hl.areaEdit && hl.hoverBlock !== null) {
+      const b = hl.hoverBlock;
+      ctx.strokeStyle = companyColor(hl.areaEdit.company);
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 4]);
+      ctx.strokeRect(this.X(b % W) + 2, this.Y(Math.floor(b / W)) + 2, s - 4, s - 4);
+      ctx.setLineDash([]);
+    }
   }
 
   /** The road's centre-line dashes (the route lines use the same, so they line up). */
@@ -513,6 +587,8 @@ export class Renderer {
       ctx.globalAlpha = 1;
       label(ctx, 'subsidy zone', this.X(site.x), this.Y(site.y) - this.r * 1.9, '#7a5d10');
     }
+
+    this.drawAreas(obs, hl);
 
     // Routes, along the streets.
     const routes = obs.routes;

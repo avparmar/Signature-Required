@@ -54,10 +54,7 @@ const out = process.argv[3];
     const d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
     for (let i = 0; i < 3; i++) s.act({ type: 'buyTruck', company: 1, depot: d1.id });
     s.update(0.2);
-    for (const pr of g.town.locations.filter((l) => l.kind === 'producer').sort((a, b) => d(a, d1) - d(b, d1)).slice(0, 3)) {
-      const c = g.town.locations.filter((l) => l.kind === 'consumer' && l.good === pr.good).sort((a, b) => d(a, d1) - d(b, d1))[0];
-      s.act({ type: 'assignRoute', depot: d1.id, producer: pr.id, consumer: c.id });
-    }
+    // (They route themselves.)
     for (let i = 0; i < 400; i++) s.update(0.1);
     s.paused = true;
   });
@@ -103,22 +100,33 @@ const out = process.argv[3];
   const routeClip = clipAround(sp, sc, sh);
   routeClip.height = Math.min(routeClip.height, hintBox.y - 8 - routeClip.y); // keep the hint out
 
-  // 2. Click the producer.
-  await p.mouse.click(sp.x, sp.y); await p.mouse.move(5, 5); await tick(); await p.waitForTimeout(400);
-  await shot('route-1', routeClip);
-  await p.screenshot({ path: `${out}/hint-1.png`, clip: hintBox });
-  // 3. Then the shop: a truck sets off.
-  await p.mouse.click(sc.x, sc.y); await p.mouse.move(5, 5);
-  await tick(2.5); await p.waitForTimeout(400);
-  // The shop you just clicked, ringed like a pick.
-  await p.evaluate((id) => (window.sr.hl.picked = [id]), pts.c.id); await tick(); await p.waitForTimeout(300);
-  await shot('route-2', routeClip);
-  await p.evaluate(() => (window.sr.hl.picked = [])); await tick();
-  // 4. The sidebar: your company, hovering its new route's row.
-  const row = await p.$('#mycos [data-routerow]');
-  const rb = await row.boundingBox(); await p.mouse.move(rb.x + 40, rb.y + rb.height / 2); await tick(); await p.waitForTimeout(400);
-  await el('sidebar', '#mycos .co');
-  await shot('route-3', routeClip);
+  // 2. Your company's trucks at work on routes they picked themselves.
+  await tick(20); await p.waitForTimeout(400);
+  await shot('routes', routeClip);
+  // 3. Editing its delivery area: some blocks round its factory, and a focused shop.
+  const edit = await p.evaluate(() => {
+    const s = window.sr.session; const g = s.game; const W = g.cfg.town.blocksX;
+    const home = g.town.locations.find((l) => l.startCompany === 0);
+    const blocks = [];
+    for (let dx = -2; dx <= 2; dx++) for (let dy = -1; dy <= 2; dy++) {
+      const x = Math.floor(home.x) + dx, y = Math.floor(home.y) + dy;
+      if (x >= 0 && y >= 0 && x < W && y < g.cfg.town.blocksY && !(dx === 2 && dy === -1)) blocks.push(x + y * W);
+    }
+    s.act({ type: 'setArea', company: 0, blocks });
+    const shop = g.town.locations.filter((l) => l.kind === 'consumer' && !blocks.includes(Math.floor(l.x) + Math.floor(l.y) * W))
+      .sort((a, b) => Math.hypot(a.x - home.x, a.y - home.y) - Math.hypot(b.x - home.x, b.y - home.y))[0];
+    s.act({ type: 'setFocus', company: 0, location: shop.id, on: true });
+    return { shop: { x: shop.x, y: shop.y } };
+  });
+  await tick(1);
+  await p.locator('[data-area="0"]').dispatchEvent('pointerdown');
+  await tick(); await p.waitForTimeout(300);
+  const sfo = await toScreen(edit.shop);
+  const barBox = await (await p.$('#area-bar')).boundingBox();
+  const areaClip = clipAround(sp, sc, sh, sfo, { x: barBox.x + 20, y: barBox.y + 120 }, { x: barBox.x + barBox.width - 20, y: barBox.y + 120 });
+  areaClip.y = Math.min(areaClip.y, barBox.y - 6); areaClip.height = Math.min(hintBox.y - 8, areaClip.y + areaClip.height + 40) - areaClip.y;
+  await shot('area', areaClip);
+  await p.locator('#area-done').click(); await tick();
   await p.mouse.move(5, 5);
 
   // 5. A free factory site: hover it for the subsidy meters and prices.

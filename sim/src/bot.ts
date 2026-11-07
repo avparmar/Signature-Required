@@ -507,7 +507,8 @@ export class Bot {
 
     // Put every free truck (idle at its depot, no route) on the best route from that depot. Free as
     // the game counts it: no orders and nothing aboard (a truck still delivering its last pallet isn't).
-    for (const t of obs.trucks) {
+    // (With automatic routes, the company does this itself.)
+    for (const t of this.cfg.autoRoutes ? [] : obs.trucks) {
       if (t.company !== company || t.route !== null || t.state !== 'idle' || t.orders.length > 0 || t.cargo !== null) continue;
       // From its own factory if there's anything worth running there; otherwise from another of the
       // company's factories (trucks are a company-wide pool: the game sends the nearest free one).
