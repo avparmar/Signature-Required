@@ -509,7 +509,9 @@ export class Bot {
     // the game counts it: no orders and nothing aboard (a truck still delivering its last pallet isn't).
     for (const t of obs.trucks) {
       if (t.company !== company || t.route !== null || t.state !== 'idle' || t.orders.length > 0 || t.cargo !== null) continue;
-      const r = this.pickRoute(obs, company, load, t.depot);
+      // From its own factory if there's anything worth running there; otherwise from another of the
+      // company's factories (trucks are a company-wide pool: the game sends the nearest free one).
+      const r = this.pickRoute(obs, company, load, t.depot) ?? this.pickRoute(obs, company, load);
       if (!r) continue;
       out.push({ type: 'assignRoute', depot: t.depot, producer: r.producer, consumer: r.consumer });
       load.set(r.producer, (load.get(r.producer) ?? 0) + 1);
