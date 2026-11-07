@@ -631,16 +631,17 @@ function refreshCompanies(obs: Observation) {
     const who = (p: number) => (p === obs.me && !watching ? 'you' : seatShort(p));
     const pinned = pinnedCards.has(c.id);
     const pinBtn = `<button class="pin${pinned ? ' on' : ''}" data-pin="${c.id}" title="${pinned ? 'Unpin: fold this card back down' : 'Pin this card open'}">${pinned ? 'Unpin' : 'Pin'}</button>`;
-    // Open, the card has a top row (Pin and treasury) so the name gets its own line, with its ticker.
-    let html = `<div class="row head-open"><span>${pinBtn}</span><span class="treasury-box" title="The company's treasury: what it has to spend on trucks and factories, and to buy shares back"><span class="lbl">Treasury</span> <b>${money(c.treasury)}</b></span></div>`;
-    html += `<div class="row head"><span>${sw(c.id)}<b>${coName(c.id)}</b> <span class="ticker">${COMPANY_NAMES[companySlot(c.id)][1]}</span></span><span class="treasury" title="Treasury">${money(c.treasury)}</span></div>`;
+    // Open, the card has a top row (Pin) so the name gets its own line, with its ticker.
+    let html = `<div class="row head-open"><span>${pinBtn}</span></div>`;
     let saleBtn = '';
     if (acting && obs.phase === 'running' && own && !sale && c.presidents.length) {
       const cooldown = obs.saleCooldownUntil[c.id] - obs.elapsed;
       saleBtn = `<button class="mini" data-startsale="${c.id}" ${cooldown > 0 ? 'disabled' : ''} title="Put one of the company's own shares up for sale. The best bid at the end gets it, if it's at least ${money(obs.minPrice[c.id])}; the money goes to the company.">${cooldown > 0 ? `Sale in ${Math.ceil(cooldown)}s` : 'Start a sale'}</button>`;
     }
-    html += `<div class="chips">${chips}${saleBtn}</div>`;
-    html += `<div class="row small quick-stats"><span title="Next dividend per share, so far">Div <b>${money(c.dividendPerShare)}</b></span><span title="${depots} factor${depots === 1 ? 'y' : 'ies'}">🏭 <b>${depots}</b></span></div>`;
+    // Name and shares on the left; the company's money in a box on the right: its treasury, the
+    // dividend per share so far, and its factories.
+    const coBox = `<div class="co-box"><b class="tr" title="The company's treasury: what it has to spend on trucks and factories, and to buy shares back">${money(c.treasury)}</b><span class="stats"><span title="Next dividend per share, so far">div <b>${money(c.dividendPerShare)}</b></span><span title="${depots} factor${depots === 1 ? 'y' : 'ies'}">🏭 <b>${depots}</b></span></span></div>`;
+    html += `<div class="top"><div class="left"><div class="row head"><span>${sw(c.id)}<b>${coName(c.id)}</b> <span class="ticker">${COMPANY_NAMES[companySlot(c.id)][1]}</span></span></div><div class="chips">${chips}${saleBtn}</div></div>${coBox}</div>`;
     // Folded, the card stops here (plus a line for a running sale); hovering or pinning shows the rest.
     if (sale) {
       const best = book.bid;

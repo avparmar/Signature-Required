@@ -408,3 +408,19 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #map.panning { cursor: grab; }
 #companies .quick button.blank { visibility: hidden; }
 #companies .co-tab[hidden] { display: none; }
+/* The card's top: name and shares on the left, the money box on the right. */
+#companies .top { display: flex; gap: 6px; align-items: flex-start; }
+#companies .top .left { flex: 1; min-width: 0; }
+#companies .top .head > span { display: flex; align-items: center; min-width: 0; }
+#companies .top .head > span > b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#companies .top .head .swatch { flex: none; }
+#companies .top .head .ticker { flex: none; margin-left: 5px; }
+#companies .co-box { flex: none; display: flex; flex-direction: column; align-items: flex-end; margin-top: 1px; padding: 1px 6px 2px; border: 1.5px solid var(--line); border-radius: 8px; background: rgba(255,255,255,0.7); line-height: 1.15; }
+#companies .co-box .tr { font-size: 16px; }
+#companies .co-box .stats { display: flex; gap: 5px; font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+#companies .co-box .stats b { color: var(--ink); }
+/* Opened, the box moves up beside Pin, and the name gets the whole width. */
+#companies .co:is(:hover, :focus-within, .pinned) .head-open { min-height: 40px; align-items: flex-start; }
+#companies .co:is(:hover, :focus-within, .pinned) .co-box { position: absolute; top: 7px; right: 10px; }
+#companies .co:is(:hover, :focus-within, .pinned) .co-box .tr { font-size: 18px; }
+#companies .co:is(:hover, :focus-within, .pinned) .co-box .stats { font-size: 12px; gap: 7px; }
