@@ -101,6 +101,33 @@ export class Renderer {
   }
 
   private districts = new Map<number, Float64Array>();
+  /**
+   * The blocks in a free site's subsidy zone (x + y * blocksX): a building counts when the street
+   * it's on is in the zone; blocks with no building go by the nearest street round them.
+   */
+  zoneBlocks(site: number, district: number): Set<number> {
+    const hit = this.zoneCache.get(site);
+    if (hit) return hit;
+    const town = this.town;
+    const d = this.districtOf(town.locations[site].node);
+    const built = new Map<string, number>();
+    for (const l of town.locations) built.set(`${Math.floor(l.x)},${Math.floor(l.y)}`, l.node);
+    const near = this.nodeAt();
+    const water = new Set(town.river.map(({ i, j }) => `${i},${j}`));
+    const out = new Set<number>();
+    for (let j = 0; j < town.cfg.blocksY; j++)
+      for (let i = 0; i < town.cfg.blocksX; i++) {
+        if (water.has(`${i},${j}`)) continue;
+        const own = built.get(`${i},${j}`);
+        const sides = [`${i + 0.5},${j}`, `${i + 1},${j + 0.5}`, `${i + 0.5},${j + 1}`, `${i},${j + 0.5}`].map((k) => near.get(k)).filter((n) => n !== undefined) as number[];
+        const dist = own !== undefined ? d[own] : Math.min(Infinity, ...sides.map((n) => d[n]));
+        if (dist <= district) out.add(i + j * town.cfg.blocksX);
+      }
+    this.zoneCache.set(site, out);
+    return out;
+  }
+  private zoneCache = new Map<number, Set<number>>();
+
   private districtOf(node: number): Float64Array {
     const d = this.districts.get(node) ?? distancesFrom(this.town.graph, node);
     this.districts.set(node, d);
@@ -315,6 +342,52 @@ export class Renderer {
         ctx.stroke();
         ctx.setLineDash([]);
       });
+    }
+    // While editing: arrows from the block under the pointer to each free factory site whose subsidy
+    // zone it's in, each site ringed with what it would cost this company now. (Not while hovering
+    // a free site: then its whole zone is shaded instead.)
+    const hovered = hl.hover !== null ? this.town.locations[hl.hover] : null;
+    const onSite = hovered?.kind === 'depot' && obs.depots[hovered.id] === undefined;
+    if (hl.areaEdit && hl.hoverBlock !== null && !onSite) {
+      const b = hl.hoverBlock;
+      const gold = '#b08a1e';
+      const cx = this.X((b % W) + 0.5);
+      const cy = this.Y(Math.floor(b / W) + 0.5);
+      const ring = this.r * 1.5;
+      for (const site of this.town.locations) {
+        if (site.kind !== 'depot' || obs.depots[site.id] !== undefined) continue;
+        if (!this.zoneBlocks(site.id, hl.district).has(b)) continue;
+        const tx = this.X(site.x);
+        const ty = this.Y(site.y);
+        const len = Math.hypot(tx - cx, ty - cy);
+        ctx.strokeStyle = gold;
+        ctx.fillStyle = gold;
+        ctx.lineWidth = Math.max(2, s * 0.05);
+        if (len > ring + 4) {
+          const ux = (tx - cx) / len;
+          const uy = (ty - cy) / len;
+          const ex = tx - ux * ring;
+          const ey = ty - uy * ring;
+          ctx.setLineDash([s * 0.12, s * 0.08]);
+          ctx.beginPath();
+          ctx.moveTo(cx, cy);
+          ctx.lineTo(ex, ey);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          const h = Math.max(7, s * 0.2);
+          ctx.beginPath();
+          ctx.moveTo(ex, ey);
+          ctx.lineTo(ex - ux * h - uy * h * 0.6, ey - uy * h + ux * h * 0.6);
+          ctx.lineTo(ex - ux * h + uy * h * 0.6, ey - uy * h - ux * h * 0.6);
+          ctx.closePath();
+          ctx.fill();
+        }
+        ctx.beginPath();
+        ctx.arc(tx, ty, ring, 0, Math.PI * 2);
+        ctx.stroke();
+        const price = obs.depotPrices[site.id]?.[hl.areaEdit.company];
+        if (price !== undefined) label(ctx, `$${price}`, tx, ty - ring - 8, '#7a5d10');
+      }
     }
     if (hl.areaEdit && hl.hoverBlock !== null) {
       const b = hl.hoverBlock;
@@ -571,19 +644,9 @@ export class Renderer {
       ctx.fillStyle = '#b08a1e';
       ctx.globalAlpha = 0.3;
       const inset = roadW / 2;
-      const built = new Map<string, number>();
-      for (const l of town.locations) built.set(`${Math.floor(l.x)},${Math.floor(l.y)}`, l.node);
-      const near = this.nodeAt();
-      const water = new Set(town.river.map(({ i, j }) => `${i},${j}`));
-      for (let j = 0; j < town.cfg.blocksY; j++)
-        for (let i = 0; i < town.cfg.blocksX; i++) {
-          if (water.has(`${i},${j}`)) continue;
-          const own = built.get(`${i},${j}`);
-          const sides = [`${i + 0.5},${j}`, `${i + 1},${j + 0.5}`, `${i + 0.5},${j + 1}`, `${i},${j + 0.5}`].map((k) => near.get(k)).filter((n) => n !== undefined) as number[];
-          const dist = own !== undefined ? d[own] : Math.min(Infinity, ...sides.map((n) => d[n]));
-          if (dist > hl.district) continue;
-          ctx.fillRect(this.X(i) + inset, this.Y(j) + inset, this.scale - 2 * inset, this.scale - 2 * inset);
-        }
+      const W = town.cfg.blocksX;
+      for (const b of this.zoneBlocks(site.id, hl.district))
+        ctx.fillRect(this.X(b % W) + inset, this.Y(Math.floor(b / W)) + inset, this.scale - 2 * inset, this.scale - 2 * inset);
       ctx.globalAlpha = 1;
       label(ctx, 'subsidy zone', this.X(site.x), this.Y(site.y) - this.r * 1.9, '#7a5d10');
     }

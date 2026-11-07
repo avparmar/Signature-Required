@@ -209,7 +209,7 @@ function showAreaBar() {
   const c = hl.areaEdit.company;
   bar.innerHTML = `<span class="sw" style="background:${companyColor(c)}"></span><b>${coName(c)}: delivery area</b>
     <button id="area-clear">Clear</button><button id="area-done" class="go">Done</button>
-    <div class="area-hint">Click or drag over blocks to add them; right-click or right-drag to take them out. Double-click a producer or shop to focus on it (up to ${session.cfg.maxFocus}). No area: it delivers anywhere.</div>`;
+    <div class="area-hint">Click or drag over blocks to add them; right-click or right-drag to take them out. Double-click a producer or shop to focus on it (up to ${session.cfg.maxFocus}). No area: it delivers anywhere. <span class="gold">Gold arrows</span> point to the factory sites that deliveries there make cheaper.</div>`;
   bar.hidden = false;
   $('area-clear').onclick = () => {
     if (!hl.areaEdit) return;
@@ -405,7 +405,8 @@ function tooltip(obs: Observation) {
     html = `<b>${coName(route.company)}</b> · ${n.raw} ${at(route.producer)} → factory ${at(route.depot)} → ${n.product} ${at(route.consumer)} · ${route.trucks} truck${route.trucks === 1 ? '' : 's'}`;
     if (obs.companies[route.company].presidents.includes(obs.me)) html += '<div class="muted">Click to add a truck · right-click to take one off</div>';
   }
-  if (!html) {
+  // While drawing an area, only a free site's card (in a corner) shows: the rest would cover the map.
+  if (!html || (hl.areaEdit && !docked)) {
     tip.hidden = true;
     return;
   }

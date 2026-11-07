@@ -366,3 +366,4 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #mycos .spend { display: flex; gap: 6px; margin: 4px 0; }
 #mycos .spend button { flex: 1; }
 #mycos .sites { align-items: center; }
+#area-bar .gold { color: #8a6a12; font-weight: 600; }
