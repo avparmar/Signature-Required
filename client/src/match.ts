@@ -30,6 +30,8 @@ export interface Match {
   takeEvents(): GameEvent[];
   /** Latest view of the game for this player. */
   obs(): Observation;
+  /** Game time to draw at: the latest view's time plus however far time has run on since (smooth motion). */
+  readonly renderT: number;
   act(action: Action): void;
   /** Called when the UI is done with the match (closes network connections). */
   dispose(): void;

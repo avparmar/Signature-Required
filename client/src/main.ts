@@ -13,6 +13,7 @@
 import { distancesFrom, makeGameConfig, minimumBid, type GameConfig, type GameConfigOverrides, type GameEvent, type Location, type Observation } from '@sr/core';
 import { Renderer, type Spot, companyColor, companySlot, coordOf, drawBusiness, drawFactory, goodColor, pickCompanySlots, type Highlights } from './render.js';
 import { Session } from './session.js';
+import { TruckMotion } from './motion.js';
 import type { Match } from './match.js';
 import { GuestLobby, HostLobby, normalizeCode } from './net.js';
 import { SETTINGS, loadSettings, mergeOverrides, overridesFrom, saveSettings, valueIn, type Setting } from './settings.js';
@@ -86,6 +87,7 @@ let watching = new URLSearchParams(location.search).get('watch') === '1';
 let session: Match = new Session({ overrides: mergeOverrides(loadSettings(), overridesFromUrl()), watch: watching });
 pickCompanySlots(session.cfg.companies, session.cfg.seed);
 const renderer = new Renderer($<HTMLCanvasElement>('map'), session.game.town);
+const motion = new TruckMotion(renderer);
 renderer.via = session.cfg.trucks.viaDepot;
 renderer.serviceSec = session.cfg.trucks.serviceSec;
 renderer.processSec = session.cfg.trucks.signOffSec;
@@ -1276,38 +1278,17 @@ function frame(now: number) {
   if ((session as { lostHost?: boolean }).lostHost && !shownEnd) hostGone();
   sampleWaiting(obs);
   sampleHistory(obs);
-  // Ease drawn truck positions towards where they are (smooth between ticks, and into queues).
-  const targets = renderer.truckTargets(obs);
-  const k = 1 - Math.exp(-dt * 14);
-  // Pulling into (or up) a line at a building, or out of one: straight there at the truck's own speed.
-  const parkStep = session.cfg.trucks.speed * dt * (session.paused ? 0 : session.speed);
-  for (const [id, t] of targets) {
-    const s = shown.get(id);
-    const gap = s ? Math.hypot(s.x - t.x, s.y - t.y) : Infinity;
-    if (!s || gap > 3) {
-      shown.set(id, { ...t });
-      continue;
-    }
-    if (t.parked || s.parked) {
-      // Pulling out, it catches up with where it really is on the road (which is moving away).
-      const step = t.parked ? parkStep : parkStep * 1.5;
-      if (gap <= step) shown.set(id, { ...t, parked: t.parked });
-      else {
-        const f = step / gap;
-        // Lined up along its street the whole way, rather than turning to face the next spot.
-        // (Pulling out, it already faces the way it'll drive.)
-        const along = { dx: t.dx, dy: t.dy };
-        shown.set(id, { x: s.x + (t.x - s.x) * f, y: s.y + (t.y - s.y) * f, ...along, parked: true });
-      }
-      continue;
-    }
-    shown.set(id, { x: s.x + (t.x - s.x) * k, y: s.y + (t.y - s.y) * k, dx: t.dx, dy: t.dy });
-  }
+  // Where to draw each truck: on its route in its lane (smooth between ticks), or in a building's line.
+  const moving = session.paused ? 0 : session.speed;
+  const ahead = Math.max(0, session.renderT - obs.t);
+  const drawn = motion.update(obs, ahead, session.cfg.trucks.speed * dt * moving, session.cfg.trucks.speed);
+  shown.clear();
+  for (const [id, sp] of drawn) shown.set(id, sp);
 
   tooltip(obs);
   hl.spotlight = obs.sales.length ? obs.sales[0].company : null;
   hl.meterFor = obs.companies.map((c) => c.id); // public: everyone sees every company's progress
-  const trucksNow = [...targets.keys()].map((id) => ({ id, ...shown.get(id)! }));
+  const trucksNow = [...shown].map(([id, sp]) => ({ id, ...sp }));
   redraw = () => renderer.draw(obs, trucksNow, hl, now / 1000);
   redraw();
   if (now - lastUi > 250) {
@@ -1352,6 +1333,7 @@ function beginMatch(m: Match) {
   ($('btn-pause') as HTMLButtonElement).disabled = !session.canControlTime;
   $('btn-pause').textContent = session.paused ? '▶' : '⏸';
   renderer.setTown(session.game.town);
+  motion.reset();
   renderer.via = session.cfg.trucks.viaDepot;
   renderer.serviceSec = session.cfg.trucks.serviceSec;
   renderer.processSec = session.cfg.trucks.signOffSec;
@@ -1608,4 +1590,7 @@ else if (!watching) showHelp();
   },
   renderer,
   hl,
+  /** Where each truck is drawn (for tests). */
+  shown,
+  motion,
 };

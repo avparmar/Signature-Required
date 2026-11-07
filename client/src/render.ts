@@ -91,7 +91,7 @@ export class Renderer {
 
   constructor(
     readonly canvas: HTMLCanvasElement,
-    private town: Town,
+    public town: Town,
   ) {
     this.ctx = canvas.getContext('2d')!;
   }
@@ -111,15 +111,21 @@ export class Renderer {
   }
 
   /**
-   * The line trucks wait in at a building: the street from its kerb node back the way the kerb
-   * lane's traffic comes from, following the road round corners (cached per building node).
-   * `pts` runs upstream from the kerb; trucks there drive downstream, towards the building.
+   * The line trucks wait in at a building, on one of the streets round its block (a building has a
+   * driveway to each): the street from that kerb node back the way the kerb lane's traffic comes
+   * from, following the road round corners. `pts` runs upstream from the kerb; trucks there drive
+   * downstream, towards the building. Cached per building and kerb.
    */
-  private queueLines = new Map<number, { pts: { x: number; y: number }[]; cum: number[]; back: number } | null>();
-  private queueLine(node: number) {
-    if (this.queueLines.has(node)) return this.queueLines.get(node)!;
+  private queueLines = new Map<string, { pts: { x: number; y: number }[]; cum: number[]; back: number } | null>();
+  /** A building's first kerb (for trucks we don't know the way of, like new ones at a depot). */
+  defaultKerb(node: number): number | undefined {
+    return this.town.graph.adj[node][0]?.to;
+  }
+  queueLine(node: number, kerbNode?: number) {
     const g = this.town.graph;
-    const kerb = g.adj[node][0]?.to;
+    const kerb = kerbNode ?? this.defaultKerb(node);
+    const key = `${node}:${kerb}`;
+    if (this.queueLines.has(key)) return this.queueLines.get(key)!;
     const l = this.locationByNode().get(node);
     let line: { pts: { x: number; y: number }[]; cum: number[]; back: number } | null = null;
     if (kerb !== undefined && l) {
@@ -165,7 +171,7 @@ export class Renderer {
       }
       if (pts.length >= 2) line = { pts, cum, back };
     }
-    this.queueLines.set(node, line);
+    this.queueLines.set(key, line);
     return line;
   }
 
@@ -178,8 +184,8 @@ export class Renderer {
    * A point on a building's waiting line, `s` along the street from its kerb: in the near lane
    * (next to the building, facing towards it) or the far lane (facing away).
    */
-  queuePoint(node: number, s: number, side: 'near' | 'far'): Spot | null {
-    const q = this.queueLine(node);
+  queuePoint(node: number, s: number, side: 'near' | 'far', kerb?: number): Spot | null {
+    const q = this.queueLine(node, kerb);
     if (!q) return null;
     // Stay on the street: no further than the line goes, nor past the end of the street downstream.
     s = Math.max(-q.back, Math.min(q.cum[q.cum.length - 1], s));
@@ -195,12 +201,12 @@ export class Renderer {
     const lane = this.laneOffset;
     // Keep right: the near lane is to the right of downstream (-u), the far lane to the right of u.
     const h = side === 'near' ? { x: -u.x, y: -u.y } : u;
-    return { x: cx - h.y * lane, y: cy + h.x * lane, dx: h.x, dy: h.y, parked: true, q: { node, s, side } };
+    return { x: cx - h.y * lane, y: cy + h.x * lane, dx: h.x, dy: h.y, parked: true, q: { node, kerb: kerb ?? this.defaultKerb(node), s, side } };
   }
 
   /** Where a road position sits on a building's waiting line: how far along, which lane, how far off it. */
-  queueProject(node: number, x: number, y: number): { s: number; side: 'near' | 'far'; off: number } | null {
-    const q = this.queueLine(node);
+  queueProject(node: number, x: number, y: number, kerb?: number): { s: number; side: 'near' | 'far'; off: number } | null {
+    const q = this.queueLine(node, kerb);
     if (!q) return null;
     let best: { s: number; side: 'near' | 'far'; off: number } | null = null;
     for (let i = 0; i < q.pts.length - 1; i++) {
@@ -876,7 +882,7 @@ export class Renderer {
    * building, a slot in a neat row beside it (and likewise when parked at a depot). The facing is
    * the direction to the next road node.
    */
-  truckTargets(obs: Observation): Map<number, Spot> {
+  truckTargets(obs: Observation, kerbFor: (truck: number, node: number) => number | undefined = () => undefined): Map<number, Spot> {
     const out = new Map<number, Spot>();
     const tById = new Map(obs.trucks.map((t) => [t.id, t]));
     // Trucks stopped at a building wait in a line along the kerb of its street, in the lane next
@@ -884,11 +890,17 @@ export class Renderer {
     // came (straight on past the corner if the line gets long), all facing the way that lane's
     // traffic goes. When the one in front leaves, the others move up.
     const spacing = (this.truckSize.w / this.scale) * 1.15;
+    // Each street round the building has its own line: trucks wait on the one they came in by.
+    const lineCount = new Map<string, number>();
     const park = (node: number, ids: number[]) => {
-      ids.forEach((id, k) => {
-        const p = this.queuePoint(node, k * spacing, 'near');
+      for (const id of ids) {
+        const kerb = kerbFor(id, node) ?? this.defaultKerb(node);
+        const key = `${node}:${kerb}`;
+        const k = lineCount.get(key) ?? 0;
+        lineCount.set(key, k + 1);
+        const p = this.queuePoint(node, k * spacing, 'near', kerb);
         if (p) out.set(id, p);
-      });
+      }
     };
     // Everyone stopped at a building, by its road node: queued or loading there, idle or being
     // processed at a factory, or waiting for their turn to pull out.
@@ -903,16 +915,19 @@ export class Renderer {
       if (t.state === 'idle' || t.state === 'processing' || (t.state === 'driving' && t.progress === 0 && term[t.node])) add(t.node, t.id);
       else driving.push(t);
     }
+    for (const [node, ids] of atNode) park(node, ids);
     // Heading for a building in the lane next to it: it stops at its place in the line as it gets
     // there, behind the trucks already waiting (and those ahead of it on the way).
-    const approaching = new Map<number, { id: number; s: number }[]>();
+    const approaching = new Map<string, { id: number; s: number; node: number; kerb: number }[]>();
     for (const t of driving) {
       const dest = t.path[t.path.length - 1];
       if (dest === undefined || !term[dest] || t.path.length > 4) continue;
+      // The street it'll pull in from: the node before the building on its route.
+      const kerb = t.path.length >= 2 ? t.path[t.path.length - 2] : t.node;
       const next = this.town.graph.nodes[t.path[0]];
-      const p = this.queueProject(dest, t.x, t.y);
+      const p = this.queueProject(dest, t.x, t.y, kerb);
       if (!p || p.off > 0.05) continue;
-      const q = this.queueLine(dest)!;
+      const q = this.queueLine(dest, kerb)!;
       // Heading downstream along the line (towards the building)?
       const i = Math.max(0, q.cum.findIndex((c) => c >= p.s) - 1);
       const a = q.pts[i];
@@ -920,15 +935,16 @@ export class Renderer {
       const ux = b.x - a.x;
       const uy = b.y - a.y;
       if ((next.x - t.x) * -ux + (next.y - t.y) * -uy <= 0) continue;
-      approaching.set(dest, [...(approaching.get(dest) ?? []), { id: t.id, s: p.s }]);
+      const key = `${dest}:${kerb}`;
+      approaching.set(key, [...(approaching.get(key) ?? []), { id: t.id, s: p.s, node: dest, kerb }]);
     }
     const stopped = new Set<number>();
-    for (const [node, list] of approaching) {
+    for (const [key, list] of approaching) {
       list.sort((a, b) => a.s - b.s);
       list.forEach((a, j) => {
-        const k = (atNode.get(node)?.length ?? 0) + j;
+        const k = (lineCount.get(key) ?? 0) + j;
         if (a.s > k * spacing + 1e-3) return; // not there yet
-        const p = this.queuePoint(node, k * spacing, 'near');
+        const p = this.queuePoint(a.node, k * spacing, 'near', a.kerb);
         if (p) {
           out.set(a.id, p);
           stopped.add(a.id);
@@ -947,7 +963,6 @@ export class Renderer {
       const oy = len > 1e-9 ? (dx / len) * lane : 0;
       out.set(t.id, { x: t.x + ox, y: t.y + oy, dx, dy });
     }
-    for (const [node, ids] of atNode) park(node, ids);
     return out;
   }
 }
@@ -1043,7 +1058,7 @@ export interface Spot {
   dy: number;
   parked?: boolean;
   /** Parked: where on the building's waiting line (it drives along the line, and U-turns into the near lane). */
-  q?: { node: number; s: number; side: 'near' | 'far'; turn?: number };
+  q?: { node: number; kerb?: number; s: number; side: 'near' | 'far'; turn?: number };
   /** Leaving a line round a corner: the junction it drives through first. */
   via?: { x: number; y: number };
 }
