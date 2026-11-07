@@ -174,9 +174,9 @@ function updateHint(obs: Observation) {
 let paint: { add: boolean } | null = null;
 /** The area before each of the last few strokes (a double-click to focus undoes its two clicks). */
 const before: number[][] = [];
-/** A little delivery truck in the company's colour. */
+/** A little box truck: the cargo box in the company's colour, a cab with a window, speed lines. */
 const truckIcon = (color: string) =>
-  `<svg class="truck-icon" viewBox="0 0 26 18" aria-hidden="true"><rect x="1" y="2" width="15" height="10" rx="1.5" fill="${color}" stroke="#23201b" stroke-width="1.4"/><path d="M16 5h4.5l3.5 4v3h-8z" fill="#fff" stroke="#23201b" stroke-width="1.4" stroke-linejoin="round"/><circle cx="6" cy="14" r="2.4" fill="#23201b"/><circle cx="19.5" cy="14" r="2.4" fill="#23201b"/></svg>`;
+  `<svg class="truck-icon" viewBox="0 0 32 20" aria-hidden="true"><g stroke="#23201b" stroke-width="1.4" stroke-linejoin="round"><path d="M1 6.5h3M2 10h3" stroke-linecap="round" opacity="0.5"/><rect x="6" y="2" width="15" height="11.5" rx="1.6" fill="${color}"/><path d="M8.5 9.5h10" stroke="#fff" stroke-width="1.6" stroke-linecap="round" opacity="0.7"/><path d="M21 5.5h5l3.5 4.2v3.8H21z" fill="#fbf9f4"/><path d="M23 7.2h2.6l2 2.5H23z" fill="#9fc4dd" stroke-width="1"/><circle cx="10.5" cy="15.5" r="2.8" fill="#23201b"/><circle cx="25" cy="15.5" r="2.8" fill="#23201b"/></g><circle cx="10.5" cy="15.5" r="1" fill="#fbf9f4"/><circle cx="25" cy="15.5" r="1" fill="#fbf9f4"/></svg>`;
 /** A little map of blocks, some in the company's colour: the delivery-area icon. */
 const areaIcon = (color: string) =>
   `<svg class="area-icon" viewBox="0 0 24 24" aria-hidden="true"><g stroke="${color}" stroke-width="1.6"><rect x="2" y="2" width="9" height="9" rx="1.5" fill="${hexA(color, 0.3)}"/><rect x="13" y="2" width="9" height="9" rx="1.5" fill="${hexA(color, 0.3)}"/><rect x="2" y="13" width="9" height="9" rx="1.5" fill="${hexA(color, 0.3)}"/><rect x="13" y="13" width="9" height="9" rx="1.5" fill="none" stroke-dasharray="2.5 2"/></g></svg>`;
@@ -640,7 +640,7 @@ function refreshCompanies(obs: Observation) {
       saleBtn = `<button class="mini" data-startsale="${c.id}" ${cooldown > 0 ? 'disabled' : ''} title="Put one of the company's own shares up for sale. The best bid at the end gets it, if it's at least ${money(obs.minPrice[c.id])}; the money goes to the company.">${cooldown > 0 ? `Sale in ${Math.ceil(cooldown)}s` : 'Start a sale'}</button>`;
     }
     html += `<div class="chips">${chips}${saleBtn}</div>`;
-    html += `<div class="row small quick-stats"><span title="Company value: trucks and factories at what they cost, plus cash">Value <b>${money(obs.value[c.id])}</b></span><span title="Next dividend per share, so far">Div <b>${money(c.dividendPerShare)}</b></span><span title="${trucks} trucks, ${depots} factor${depots === 1 ? 'y' : 'ies'}">🚚 <b>${trucks}</b> 🏭 <b>${depots}</b></span></div>`;
+    html += `<div class="row small quick-stats"><span title="Next dividend per share, so far">Div <b>${money(c.dividendPerShare)}</b></span><span title="${trucks} trucks, ${depots} factor${depots === 1 ? 'y' : 'ies'}">🚚 <b>${trucks}</b> 🏭 <b>${depots}</b></span></div>`;
     // Folded, the card stops here (plus a line for a running sale); hovering or pinning shows the rest.
     if (sale) {
       const best = book.bid;
@@ -662,7 +662,8 @@ function refreshCompanies(obs: Observation) {
       }
     }
     html += '<div class="more">';
-    html += `<div class="row small muted"><span>${routes} route${routes === 1 ? '' : 's'}</span><span title="Dividend per share: the last one paid (the next one so far is above)">last div ${lastDividend.has(c.id) ? money(lastDividend.get(c.id)!) : '—'}</span></div>`;
+    html += `<div class="row small"><span title="Company value: trucks and factories at what they cost, plus cash">Value <b>${money(obs.value[c.id])}</b></span><span class="muted">${routes} route${routes === 1 ? '' : 's'}</span></div>`;
+    html += `<div class="row small muted"><span></span><span title="Dividend per share: the last one paid (the next one so far is above)">last div ${lastDividend.has(c.id) ? money(lastDividend.get(c.id)!) : '—'}</span></div>`;
     // A sale running: the share goes to the best bid at the end, if it's at least the minimum.
     if (sale) {
       const best = book.bid;
@@ -731,7 +732,9 @@ function refreshCompanies(obs: Observation) {
     // Buttons only for what you can do; otherwise a plain note of the price (or that there's none).
     const canBuy = otherAsk !== null && free >= otherAsk;
     const seller = book.ask && book.ask.player !== obs.me ? seatIcon(book.ask.player) : '';
-    k.buyNow.innerHTML = otherAsk === null ? 'Nobody selling' : canBuy ? `Buy for <b>${money(otherAsk)}</b> <span class="from">${seller}</span>` : `${seller} sells for <b>${money(otherAsk)}</b>`;
+    // Nobody selling: the space stays, blank.
+    k.buyNow.innerHTML = otherAsk === null ? '' : `Buy <b>${money(otherAsk)}</b> <span class="from">${seller}</span>`;
+    k.buyNow.classList.toggle('blank', otherAsk === null);
     k.buyNow.disabled = !canBuy;
     k.buyNow.classList.toggle('note', !canBuy);
     k.buyNow.title = otherAsk === null ? 'Nobody is selling a share right now' : !canBuy ? 'Not enough cash to buy it' : `Buy ${seatName(book.ask!.player)}'s share at once`;
@@ -742,7 +745,8 @@ function refreshCompanies(obs: Observation) {
     // Only for your own shares: what someone would pay is no business of yours until you have one to sell.
     k.sellNow.classList.toggle('empty', mine === 0);
     const buyer = toCompany ? 'co.' : book.bid ? seatIcon(book.bid.player) : '';
-    k.sellNow.innerHTML = sellAt === null ? 'Nobody buying' : `Sell for <b>${money(sellAt)}</b> <span class="from">${buyer}</span>`;
+    k.sellNow.innerHTML = sellAt === null ? '' : `Sell <b>${money(sellAt)}</b> <span class="from">${buyer}</span>`;
+    k.sellNow.classList.toggle('blank', sellAt === null);
     k.sellNow.disabled = !canSell;
     k.sellNow.classList.toggle('note', !canSell);
     k.sellNow.title = sellAt === null ? 'Nobody is buying right now' : toCompany ? 'Sell one of your shares back to the company at once' : `Sell one of your shares to ${seatName(book.bid!.player)} at once`;
@@ -839,7 +843,7 @@ function refreshCardTabs(obs: Observation, mine: number[]) {
     area.classList.toggle('on', editing);
     area.title = editing ? 'Finish editing the delivery area' : 'Choose which blocks it delivers to';
     const o = truckOffer(obs, id);
-    const truckHtml = `${truckIcon(companyColor(id))}<span class="word">Truck</span><span class="px">${o.full ? 'Full' : money(o.price)}</span>`;
+    const truckHtml = `${truckIcon(companyColor(id))}<span class="count">${o.trucks}/${o.limit}</span><span class="px">${o.full ? 'Full' : money(o.price)}</span>`;
     if (truck.dataset.html !== truckHtml) (truck.innerHTML = truckHtml), (truck.dataset.html = truckHtml);
     const can = !o.full && o.afford && o.home !== undefined;
     truck.disabled = !can;
@@ -1409,7 +1413,7 @@ const GUIDE: { img?: string[]; icons?: GuideIcons; flow?: boolean; title: string
   {
     img: ['shares', 'company'],
     title: 'Get paid!',
-    text: "<p>Half of each delivery goes to the company and half to its <b>dividend pot</b>, which is <span class=\"hl\">paid to shareholders every 3 minutes</span>. Your shares and your next payout show at the top right.</p><p>Shares trade in the <b>company cards</b>: <b>Sell for</b> and <b>Buy for</b> trade at once, and hovering a card lets you place your own price. Late on, a company with cash <span class=\"hl\">buys shares back</span>. After 15 minutes, the richest player wins. Good luck!</p>",
+    text: "<p>Half of each delivery goes to the company and half to its <b>dividend pot</b>, which is <span class=\"hl\">paid to shareholders every 3 minutes</span>. Your shares and your next payout show at the top right.</p><p>Shares trade in the <b>company cards</b>: <b>Sell</b> and <b>Buy</b> trade at once, and hovering a card lets you place your own price. Late on, a company with cash <span class=\"hl\">buys shares back</span>. After 15 minutes, the richest player wins. Good luck!</p>",
   },
 ];
 
