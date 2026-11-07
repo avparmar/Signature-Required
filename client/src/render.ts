@@ -107,6 +107,7 @@ export class Renderer {
     this.town = town;
     this.districts.clear();
     this.paths.clear();
+    this.edgeDir = undefined;
   }
 
   /** Lane offset from the middle of the road (world units). */
@@ -250,6 +251,54 @@ export class Renderer {
     return this.tracks;
   }
 
+  /** The road's centre-line dashes (the route lines use the same, so they line up). */
+  private centreDash(): number[] {
+    return [this.scale * 0.11, this.scale * 0.14];
+  }
+
+  /**
+   * A route's streets on screen, each drawn the way the road draws its centre line (same end
+   * first), shifted onto the company's track where several share it.
+   */
+  private routeStreets(r: Route, routes: Route[]): [{ x: number; y: number }, { x: number; y: number }][] {
+    const ns = this.routeNodes(r);
+    const g = this.town.graph;
+    const tracks = this.streetTracks(routes);
+    if (!this.edgeDir) {
+      this.edgeDir = new Map();
+      for (const e of g.edges) this.edgeDir.set(e.a < e.b ? `${e.a}-${e.b}` : `${e.b}-${e.a}`, [e.a, e.b]);
+    }
+    const out: [{ x: number; y: number }, { x: number; y: number }][] = [];
+    for (let i = 1; i < ns.length; i++) {
+      const lo = Math.min(ns[i - 1], ns[i]);
+      const hi = Math.max(ns[i - 1], ns[i]);
+      if (g.terminal[lo] || g.terminal[hi]) continue;
+      const [ea, eb] = this.edgeDir.get(`${lo}-${hi}`) ?? [lo, hi];
+      const list = tracks.get(`${lo}-${hi}`) ?? [r.company];
+      const gap = this.trackGap(list.length);
+      // The same sideways shift as routeLine (measured from lo to hi).
+      const k = (list.indexOf(r.company) - (list.length - 1) / 2) * gap;
+      const A = g.nodes[lo];
+      const B = g.nodes[hi];
+      const len = Math.hypot(B.x - A.x, B.y - A.y) || 1;
+      const ox = (-(B.y - A.y) / len) * k;
+      const oy = ((B.x - A.x) / len) * k;
+      const P = g.nodes[ea];
+      const Q = g.nodes[eb];
+      out.push([
+        { x: this.X(P.x) + ox, y: this.Y(P.y) + oy },
+        { x: this.X(Q.x) + ox, y: this.Y(Q.y) + oy },
+      ]);
+    }
+    return out;
+  }
+  private edgeDir?: Map<string, [number, number]>;
+
+  /** How far apart companies' tracks are on a street several of them share. */
+  private trackGap(n: number): number {
+    return Math.min(this.roadWidth * 0.5, (this.roadWidth * 0.75) / Math.max(1, n - 1));
+  }
+
   /**
    * A route's line on screen, along the streets from producer to consumer. Where several
    * companies' routes share a street, each company has its own track across it, side by side.
@@ -266,8 +315,8 @@ export class Renderer {
       const lo = Math.min(ns[i - 1], ns[i]);
       const hi = Math.max(ns[i - 1], ns[i]);
       const list = tracks.get(`${lo}-${hi}`) ?? [r.company];
-      // Spread across the middle of the road: the more companies, the closer together.
-      const gap = Math.min(this.roadWidth * 0.3, (this.roadWidth * 0.6) / list.length);
+      // Spread across the road, two companies a lane each: the more there are, the closer together.
+      const gap = this.trackGap(list.length);
       const k = (list.indexOf(r.company) - (list.length - 1) / 2) * gap * (ns[i - 1] === lo ? 1 : -1);
       const dx = P[i].x - P[i - 1].x;
       const dy = P[i].y - P[i - 1].y;
@@ -354,7 +403,7 @@ export class Renderer {
       // Sized to the town, not the screen: they grow and shrink with the zoom like the roads.
       ctx.strokeStyle = 'rgba(255,255,255,0.75)';
       ctx.lineWidth = Math.max(1, this.scale * 0.025);
-      ctx.setLineDash([this.scale * 0.11, this.scale * 0.14]);
+      ctx.setLineDash(this.centreDash());
       ctx.beginPath();
       // Not under a route: its line takes the middle of the street there.
       const routed = this.streetTracks(obs.routes);
@@ -473,13 +522,21 @@ export class Renderer {
         pts.forEach((p, k) => (k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
         ctx.stroke();
       }
-      // A see-through solid line (several of one company's routes on a street just overlap).
+      // Dashed like the road's centre line, dash for dash: street by street, from the same end,
+      // so on a street of its own its dashes sit right on the centre line's.
       ctx.strokeStyle = companyColor(r.company);
-      ctx.globalAlpha = hot ? 0.95 : 0.45;
-      ctx.lineWidth = Math.max(hot ? 2.5 : 1.5, this.scale * (hot ? 0.08 : 0.05));
+      ctx.globalAlpha = hot ? 1 : 0.75;
+      ctx.lineWidth = Math.max(hot ? 2.5 : 1.5, this.scale * (hot ? 0.06 : 0.035));
+      ctx.setLineDash(this.centreDash());
+      ctx.lineCap = 'butt';
       ctx.beginPath();
-      pts.forEach((p, k) => (k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+      for (const [a, b] of this.routeStreets(r, routes)) {
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+      }
       ctx.stroke();
+      ctx.lineCap = 'round';
+      ctx.setLineDash([]);
       ctx.globalAlpha = 1;
     }
 
