@@ -641,7 +641,7 @@ function refreshCompanies(obs: Observation) {
     // Name and shares on the left; the company's money in a box on the right: its treasury, the
     // dividend per share so far, and its factories.
     const coBox = `<div class="co-box"><b class="tr" title="The company's treasury: what it has to spend on trucks and factories, and to buy shares back">${money(c.treasury)}</b><span class="stats"><span title="Next dividend per share, so far">div <b>${money(c.dividendPerShare)}</b></span><span title="${depots} factor${depots === 1 ? 'y' : 'ies'}">🏭 <b>${depots}</b></span></span></div>`;
-    html += `<div class="top"><div class="left"><div class="row head"><span>${sw(c.id)}<b>${coName(c.id)}</b> <span class="ticker">${COMPANY_NAMES[companySlot(c.id)][1]}</span></span></div><div class="chips">${chips}${saleBtn}</div></div>${coBox}</div>`;
+    html += `<div class="top"><div class="left"><div class="row head"><span title="${coName(c.id)}">${sw(c.id)}<b class="nm">${coName(c.id)}</b><b class="tk">${COMPANY_NAMES[companySlot(c.id)][1]}</b> <span class="ticker">${COMPANY_NAMES[companySlot(c.id)][1]}</span></span></div><div class="chips">${chips}${saleBtn}</div></div>${coBox}</div>`;
     // Folded, the card stops here (plus a line for a running sale); hovering or pinning shows the rest.
     if (sale) {
       const best = book.bid;
@@ -656,15 +656,15 @@ function refreshCompanies(obs: Observation) {
       const ask = shown(book.ask) ? book.ask : null;
       if (bid || ask) {
         const cell = (label: string, o: { player: number; price: number } | null, tip: string) =>
-          o ? `<span title="${tip}">${label} <b>${money(o.price)}</b><span class="from">${o.player === obs.me && !watching ? 'you' : seatIcon(o.player)}</span></span>` : '<span></span>';
+          o ? `<span title="${tip}">${label} <b>${money(o.price)}</b>${o.player === obs.me && !watching ? '' : `<span class="from">${seatIcon(o.player)}</span>`}</span>` : '<span></span>';
         const mine = acting ? 'Your ' : 'Standing ';
         const parts = [cell('Buying', bid, `${mine}buy order`), cell('Selling', ask, `${mine}sell order`)];
         html += `<div class="row small orders-line fold-only">${parts.join('')}</div>`;
       }
     }
     html += '<div class="more">';
-    html += `<div class="row small"><span title="Company value: trucks and factories at what they cost, plus cash">Value <b>${money(obs.value[c.id])}</b></span><span class="muted">${routes} route${routes === 1 ? '' : 's'}</span></div>`;
-    html += `<div class="row small muted"><span></span><span title="Dividend per share: the last one paid (the next one so far is above)">last div ${lastDividend.has(c.id) ? money(lastDividend.get(c.id)!) : '—'}</span></div>`;
+    // Opened: its value, and its routes and last dividend (the next one so far is in the box).
+    html += `<div class="row small"><span title="Company value: trucks and factories at what they cost, plus cash">Value <b>${money(obs.value[c.id])}</b></span><span class="muted">${routes} route${routes === 1 ? '' : 's'} · <span title="Dividend per share: the last one paid">last div ${lastDividend.has(c.id) ? money(lastDividend.get(c.id)!) : '—'}</span></span></div>`;
     // A sale running: the share goes to the best bid at the end, if it's at least the minimum.
     if (sale) {
       const best = book.bid;

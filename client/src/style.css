@@ -45,7 +45,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #right { grid-column: 2; grid-row: 2 / 5; border-left: 1px solid var(--line); }
 #companies { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; }
 /* Each card sits at the bottom of its slot; folded it shows a summary, open (hovered or pinned) it grows upwards over the map. */
-#companies .slot { position: relative; height: 112px; }
+#companies .slot { position: relative; height: 94px; }
 #companies .co { position: absolute; left: 0; bottom: 0; width: 100%; min-height: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; }
 #companies .co:not(:hover):not(:focus-within):not(.pinned) .more,
 #companies .co:not(:hover):not(:focus-within):not(.pinned) .broker .slide,
@@ -424,3 +424,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #companies .co:is(:hover, :focus-within, .pinned) .co-box { position: absolute; top: 7px; right: 10px; }
 #companies .co:is(:hover, :focus-within, .pinned) .co-box .tr { font-size: 18px; }
 #companies .co:is(:hover, :focus-within, .pinned) .co-box .stats { font-size: 12px; gap: 7px; }
+/* Folded, a card goes by its ticker; opened, by its full name (with the ticker beside it). */
+#companies .head .tk { display: none; letter-spacing: 0.04em; }
+#companies .co:not(:hover):not(:focus-within):not(.pinned) .head .nm { display: none; }
+#companies .co:not(:hover):not(:focus-within):not(.pinned) .head .tk { display: inline; }
