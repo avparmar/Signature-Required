@@ -11,7 +11,7 @@ const out = process.argv[3];
   const errs = []; p.on('pageerror', (e) => errs.push(String(e)));
   await p.goto(process.argv[2]);
   await p.waitForTimeout(400);
-  await p.click('#btn-skip');
+  await p.click('#st-play');
   // No pop-up messages in the pictures (e.g. "your bid was outbid" from the opening round).
   await p.addStyleTag({ content: '#toasts { display: none !important; }' });
   const tick = (sec = 0.05) => p.evaluate((sec) => { const s = window.sr.session; s.paused = false; for (let t = 0; t < sec; t += 0.1) s.update(Math.min(0.1, sec - t)); s.paused = true; }, sec);
