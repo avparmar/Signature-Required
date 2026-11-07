@@ -1569,7 +1569,7 @@ function play() {
   helpWasPaused = null;
   $('overlay').hidden = true;
   if (!session.multiplayer) session.paused = false;
-  $('btn-pause').textContent = session.paused ? '▶' : '⏸';
+  setPauseIcon();
 }
 
 // ------------------------------------------------------------------ loop and controls
@@ -1610,7 +1610,7 @@ function frame(now: number) {
 function togglePause() {
   if (!session.canControlTime) return toast('Only the host can pause.', 'info');
   session.paused = !session.paused;
-  $('btn-pause').textContent = session.paused ? '▶' : '⏸';
+  setPauseIcon();
 }
 
 function newGame(watch = false) {
@@ -1641,7 +1641,7 @@ function beginMatch(m: Match) {
   if (session.multiplayer) speedSel.value = '1';
   session.speed = Number(speedSel.value);
   ($('btn-pause') as HTMLButtonElement).disabled = !session.canControlTime;
-  $('btn-pause').textContent = session.paused ? '▶' : '⏸';
+  setPauseIcon();
   renderer.setTown(session.game.town);
   motion.reset();
   renderer.via = session.cfg.trucks.viaDepot;
@@ -1666,6 +1666,17 @@ function beginMatch(m: Match) {
 }
 
 $('btn-pause').onclick = togglePause;
+/** The pause button: drawn bars or a play triangle (the ⏸ character renders tiny in most text fonts). */
+function setPauseIcon() {
+  const b = $('btn-pause');
+  const want = session.paused ? 'play' : 'pause';
+  if (b.dataset.icon === want) return;
+  b.dataset.icon = want;
+  b.innerHTML = want === 'play'
+    ? '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 2.8v10.4L13 8z" fill="currentColor"/></svg>'
+    : '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="2.8" width="3.2" height="10.4" rx="1" fill="currentColor"/><rect x="9.3" y="2.8" width="3.2" height="10.4" rx="1" fill="currentColor"/></svg>';
+  b.setAttribute('aria-label', session.paused ? 'Resume' : 'Pause');
+}
 // Hovering a company card shows the subsidy meters on every free factory site.
 document.addEventListener('pointermove', (e) => {
   const card = (e.target as HTMLElement | null)?.closest?.('[data-cohover]') as HTMLElement | null;

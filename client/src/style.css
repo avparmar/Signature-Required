@@ -460,3 +460,5 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #companies .co .sale-line > b { font-weight: 600; }
 #companies .co:not(:hover):not(:focus-within):not(.pinned) .broker .quick button b,
 #companies .co .sale-line span b { font-weight: 700; }
+#btn-pause { display: inline-flex; align-items: center; justify-content: center; min-width: 34px; }
+#btn-pause svg { width: 15px; height: 15px; display: block; }
