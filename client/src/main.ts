@@ -1290,9 +1290,8 @@ function frame(now: number) {
   sampleWaiting(obs);
   sampleHistory(obs);
   // Where to draw each truck: on its route in its lane (smooth between ticks), or in a building's line.
-  const moving = session.paused ? 0 : session.speed;
   const ahead = Math.max(0, session.renderT - obs.t);
-  const drawn = motion.update(obs, ahead, session.cfg.trucks.speed * dt * moving, session.cfg.trucks.speed);
+  const drawn = motion.update(obs, ahead, session.cfg.trucks);
   shown.clear();
   for (const [id, sp] of drawn) shown.set(id, sp);
 

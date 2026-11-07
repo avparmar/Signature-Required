@@ -892,6 +892,7 @@ export class Game {
         path: [...t.path],
         orders: t.orders.map((o) => ({ ...o, via: o.via ? [...o.via] : undefined })),
         cargo: t.cargo ? { ...t.cargo } : null,
+        berth: t.berth ? { ...t.berth } : null,
         pendingOrders: t.pendingOrders ? [...t.pendingOrders] : null,
         ...this.trucks.position(t),
       })),
