@@ -192,8 +192,8 @@ export class Renderer {
   routeAt(sx: number, sy: number, routes: Route[]): Route | null {
     let best: Route | null = null;
     let bestD = 6;
-    for (const r of routes) {
-      const pts = this.routeLine(r, routes);
+    for (const r of routes)
+      for (const pts of [this.routeLine(r, routes, 0), this.routeLine(r, routes, 1)])
       for (let i = 1; i < pts.length; i++) {
         const d = distToSegment(sx, sy, pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y);
         if (d < bestD) {
@@ -201,7 +201,6 @@ export class Renderer {
           best = r;
         }
       }
-    }
     return best;
   }
 
@@ -209,25 +208,27 @@ export class Renderer {
   via: 'none' | 'loaded' | 'hub' = 'none';
   private paths = new Map<string, number[]>();
   /**
-   * Road nodes a loaded truck drives: producer to consumer, or producer to depot to consumer when
-   * routes run through the depot (cached; the roads never change).
+   * Road nodes a truck on a route drives (cached; the roads never change). Leg 0, loaded: producer
+   * to consumer, through the depot when routes run through it. Leg 1, empty: back from the
+   * consumer to the producer (through the depot too, for 'hub' routes).
    */
-  private routePath(r: Route): number[] {
-    const key = this.via === 'none' ? `${r.producer}>${r.consumer}` : r.key;
+  private routePath(r: Route, leg: 0 | 1): number[] {
+    const key = `${this.via === 'none' ? `${r.producer}>${r.consumer}` : r.key}#${leg}`;
     let path = this.paths.get(key);
     if (!path) {
       const a = this.town.locations[r.producer].node;
       const b = this.town.locations[r.consumer].node;
-      const legs = this.via === 'none' ? [a, b] : [a, this.town.locations[r.depot].node, b];
-      path = routeVia(this.town.graph, legs) ?? legs;
+      const d = this.town.locations[r.depot].node;
+      const stops = leg === 0 ? (this.via === 'none' ? [a, b] : [a, d, b]) : this.via === 'hub' ? [b, d, a] : [b, a];
+      path = routeVia(this.town.graph, stops) ?? stops;
       this.paths.set(key, path);
     }
     return path;
   }
 
-  /** Kerb-to-kerb road nodes of a route (leaving off the zero-length driveways into the buildings). */
-  private routeNodes(r: Route): number[] {
-    const path = this.routePath(r);
+  /** Kerb-to-kerb road nodes of a route's leg (leaving off the zero-length driveways into the buildings). */
+  private routeNodes(r: Route, leg: 0 | 1 = 0): number[] {
+    const path = this.routePath(r, leg);
     const term = this.town.graph.terminal;
     return path.filter((n, i) => !(term[n] && (i === 0 || i === path.length - 1)) || path.length <= 2);
   }
@@ -239,8 +240,8 @@ export class Renderer {
     const sig = routes.map((r) => `${r.key}@${r.company}`).join('|');
     if (sig === this.tracksFor) return this.tracks;
     const m = new Map<string, Set<number>>();
-    for (const r of routes) {
-      const ns = this.routeNodes(r);
+    for (const r of routes)
+      for (const ns of [this.routeNodes(r, 0), this.routeNodes(r, 1)]) {
       for (let i = 1; i < ns.length; i++) {
         const k = ns[i - 1] < ns[i] ? `${ns[i - 1]}-${ns[i]}` : `${ns[i]}-${ns[i - 1]}`;
         (m.get(k) ?? m.set(k, new Set()).get(k)!).add(r.company);
@@ -261,7 +262,6 @@ export class Renderer {
    * first), shifted onto the company's track where several share it.
    */
   private routeStreets(r: Route, routes: Route[]): [{ x: number; y: number }, { x: number; y: number }][] {
-    const ns = this.routeNodes(r);
     const g = this.town.graph;
     const tracks = this.streetTracks(routes);
     if (!this.edgeDir) {
@@ -269,9 +269,14 @@ export class Renderer {
       for (const e of g.edges) this.edgeDir.set(e.a < e.b ? `${e.a}-${e.b}` : `${e.b}-${e.a}`, [e.a, e.b]);
     }
     const out: [{ x: number; y: number }, { x: number; y: number }][] = [];
+    // Both ways (loaded and back empty), each street once.
+    const done = new Set<string>();
+    for (const ns of [this.routeNodes(r, 0), this.routeNodes(r, 1)])
     for (let i = 1; i < ns.length; i++) {
       const lo = Math.min(ns[i - 1], ns[i]);
       const hi = Math.max(ns[i - 1], ns[i]);
+      if (done.has(`${lo}-${hi}`)) continue;
+      done.add(`${lo}-${hi}`);
       if (g.terminal[lo] || g.terminal[hi]) continue;
       const [ea, eb] = this.edgeDir.get(`${lo}-${hi}`) ?? [lo, hi];
       const list = tracks.get(`${lo}-${hi}`) ?? [r.company];
@@ -315,8 +320,8 @@ export class Renderer {
    * A route's line on screen, along the streets from producer to consumer. Where several
    * companies' routes share a street, each company has its own track across it, side by side.
    */
-  private routeLine(r: Route, routes: Route[]): { x: number; y: number }[] {
-    const ns = this.routeNodes(r);
+  private routeLine(r: Route, routes: Route[], leg: 0 | 1 = 0): { x: number; y: number }[] {
+    const ns = this.routeNodes(r, leg);
     const g = this.town.graph;
     const tracks = this.streetTracks(routes);
     const P = ns.map((n) => ({ x: this.X(g.nodes[n].x), y: this.Y(g.nodes[n].y) }));
@@ -512,8 +517,11 @@ export class Renderer {
     // Routes, along the streets.
     const routes = obs.routes;
     const lines = routes.map((r) => this.routeLine(r, routes));
+    const backs = routes.map((r) => this.routeLine(r, routes, 1));
+    const trace = (pts: { x: number; y: number }[]) => pts.forEach((p, k) => (k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
     for (const [i, r] of routes.entries()) {
       const pts = lines[i];
+      const back = backs[i];
       // Hovering a route, or the factory it runs through, highlights it.
       const hot = hl.hoverRoute === r.key || hl.listRoute === r.key || hl.hover === r.depot;
       ctx.lineJoin = 'round';
@@ -523,7 +531,8 @@ export class Renderer {
         ctx.strokeStyle = `rgba(240, 160, 32, ${0.25 + 0.45 * pulse})`;
         ctx.lineWidth = Math.max(9, this.roadWidth * 0.9);
         ctx.beginPath();
-        pts.forEach((p, k) => (k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+        trace(pts);
+        trace(back);
         ctx.stroke();
       }
       if (hot) {
@@ -531,7 +540,8 @@ export class Renderer {
         ctx.strokeStyle = hexAlpha(companyColor(r.company), 0.28);
         ctx.lineWidth = Math.max(8, this.roadWidth * 0.8);
         ctx.beginPath();
-        pts.forEach((p, k) => (k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+        trace(pts);
+        trace(back);
         ctx.stroke();
       }
       // Dashed like the road's centre line, dash for dash: street by street, from the same end,
