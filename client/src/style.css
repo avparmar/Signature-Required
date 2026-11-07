@@ -156,10 +156,10 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 .guide-imgs img { max-width: 100%; max-height: min(300px, 38vh); min-width: 0; flex: 0 1 auto; border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.12); }
 .guide-step h2 { font-size: 17px; margin: 14px 0 4px; }
 /* The welcome page: picture and words on the left, the how-it-works diagram down the right. */
-.card.help.wide.with-flow { max-width: 1000px; }
+.card.help.wide.with-flow { max-width: 860px; }
 .flow-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px; }
-.flow-right { display: flex; align-items: center; justify-content: center; background: #f7f4ec; border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
-.guide-flow { width: 100%; max-width: 380px; height: auto; }
+.flow-right { display: flex; align-items: center; justify-content: center; background: #f7f4ec; border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; }
+.guide-flow { width: 100%; height: auto; max-height: 100%; }
 .guide-flow .ft { font: 700 12.5px system-ui, sans-serif; fill: var(--ink); }
 .guide-flow .fs { font: 10.5px system-ui, sans-serif; fill: #8a8273; }
 @media (max-width: 760px) {
