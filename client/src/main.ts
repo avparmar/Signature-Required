@@ -737,6 +737,7 @@ function refreshCompanies(obs: Observation) {
 function refreshMyCompanies(obs: Observation) {
   const g = session.game;
   const mine = myCompanies(obs);
+  if (obs.phase === 'running') runningSince ??= obs.t;
   const box = $('mycos');
   let html = '';
   if (!mine.length) html = '<div class="muted small">You aren’t president of any company. Own the most shares of one to run it.</div>';
@@ -744,53 +745,53 @@ function refreshMyCompanies(obs: Observation) {
     const c = obs.companies[id];
     const trucks = obs.trucks.filter((t) => t.company === id);
     const free = freeTrucks(obs, id);
-    const factories = Object.values(obs.depots).filter((o) => o === id).length;
-    const limit = factories * g.cfg.depots.capacity;
-    html += `<div class="co${currentCompany(obs) === id ? ' active' : ''}" data-company="${id}" data-cohover="${id}"><div class="row big"><span>${sw(id)}<b>${coName(id)}</b></span><b>${money(c.treasury)}</b></div>`;
+    const factorySites = Object.entries(obs.depots).filter(([, o]) => o === id).map(([site]) => Number(site));
+    const limit = factorySites.length * g.cfg.depots.capacity;
+    const rate = obs.phase === 'running' ? companyRate(id, obs.t) : null;
+    const routes = obs.routes
+      .filter((r) => r.company === id)
+      .sort((a, b) => g.town.locations[a.producer].good! - g.town.locations[b.producer].good! || a.key.localeCompare(b.key));
+    // Header: name and ticker, and its treasury in a box (as on its card).
+    html += `<div class="co${currentCompany(obs) === id ? ' active' : ''}" data-company="${id}" data-cohover="${id}">`;
+    html += `<div class="row head"><span>${sw(id)}<b>${coName(id)}</b> <span class="ticker">${COMPANY_NAMES[companySlot(id)][1]}</span></span><span class="treasury-box" title="The treasury: what it has to spend on trucks and factories"><span class="lbl">Treasury</span> <b>${money(c.treasury)}</b></span></div>`;
+    // At a glance: trucks, factories, and what its deliveries are earning.
+    html += `<div class="row small quick-stats"><span title="${trucks.length} trucks (${free} free), room for ${limit}: each factory adds ${g.cfg.depots.capacity}">🚚 <b>${trucks.length}</b>/${limit}</span><span title="Factories: ${factorySites.map(at).join(', ')}">🏭 <b>${factorySites.length}</b></span><span title="What its deliveries earned per minute over the last ${RATE_WINDOW / 60} minutes (half to the treasury, half to dividends)"><span class="muted">Income</span> ${!trucks.length ? '<span class="muted">—</span>' : rate === null ? '<span class="muted">earning…</span>' : `<b>${money(rate)}</b>/min`}</span></div>`;
+    // Spending: a truck, or a factory (the nearest free sites, at its price).
     const full = trucks.length >= limit;
     const nextTruck = g.cfg.depots.truckPrice + g.cfg.depots.truckPriceStep * trucks.length;
-    const canPay = c.treasury >= nextTruck;
-    const home = Object.entries(obs.depots).find(([, o]) => o === id)?.[0];
-    html += `<div class="row small"><span>${trucks.length}/${limit} trucks: ${free} free</span>${home === undefined ? '' : `<button data-truck="${id}:${home}" ${full || !canPay ? 'disabled' : ''} title="${full ? `Fleet full: each factory adds ${g.cfg.depots.capacity}` : canPay ? '' : 'Not enough in the treasury'}">Buy truck ${money(nextTruck)}</button>`}</div>`;
-    const myFactories = Object.entries(obs.depots).filter(([, o]) => o === id).map(([site]) => at(Number(site)));
-    html += `<div class="row small muted"><span>Factor${myFactories.length === 1 ? 'y' : 'ies'}: ${myFactories.join(', ')}</span></div>`;
-    // The free factory sites nearest this company's factories, with its price for each.
+    const home = factorySites[0];
+    const truckBtn = home === undefined ? '' : `<button data-truck="${id}:${home}" ${full || c.treasury < nextTruck ? 'disabled' : ''} title="${full ? `Fleet full: each factory adds ${g.cfg.depots.capacity}` : c.treasury < nextTruck ? 'Not enough in the treasury' : 'Another truck: more deliveries'}">Buy truck <b>${money(nextTruck)}</b></button>`;
     const sites = Object.keys(obs.depotPrices).map(Number);
-    if (sites.length) {
-      const own = Object.entries(obs.depots).filter(([, o]) => o === id).map(([site]) => g.town.locations[Number(site)].node);
+    const factoryBtn = sites.length ? `<button data-depot="${id}" class="${hl.buyFor === id ? 'on' : ''}" title="Pick a free factory site on the map (the ones you can afford light up with your price)">${hl.buyFor === id ? 'Cancel' : 'Buy factory…'}</button>` : '';
+    html += `<div class="row spend">${truckBtn}${factoryBtn}</div>`;
+    if (sites.length && (hl.buyFor === id || full)) {
+      const own = factorySites.map((site) => g.town.locations[site].node);
       const dist = (site: number) => Math.min(...own.map((n) => siteReach(site)[n]));
       const near = sites.sort((a, b) => dist(a) - dist(b)).slice(0, 3);
-      html += `<div class="row small"><span class="muted">Nearby factory sites</span><button data-depot="${id}" class="${hl.buyFor === id ? 'on' : ''}">${hl.buyFor === id ? 'Cancel' : 'Pick on map…'}</button></div><div class="sites">`;
-      for (const site of near) {
+      html += `<div class="sites"><span class="muted small">Nearest:</span>${near.map((site) => {
         const price = obs.depotPrices[site][id];
-        html += `<button data-buysite="${id}:${site}" ${c.treasury < price ? 'disabled' : ''} title="${Math.round(dist(site))} blocks away${price < g.cfg.depots.depotBase ? ', local subsidy' : ''}">${at(site)} ${money(price)}</button>`;
-      }
-      html += '</div>';
-    } else html += '<div class="row small muted"><span>No unclaimed factory sites left</span></div>';
-    // Where it delivers: its area (or anywhere) and what it's focusing on.
+        return `<button data-buysite="${id}:${site}" ${c.treasury < price ? 'disabled' : ''} title="${Math.round(dist(site))} blocks away${price < g.cfg.depots.depotBase ? ', local subsidy' : ''}">${at(site)} ${money(price)}</button>`;
+      }).join('')}</div>`;
+    }
+    // Where it delivers: its area (or anywhere), and what it's focusing on.
     const editing = hl.areaEdit?.company === id;
     const blocks = c.area.length;
     html += `<div class="row small"><span>Delivers to <b>${blocks ? `${blocks} block${blocks === 1 ? '' : 's'}` : 'anywhere'}</b></span><button data-area="${id}" class="${editing ? 'on' : ''}">${editing ? 'Done' : 'Edit area'}</button></div>`;
     if (c.focus.length)
       html += `<div class="row small focus-row"><span class="muted">Focus</span><span>${c.focus.map((f) => `<button data-unfocus="${id}:${f}" title="Stop focusing on it">${at(f)} ${names(g.town.locations[f].good!).product} ✕</button>`).join('')}</span></div>`;
-    const routes = obs.routes
-      .filter((r) => r.company === id)
-      .sort((a, b) => g.town.locations[a.producer].good! - g.town.locations[b.producer].good! || a.key.localeCompare(b.key));
+    // Its routes (it picks them itself): folded to a summary until you open them.
+    // Start each route's clock when it appears, folded or not, so its rate is ready when opened.
+    for (const r of routes) if (!routeLog.has(r.key)) routeLog.set(r.key, { since: obs.t, hits: [] });
     if (routes.length) {
-      // Long lists fold away (into a count per good) until you open them; short ones stay open.
-      const open = routesOpen.get(id) ?? routes.length <= ROUTES_FOLD_AT;
+      const open = routesOpen.get(id) ?? false;
       const total = routes.reduce((n, r) => n + r.trucks, 0);
-      html += `<button class="sub fold" data-fold="${id}">${open ? '▾' : '▸'} Routes · ${routes.length} · ${total} truck${total === 1 ? '' : 's'}</button>`;
-      if (!open) {
-        const byGood = new Map<number, number>();
-        for (const r of routes) byGood.set(g.town.locations[r.producer].good!, (byGood.get(g.town.locations[r.producer].good!) ?? 0) + 1);
-        html += `<div class="row small muted"><span>${[...byGood].map(([good, n]) => `<span class="dot" style="background:${goodColor(good)}"></span>${cap(names(good).product)} ×${n}`).join(' &nbsp; ')}</span></div>`;
-      }
-      if (open) for (const r of routes) {
-        const p = g.town.locations[r.producer];
-        html += `<div class="row small route-row${hl.hoverRoute === r.key ? ' hot' : ''}${hl.saturated.has(r.key) ? ' saturated' : ''}" data-routerow="${r.key}"><span><span class="dot" style="background:${goodColor(p.good!)}"></span>${cap(names(p.good!).product)} ${at(r.producer)} → ${at(r.depot)} → ${at(r.consumer)}<span class="rate" title="What this route earned per minute over the last ${RATE_WINDOW / 60} minutes">${routeRate(r.key, obs.t, r.trucks)}</span>${saturatedNote(r.key, p.good!)}</span><span class="route-ctl">${r.trucks} 🚚</span></div>`;
-      }
-    }
+      html += `<button class="sub fold" data-fold="${id}">${open ? '▾' : '▸'} Routes · ${routes.length} · ${total} truck${total === 1 ? '' : 's'}${rate === null ? '' : ` · ${money(rate)}/min`}</button>`;
+      if (open)
+        for (const r of routes) {
+          const p = g.town.locations[r.producer];
+          html += `<div class="row small route-row${hl.hoverRoute === r.key ? ' hot' : ''}${hl.saturated.has(r.key) ? ' saturated' : ''}" data-routerow="${r.key}"><span><span class="dot" style="background:${goodColor(p.good!)}"></span>${cap(names(p.good!).product)} ${at(r.producer)} → ${at(r.depot)} → ${at(r.consumer)}<span class="rate" title="What this route earned per minute over the last ${RATE_WINDOW / 60} minutes">${routeRate(r.key, obs.t, r.trucks)}</span>${saturatedNote(r.key, p.good!)}</span><span class="route-ctl">${r.trucks} 🚚</span></div>`;
+        }
+    } else if (obs.phase === 'running') html += `<div class="row small muted"><span>${trucks.length ? 'No routes yet: its trucks pick some within a second or two.' : 'No trucks yet: buy one to start delivering.'}</span></div>`;
     html += '</div>';
   }
   if (box.dataset.html !== html) {
@@ -799,9 +800,8 @@ function refreshMyCompanies(obs: Observation) {
   }
 }
 
-/** Which companies' route lists you've opened or folded (otherwise: open while short). */
+/** Which companies' route lists you've opened (folded until you do). */
 const routesOpen = new Map<number, boolean>();
-const ROUTES_FOLD_AT = 5;
 
 // Panel buttons (delegated, since the panels re-render). They act on press rather than click:
 // a panel can re-render between press and release, which would swallow a click.
@@ -841,8 +841,7 @@ document.addEventListener('pointerdown', (e) => {
     activeCompany = c;
   } else if (b.dataset.fold) {
     const c = Number(b.dataset.fold);
-    const n = obs.routes.filter((r) => r.company === c).length;
-    routesOpen.set(c, !(routesOpen.get(c) ?? n <= ROUTES_FOLD_AT));
+    routesOpen.set(c, !(routesOpen.get(c) ?? false));
   } else if (b.dataset.area) {
     const c = Number(b.dataset.area);
     if (hl.areaEdit?.company === c) endAreaEdit();
@@ -1023,6 +1022,21 @@ const lastDividend = new Map<number, number>();
 
 /** Deliveries per route (time, price), for its earnings per minute. */
 const routeLog = new Map<string, { since: number; hits: { t: number; price: number }[] }>();
+/** Each company's deliveries, for its income rate. */
+const companyLog = new Map<number, { since: number; hits: { t: number; price: number }[] }>();
+
+/** When this game started running (deliveries can't come before). */
+let runningSince: number | null = null;
+
+/** What a company's deliveries earned per minute lately (null until there's a minute to go on). */
+function companyRate(company: number, now: number): number | null {
+  if (runningSince === null) return null;
+  const log = companyLog.get(company) ?? { since: now, hits: [] };
+  companyLog.set(company, log);
+  log.hits = log.hits.filter((h) => h.t > now - RATE_WINDOW);
+  const span = Math.min(RATE_WINDOW, now - runningSince);
+  return span < 60 ? null : (log.hits.reduce((a, h) => a + h.price, 0) * 60) / span;
+}
 /** Seconds of history a route's earnings rate is taken over. */
 const RATE_WINDOW = 120;
 
@@ -1065,6 +1079,9 @@ function handleEvents(evs: GameEvent[]) {
   for (const e of evs) {
     if (e.type === 'delivered') {
       earned.set(e.company, (earned.get(e.company) ?? 0) + e.price);
+      const clog = companyLog.get(e.company) ?? { since: e.t, hits: [] };
+      clog.hits.push({ t: e.t, price: e.price });
+      companyLog.set(e.company, clog);
       const key = truckRoute.get(e.truck);
       if (key) {
         const log = routeLog.get(key) ?? { since: e.t, hits: [] };
@@ -1404,6 +1421,8 @@ function beginMatch(m: Match) {
   watching = m.watch;
   pickCompanySlots(session.cfg.companies, session.cfg.seed);
   routeLog.clear();
+  companyLog.clear();
+  runningSince = null;
   knownBusiness.clear();
   lastDividend.clear();
   history.length = 0;
