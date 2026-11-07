@@ -538,7 +538,8 @@ export class Renderer {
       // so on a street of its own its dashes sit right on the centre line's.
       ctx.strokeStyle = companyColor(r.company);
       ctx.globalAlpha = hot ? 1 : 0.75;
-      ctx.lineWidth = Math.max(hot ? 2.5 : 1.5, this.scale * (hot ? 0.06 : 0.035));
+      // Thicker than the centre line (scale * 0.025), so a route never reads as road paint.
+      ctx.lineWidth = Math.max(hot ? 3 : 2, this.scale * (hot ? 0.075 : 0.05));
       ctx.setLineDash(this.centreDash());
       ctx.lineCap = 'butt';
       ctx.beginPath();
