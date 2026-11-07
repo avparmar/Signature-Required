@@ -259,8 +259,9 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 .broker .order button[hidden] { display: none; }
 
 /* Other players: a slim strip along the top of the map. */
-#players { grid-column: 1; grid-row: 2; display: flex; flex-wrap: wrap; gap: 4px 26px; align-items: center; padding: 5px 14px; border-bottom: 1px solid var(--line); background: var(--panel); font-size: 13px; white-space: nowrap; }
-#players .pl { display: flex; align-items: center; gap: 6px; flex: none; }
+#players { grid-column: 1; grid-row: 2; display: flex; flex-wrap: nowrap; overflow: hidden; gap: 4px 20px; align-items: center; padding: 5px 14px; border-bottom: 1px solid var(--line); background: var(--panel); font-size: 13px; white-space: nowrap; }
+#players .pl { display: flex; align-items: center; gap: 5px; flex: 0 1 auto; min-width: 0; }
+#players .co-dot { min-width: 16px; text-align: center; color: #fff; font-weight: 700; padding: 0 4px; }
 #players .chip { font-size: 10.5px; padding: 0 5px; }
 
 #players .cash { color: var(--muted); }
@@ -319,3 +320,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #companies .treasury-box .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
 #companies .head .treasury { font-size: 15px; font-weight: 700; }
 #companies .broker .order .px { font-size: 13px; }
+
+/* Folded card: standing orders in one line. */
+#companies .orders-line { gap: 10px; justify-content: space-between; color: var(--muted); }
+#companies .orders-line b { color: var(--ink); }
+#companies .orders-line .you { font-weight: 700; color: var(--ink); text-decoration: underline; }

@@ -336,28 +336,75 @@ export class Renderer {
     return path;
   }
 
-  /**
-   * A route's line on screen, along the streets from producer to consumer. Routes with the same
-   * ends (several companies, or several depots) are nudged apart sideways.
-   */
-  private routeLine(r: Route, routes: Route[]): { x: number; y: number }[] {
-    // From kerb to kerb: leave off the zero-length driveways into the buildings themselves.
+  /** Kerb-to-kerb road nodes of a route (leaving off the zero-length driveways into the buildings). */
+  private routeNodes(r: Route): number[] {
     const path = this.routePath(r);
     const term = this.town.graph.terminal;
-    const trimmed = path.filter((n, i) => !(term[n] && (i === 0 || i === path.length - 1)) || path.length <= 2);
-    const nodes = trimmed.map((n) => this.town.graph.nodes[n]);
-    const same = routes.filter((x) => x.producer === r.producer && x.consumer === r.consumer && (this.via === 'none' || x.depot === r.depot));
-    const k = (same.indexOf(r) - (same.length - 1) / 2) * 4;
-    return nodes.map((n, i) => {
-      const a = nodes[Math.max(0, i - 1)];
-      const b = nodes[Math.min(nodes.length - 1, i + 1)];
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const len = Math.hypot(dx, dy) || 1;
-      return { x: this.X(n.x) + (-dy / len) * k, y: this.Y(n.y) + (dx / len) * k };
-    });
+    return path.filter((n, i) => !(term[n] && (i === 0 || i === path.length - 1)) || path.length <= 2);
   }
 
+  private tracksFor = '';
+  private tracks = new Map<string, number[]>();
+  /** For each street (a<b), the companies with a route along it, in order: each gets its own track. */
+  private streetTracks(routes: Route[]): Map<string, number[]> {
+    const sig = routes.map((r) => `${r.key}@${r.company}`).join('|');
+    if (sig === this.tracksFor) return this.tracks;
+    const m = new Map<string, Set<number>>();
+    for (const r of routes) {
+      const ns = this.routeNodes(r);
+      for (let i = 1; i < ns.length; i++) {
+        const k = ns[i - 1] < ns[i] ? `${ns[i - 1]}-${ns[i]}` : `${ns[i]}-${ns[i - 1]}`;
+        (m.get(k) ?? m.set(k, new Set()).get(k)!).add(r.company);
+      }
+    }
+    this.tracks = new Map([...m].map(([k, v]) => [k, [...v].sort((x, y) => x - y)]));
+    this.tracksFor = sig;
+    return this.tracks;
+  }
+
+  /**
+   * A route's line on screen, along the streets from producer to consumer. Where several
+   * companies' routes share a street, each company has its own track across it, side by side.
+   */
+  private routeLine(r: Route, routes: Route[]): { x: number; y: number }[] {
+    const ns = this.routeNodes(r);
+    const g = this.town.graph;
+    const tracks = this.streetTracks(routes);
+    const P = ns.map((n) => ({ x: this.X(g.nodes[n].x), y: this.Y(g.nodes[n].y) }));
+    if (P.length < 2) return P;
+    // Each stretch, shifted sideways onto its track (measured the same way whichever way it's driven).
+    const segs: { a: { x: number; y: number }; b: { x: number; y: number }; u: { x: number; y: number } }[] = [];
+    for (let i = 1; i < ns.length; i++) {
+      const lo = Math.min(ns[i - 1], ns[i]);
+      const hi = Math.max(ns[i - 1], ns[i]);
+      const list = tracks.get(`${lo}-${hi}`) ?? [r.company];
+      // Spread across the middle of the road: the more companies, the closer together.
+      const gap = Math.min(this.roadWidth * 0.3, (this.roadWidth * 0.6) / list.length);
+      const k = (list.indexOf(r.company) - (list.length - 1) / 2) * gap * (ns[i - 1] === lo ? 1 : -1);
+      const dx = P[i].x - P[i - 1].x;
+      const dy = P[i].y - P[i - 1].y;
+      const len = Math.hypot(dx, dy) || 1;
+      const u = { x: dx / len, y: dy / len };
+      const o = { x: -u.y * k, y: u.x * k };
+      segs.push({ a: { x: P[i - 1].x + o.x, y: P[i - 1].y + o.y }, b: { x: P[i].x + o.x, y: P[i].y + o.y }, u });
+    }
+    // Joined at each corner where the shifted stretches meet (or stepped across, if they run straight on).
+    const out = [segs[0].a];
+    for (let i = 0; i < segs.length - 1; i++) {
+      const s1 = segs[i];
+      const s2 = segs[i + 1];
+      const cr = s1.u.x * s2.u.y - s1.u.y * s2.u.x;
+      if (Math.abs(cr) > 0.2) {
+        const t = ((s2.a.x - s1.a.x) * s2.u.y - (s2.a.y - s1.a.y) * s2.u.x) / cr;
+        out.push({ x: s1.a.x + s1.u.x * t, y: s1.a.y + s1.u.y * t });
+      } else {
+        out.push(s1.b);
+        if (Math.hypot(s1.b.x - s2.a.x, s1.b.y - s2.a.y) > 0.5) out.push(s2.a);
+      }
+    }
+    out.push(segs[segs.length - 1].b);
+    return out;
+  }
 
   draw(obs: Observation, trucks: { id: number; x: number; y: number; dx: number; dy: number }[], hl: Highlights, now: number) {
     const { ctx } = this;
@@ -421,8 +468,11 @@ export class Renderer {
       ctx.lineWidth = Math.max(1, this.scale * 0.025);
       ctx.setLineDash([this.scale * 0.11, this.scale * 0.14]);
       ctx.beginPath();
+      // Not under a route: its line takes the middle of the street there.
+      const routed = this.streetTracks(obs.routes);
       for (const e of town.graph.edges) {
         if (term[e.a] || term[e.b]) continue;
+        if (routed.has(e.a < e.b ? `${e.a}-${e.b}` : `${e.b}-${e.a}`)) continue;
         const a = town.graph.nodes[e.a];
         const b = town.graph.nodes[e.b];
         ctx.moveTo(this.X(a.x), this.Y(a.y));

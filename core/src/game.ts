@@ -411,6 +411,9 @@ export class Game {
         const own = book.bid?.player === player ? book.bid.price : 0;
         const min = minimumBid(book, player, this.cfg.auctions);
         if (amount < min) return reject(book.bid?.player === player ? `raise your bid above $${own}` : `the lowest bid now is $${min}`);
+        // Never below what the company itself prices a share at.
+        const floor = this.minPrice(c.id);
+        if (amount < floor) return reject(`bids start at the company's price, $${floor}`);
         if (book.ask && book.ask.player !== player && amount >= book.ask.price) return reject(`a share is for sale at $${book.ask.price}: buy it instead`);
         const p = this.players[player];
         if (p.cash - p.held + own < amount) return reject(`you only have $${(p.cash - p.held + own).toFixed(2)} to bid with`);

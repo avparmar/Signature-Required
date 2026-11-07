@@ -163,7 +163,7 @@ describe('trucks on routes', () => {
   });
 
   it('queues at a building: two bays, first come first served, waiting trucks keep their place', () => {
-    const { g, depot, producer, consumer } = setup({ cycles: { producePerLevel: 1, startLevel: 1, cycleSec: [60, 60] } });
+    const { g, depot, producer, consumer } = setup({ cycles: { palletsPerLevel: 1, startLevel: 1, cycleSec: [60, 60] } });
     // Stagger departures so arrival order is known.
     for (let i = 0; i < 4; i++) {
       assign(g, depot.id, producer.id, consumer.id);
@@ -176,7 +176,7 @@ describe('trucks on routes', () => {
   });
 
   it('takes turns between companies at a busy building, however many trucks each has there', () => {
-    const { g, depot, producer, consumer } = setup({ cycles: { producePerLevel: 1, startLevel: 1, cycleSec: [30, 30] } });
+    const { g, depot, producer, consumer } = setup({ cycles: { palletsPerLevel: 1, startLevel: 1, cycleSec: [30, 30] } });
     g.companies[1].shares = [1, null, null, null, null];
     const rival = g.town.locations.find((l) => l.startCompany === 1)!;
     assign(g, depot.id, producer.id, consumer.id, 4);
