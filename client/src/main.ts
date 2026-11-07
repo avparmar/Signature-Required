@@ -656,7 +656,9 @@ function refreshCompanies(obs: Observation) {
     // Folded, the card stops here (plus a line for a running sale); hovering or pinning shows the rest.
     if (sale) {
       const best = book.bid;
-      html += `<div class="row small sale-line fold-only"><b>${sale.opening ? 'Opening' : 'Offering'} ${Math.ceil(sale.timeLeft)}s</b><span>${best ? `<span title="Highest bid: ${best.player === obs.me && !watching ? 'yours' : seatName(best.player)}">top bid <b>${money(best.price)}</b> ${seatIcon(best.player)}</span>` : 'no bids'}</span></div>`;
+      // Folded, it takes the Buy button's place in the bottom row: time left and the top bid (the
+      // gold card and its timer bar say it's an offering).
+      html += `<div class="sale-line fold-only" title="${sale.opening ? 'Opening offering' : 'Share offering'}: ${Math.ceil(sale.timeLeft)}s left"><b>${Math.ceil(sale.timeLeft)}s</b>${best ? `<span title="Top bid: ${best.player === obs.me && !watching ? 'yours' : seatName(best.player)}"><b>${money(best.price)}</b> ${seatIcon(best.player)}</span>` : '<span>no bids</span>'}</div>`;
     }
     // Folded: the standing orders at a glance, laid out like the Sell for / Buy for buttons (buy order
     // on the left, sell order on the right). Watching the bots, there are no buttons, so all of them;

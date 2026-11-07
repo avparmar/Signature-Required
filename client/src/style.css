@@ -45,7 +45,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #right { grid-column: 2; grid-row: 2 / 5; border-left: 1px solid var(--line); }
 #companies { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; }
 /* Each card sits at the bottom of its slot; folded it shows a summary, open (hovered or pinned) it grows upwards over the map. */
-#companies .slot { position: relative; height: 94px; }
+#companies .slot { position: relative; height: 80px; }
 #companies .co { position: absolute; left: 0; bottom: 0; width: 100%; min-height: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; }
 #companies .co:not(:hover):not(:focus-within):not(.pinned) .more,
 #companies .co:not(:hover):not(:focus-within):not(.pinned) .broker .slide,
@@ -62,8 +62,10 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #companies .co .head > span { display: flex; align-items: center; gap: 6px; white-space: nowrap; min-width: 0; }
 #companies .co .head > span:first-child { overflow: hidden; text-overflow: ellipsis; }
 #companies .pin { font-size: 10px; padding: 0 6px; line-height: 1.5; }
-#companies .co .sale-line { color: #8a6a10; white-space: nowrap; }
+/* Folded, an offering sits where the Buy button would: bottom right. */
+#companies .co .sale-line { position: absolute; right: 10px; bottom: 6px; width: calc(50% - 12px); height: 24px; display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 0 8px; border-radius: 7px; background: #f6e7b4; color: #6b500b; font-size: 12px; white-space: nowrap; overflow: hidden; }
 #companies .co .sale-line > * { flex: none; }
+#companies .co.selling:not(:hover):not(:focus-within):not(.pinned) .broker .buy-now { visibility: hidden; }
 #companies .co:is(:hover, :focus-within, .pinned) .fold-only { display: none; }
 #companies .co:first-child { padding-top: 7px; }
 #companies .row { font-size: 13px; padding: 1px 0; }
@@ -442,3 +444,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #companies .broker .offer:disabled .share-icon { opacity: 0.5; filter: grayscale(1); }
 #companies .broker .offer:disabled .hint { color: var(--muted); }
 #companies .broker .offer:disabled::after { content: ''; position: absolute; left: 0; bottom: 0; height: 3px; width: calc(var(--wait, 0) * 100%); background: #d4b048; transition: width 0.25s linear; }
+/* Folded: compact, with one bottom row (Sell / Buy, or an offering) that's always there. */
+#companies .co:not(:hover):not(:focus-within):not(.pinned) { padding-top: 5px; padding-bottom: 6px; }
+#companies .co:not(:hover):not(:focus-within):not(.pinned) .broker .quick { margin-top: 4px; }
+#companies .co:not(:hover):not(:focus-within):not(.pinned) .broker .quick button { height: 24px; padding: 0 8px; font-size: 11.5px; align-items: center; }
