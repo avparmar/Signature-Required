@@ -165,7 +165,7 @@ function updateHint(obs: Observation) {
   }
   if (hl.areaEdit) hint.textContent = `Editing ${coName(hl.areaEdit.company)}'s delivery area.`;
   else if (myCompanies(obs).length === 0) hint.textContent = 'You run no company yet: own the most shares of one to become its president.';
-  else hint.textContent = 'Your companies route their own trucks. Buy trucks and factories, and choose where they deliver, from the panel on the right.';
+  else hint.textContent = 'Your companies route their own trucks. Buy trucks and choose where they deliver on the tabs atop their cards; click a free factory site to buy it.';
 }
 
 // ------------------------------------------------------------------ delivery areas
@@ -174,6 +174,13 @@ function updateHint(obs: Observation) {
 let paint: { add: boolean } | null = null;
 /** The area before each of the last few strokes (a double-click to focus undoes its two clicks). */
 const before: number[][] = [];
+/** A little map of blocks, some in the company's colour: the delivery-area icon. */
+const areaIcon = (color: string) =>
+  `<svg class="area-icon" viewBox="0 0 24 24" aria-hidden="true"><g stroke="${color}" stroke-width="1.6"><rect x="2" y="2" width="9" height="9" rx="1.5" fill="${hexA(color, 0.3)}"/><rect x="13" y="2" width="9" height="9" rx="1.5" fill="${hexA(color, 0.3)}"/><rect x="2" y="13" width="9" height="9" rx="1.5" fill="${hexA(color, 0.3)}"/><rect x="13" y="13" width="9" height="9" rx="1.5" fill="none" stroke-dasharray="2.5 2"/></g></svg>`;
+const hexA = (hex: string, a: number) => {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+};
 /** Holding Space while editing an area: drag moves the map instead of painting. */
 let spaceHeld = false;
 
@@ -251,7 +258,10 @@ function click(sx: number, sy: number, right: boolean) {
     } else toast('Click a free (dashed) factory site, or Esc to cancel.', 'error');
     return;
   }
-  if (l?.kind === 'depot' && obs.depots[l.id] === undefined) toast("An unclaimed factory site. Buy it from your company's panel (Pick on map…).", 'info');
+  if (l?.kind === 'depot' && obs.depots[l.id] === undefined) {
+    if (myCompanies(obs).length) sitePop = sitePop === l.id ? null : l.id;
+    else toast('An unclaimed factory site. A company you run can buy it.', 'info');
+  } else sitePop = null;
 }
 
 // ------------------------------------------------------------------ canvas events
@@ -760,20 +770,127 @@ function refreshCompanies(obs: Observation) {
   });
 }
 
+/** What a company's next truck costs, and whether it has room and money for it. */
+function truckOffer(obs: Observation, id: number) {
+  const g = session.game;
+  const trucks = obs.trucks.filter((t) => t.company === id).length;
+  const sites = Object.entries(obs.depots).filter(([, o]) => o === id).map(([site]) => Number(site));
+  const limit = sites.length * g.cfg.depots.capacity;
+  const price = g.cfg.depots.truckPrice + g.cfg.depots.truckPriceStep * trucks;
+  return { trucks, limit, price, home: sites[0] as number | undefined, full: trucks >= limit, afford: obs.companies[id].treasury >= price };
+}
+
+/**
+ * Tabs atop the cards of companies you run: edit its delivery area, and buy a truck
+ * ("🛻 3/8 $12", green when it has the room and the money).
+ */
+function refreshCardTabs(obs: Observation, mine: number[]) {
+  for (const [id, k] of cards) {
+    let tabs = k.root.querySelector<HTMLElement>('.co-tabs');
+    if (!mine.includes(id) || obs.phase !== 'running') {
+      tabs?.remove();
+      continue;
+    }
+    if (!tabs) {
+      tabs = document.createElement('div');
+      tabs.className = 'co-tabs';
+      tabs.innerHTML = '<button class="co-tab area"></button><button class="co-tab truck"></button>';
+      const [area, truck] = [...tabs.children] as HTMLButtonElement[];
+      // On press (the cards can re-render between press and release).
+      area.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        e.stopPropagation();
+        if (hl.areaEdit?.company === id) endAreaEdit();
+        else startAreaEdit(id);
+      });
+      truck.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0 || truck.disabled) return;
+        e.stopPropagation();
+        const o = truckOffer(session.obs(), id);
+        if (o.home === undefined) return;
+        session.act({ type: 'buyTruck', company: id, depot: o.home });
+        activeCompany = id;
+      });
+      k.root.prepend(tabs);
+    }
+    tabs.style.setProperty('--co', companyColor(id));
+    const [area, truck] = [...tabs.children] as HTMLButtonElement[];
+    const editing = hl.areaEdit?.company === id;
+    const areaHtml = `${areaIcon(companyColor(id))}${editing ? 'Done' : 'Delivery area'}`;
+    if (area.dataset.html !== areaHtml) (area.innerHTML = areaHtml), (area.dataset.html = areaHtml);
+    area.classList.toggle('on', editing);
+    area.title = editing ? 'Finish editing the delivery area' : 'Choose which blocks it delivers to';
+    const o = truckOffer(obs, id);
+    const truckHtml = `🛻 ${o.trucks}/${o.limit} <span class="px">${money(o.price)}</span>`;
+    if (truck.dataset.html !== truckHtml) (truck.innerHTML = truckHtml), (truck.dataset.html = truckHtml);
+    const can = !o.full && o.afford && o.home !== undefined;
+    truck.disabled = !can;
+    truck.classList.toggle('can', can);
+    truck.title = o.full
+      ? `Fleet full (${o.trucks}/${o.limit}): each factory adds ${session.game.cfg.depots.capacity}. Click a free factory site on the map to buy one.`
+      : !o.afford
+        ? `Another truck costs ${money(o.price)}: the treasury has ${money(obs.companies[id].treasury)}`
+        : `Buy another truck for ${money(o.price)}`;
+  }
+}
+
+/** The free factory site you clicked, with a buy button for each company you run. */
+let sitePop: number | null = null;
+
+function refreshSitePop(obs: Observation) {
+  const pop = $('site-pop');
+  const g = session.game;
+  if (sitePop !== null && (obs.depots[sitePop] !== undefined || obs.phase !== 'running')) sitePop = null;
+  if (sitePop === null) {
+    pop.hidden = true;
+    return;
+  }
+  const site = sitePop;
+  const mine = myCompanies(obs);
+  const dc = g.cfg.depots;
+  let html = `<div class="title"><b>Factory site ${at(site)}</b><button data-popclose title="Close">✕</button></div>`;
+  for (const c of mine) {
+    const price = obs.depotPrices[site]?.[c] ?? dc.depotBase;
+    const can = obs.companies[c].treasury >= price;
+    html += `<button class="buy${can ? ' can' : ''}" data-popbuy="${c}" ${can ? '' : 'disabled'} title="${can ? `Buy it for ${coName(c)}` : `${coName(c)} has ${money(obs.companies[c].treasury)}`}"><span class="sw" style="background:${companyColor(c)}"></span>${coName(c)}<span class="px">${money(price)}</span></button>`;
+  }
+  html += `<div class="note">Each factory adds ${dc.capacity} to the truck limit. Serving the gold zone round it cuts the price (up to ${Math.round(100 * dc.maxSubsidy)}% off).</div>`;
+  if (pop.dataset.html !== html) (pop.innerHTML = html), (pop.dataset.html = html);
+  pop.hidden = false;
+  // Just above the site (below it, near the top of the map), kept on the map.
+  const l = g.town.locations[site];
+  const wrap = $('map-wrap').getBoundingClientRect();
+  const box = canvas.getBoundingClientRect();
+  const sx = box.left - wrap.left + renderer.X(l.x);
+  const sy = box.top - wrap.top + renderer.Y(l.y);
+  const gap = renderer.scale * 0.6;
+  let y = sy - gap - pop.offsetHeight;
+  if (y < 8) y = sy + gap;
+  const x = Math.max(8, Math.min(wrap.width - pop.offsetWidth - 8, sx - pop.offsetWidth / 2));
+  pop.style.left = `${x}px`;
+  pop.style.top = `${y}px`;
+}
+
+$('site-pop').addEventListener('pointerdown', (e) => {
+  const b = (e.target as HTMLElement).closest('button');
+  if (!b || e.button !== 0) return;
+  e.stopPropagation();
+  if (b.dataset.popclose !== undefined) sitePop = null;
+  else if (b.dataset.popbuy && sitePop !== null && !b.hasAttribute('disabled')) {
+    const c = Number(b.dataset.popbuy);
+    session.act({ type: 'buyDepot', company: c, site: sitePop });
+    activeCompany = c;
+    sitePop = null;
+  }
+  refreshSitePop(session.obs());
+});
+
 function refreshMyCompanies(obs: Observation) {
   const g = session.game;
   const mine = myCompanies(obs);
   if (obs.phase === 'running') runningSince ??= obs.t;
-  // On the map: edit the area of the company you're looking at (or your first).
-  const mapEdit = $('map-edit');
-  const cur = currentCompany(obs);
-  const editFor = cur !== null && mine.includes(cur) ? cur : mine[0];
-  const showEdit = editFor !== undefined && obs.phase === 'running' && !hl.areaEdit;
-  mapEdit.hidden = !showEdit;
-  if (showEdit && mapEdit.dataset.company !== String(editFor)) {
-    mapEdit.dataset.company = String(editFor);
-    mapEdit.innerHTML = `<span class="sw" style="background:${companyColor(editFor)}"></span>Edit ${coName(editFor)}'s delivery area`;
-  }
+  refreshCardTabs(obs, mine);
+  refreshSitePop(obs);
   const box = $('mycos');
   let html = '';
   if (!mine.length) html = '<div class="muted small">You aren’t president of any company. Own the most shares of one to run it.</div>';
@@ -1577,14 +1694,11 @@ window.addEventListener('keydown', (e) => {
     e.preventDefault();
     togglePause();
   } else if (e.key === 'Escape') {
+    sitePop = null;
     hl.picked = [];
     hl.buyFor = null;
     endAreaEdit();
   }
-});
-$('map-edit').addEventListener('click', () => {
-  const c = Number($('map-edit').dataset.company);
-  if (!Number.isNaN(c)) startAreaEdit(c);
 });
 window.addEventListener('keyup', (e) => {
   if (e.key !== ' ') return;
