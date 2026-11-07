@@ -803,7 +803,7 @@ function truckOffer(obs: Observation, id: number) {
 }
 
 /**
- * Tabs atop the cards of companies you run: edit its delivery area, and buy a truck
+ * Tabs atop the cards: the trucks (buy one, on companies you run), then edit its delivery area
  * ("🛻 3/8 $12", green when it has the room and the money).
  */
 function refreshCardTabs(obs: Observation, mine: number[]) {
@@ -817,8 +817,8 @@ function refreshCardTabs(obs: Observation, mine: number[]) {
     if (!tabs) {
       tabs = document.createElement('div');
       tabs.className = 'co-tabs';
-      tabs.innerHTML = '<button class="co-tab area"></button><button class="co-tab truck"></button>';
-      const [area, truck] = [...tabs.children] as HTMLButtonElement[];
+      tabs.innerHTML = '<button class="co-tab truck"></button><button class="co-tab area"></button>';
+      const [truck, area] = [...tabs.children] as HTMLButtonElement[];
       // On press (the cards can re-render between press and release).
       area.addEventListener('pointerdown', (e) => {
         if (e.button !== 0) return;
@@ -837,7 +837,7 @@ function refreshCardTabs(obs: Observation, mine: number[]) {
       k.root.prepend(tabs);
     }
     tabs.style.setProperty('--co', companyColor(id));
-    const [area, truck] = [...tabs.children] as HTMLButtonElement[];
+    const [truck, area] = [...tabs.children] as HTMLButtonElement[];
     // The area tab: only on companies you run.
     area.hidden = !own;
     const editing = hl.areaEdit?.company === id;
