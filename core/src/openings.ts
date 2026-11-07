@@ -61,12 +61,25 @@ export function chooseOpening(town: Town, live: Location[], cfg: OpeningConfig, 
     return lotWeight(nearest, cfg);
   });
   const lot = lots[rng.weighted(weights)];
-  let good = rng.int(0, town.cfg.goods.length - 1);
-  const producers = live.filter((l) => l.kind === 'producer' && l.good === good).length;
-  const consumers = live.filter((l) => l.kind === 'consumer' && l.good === good).length;
-  // Lean towards the side that's short, but not deterministically.
-  const pConsumer = consumers >= 2 * producers ? 0.35 : producers >= consumers ? 0.75 : 0.6;
-  let kind: 'producer' | 'consumer' = rng.next() < pConsumer ? 'consumer' : 'producer';
+  // What to open: whichever good and kind is shortest nearby (within reach of the lot), so the town
+  // keeps supply and demand in step where it matters. Shops count against their share of a
+  // producer's output (two shops per producer balance).
+  const share = town.cfg.shopsPerProducer > 0 ? town.cfg.shopsPerProducer : 2;
+  const dLot = distancesFrom(town.graph, lot.node);
+  const reach = Math.max(town.cfg.shopReach, 4);
+  const shortfall: { kind: 'producer' | 'consumer'; good: number; need: number }[] = [];
+  for (let g = 0; g < town.cfg.goods.length; g++) {
+    const near = live.filter((l) => l.good === g && dLot[l.node] <= reach);
+    const p = near.filter((l) => l.kind === 'producer').length;
+    const c = near.filter((l) => l.kind === 'consumer').length;
+    // Positive: shops short of this good's supply here; negative: producers short.
+    const gap = p * share - c;
+    shortfall.push({ kind: 'consumer', good: g, need: gap + rng.next() * 0.5 });
+    shortfall.push({ kind: 'producer', good: g, need: -gap / share + rng.next() * 0.5 });
+  }
+  shortfall.sort((a, b) => b.need - a.need);
+  let good = shortfall[0].good;
+  let kind: 'producer' | 'consumer' = shortfall[0].kind;
   // Never right next to its own trading partner: try the other kind, then other goods.
   // Preferably not right beside a twin (same kind and good) either.
   const apart = (k: 'producer' | 'consumer', g: number) =>
@@ -74,7 +87,7 @@ export function chooseOpening(town: Town, live: Location[], cfg: OpeningConfig, 
   const ok = (k: 'producer' | 'consumer', g: number) => pairOk(live, k, g, lot, town.cfg.pairGap);
   if (!ok(kind, good) || !apart(kind, good)) {
     const options: ['producer' | 'consumer', number][] = [];
-    for (let k = 0; k < town.cfg.goods.length; k++) for (const kk of [kind, kind === 'producer' ? 'consumer' : 'producer'] as const) options.push([kk, (good + k) % town.cfg.goods.length]);
+    for (const x of shortfall) options.push([x.kind, x.good]);
     const pick = options.find(([kk, g]) => ok(kk, g) && apart(kk, g)) ?? options.find(([kk, g]) => ok(kk, g));
     if (!pick) return null;
     [kind, good] = pick;

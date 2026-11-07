@@ -736,6 +736,7 @@ export class Bot {
   // ---------------------------------------------------------------- location investment
 
   private invest(obs: Observation): Action | null {
+    if (this.cfg.cycles.maxLevel <= this.cfg.cycles.startLevel) return null; // fixed levels: nothing to invest in
     if (obs.t - this.lastInvest < 60 || this.minutesLeft(obs) < 5) return null;
     const me = obs.players[this.me];
     const available = me.cash - me.held;

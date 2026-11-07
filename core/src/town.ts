@@ -60,7 +60,12 @@ export interface TownConfig {
   /** What a consumer of each good is called. */
   shops: string[];
   producersPerGood: [number, number];
+  /** Used only when shopsPerProducer is 0: shops per good drawn on their own. */
   consumersPerGood: [number, number];
+  /** Shops per good as a multiple of its producers (so supply and demand match); 0 = use consumersPerGood. */
+  shopsPerProducer: number;
+  /** Each shop goes within this street distance (blocks) of a producer of its good, where there's room. */
+  shopReach: number;
   bays: number;
   /** Number of delivery companies (N players + 1). Each gets a starting depot. */
   companies: number;
@@ -106,8 +111,10 @@ export const DEFAULT_TOWN: TownConfig = {
   raws: ['timber', 'wheat', 'crude oil'],
   sources: ['sawmill', 'farm', 'oil well'],
   shops: ['furniture store', 'grocery store', 'gas station'],
-  producersPerGood: [4, 5],
-  consumersPerGood: [7, 11],
+  producersPerGood: [8, 10],
+  consumersPerGood: [14, 22],
+  shopsPerProducer: 2,
+  shopReach: 6,
   bays: 2,
   companies: 5,
   extraDepotSites: [6, 9],
@@ -319,6 +326,32 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
   const blockOf: number[] = []; // location index -> block index
 
   const free = (p: Vec) => locations.every((l) => dist(l, p) >= cfg.minSpacing);
+  // Street distance (in blocks, along the streets) from a block to every intersection, for keeping
+  // shops near their producers; the road graph proper is only built once everything is placed.
+  const adj = new Map<number, number[]>();
+  for (const [a, b] of [...edges, ...diagonals]) {
+    (adj.get(a) ?? adj.set(a, []).get(a)!).push(b);
+    (adj.get(b) ?? adj.set(b, []).get(b)!).push(a);
+  }
+  const streetDistFrom = (b: { sides: [number, number][] }) => {
+    const d = new Map<number, number>();
+    const q: number[] = [];
+    for (const [x, y] of b.sides) for (const n of [x, y]) if (!d.has(n)) (d.set(n, 0), q.push(n));
+    for (let k = 0; k < q.length; k++) for (const m of adj.get(q[k]) ?? []) if (!d.has(m)) (d.set(m, d.get(q[k])! + 1), q.push(m));
+    return d;
+  };
+  const blockAtLoc = (i: number) => blocks[blockOf[i]];
+  const nearProducer = (good: number, b: { sides: [number, number][] }) => {
+    let best = Infinity;
+    for (let i = 0; i < locations.length; i++) {
+      const l = locations[i];
+      if (l.kind !== 'producer' || l.good !== good) continue;
+      const d = producerReach.get(i) ?? producerReach.set(i, streetDistFrom(blockAtLoc(i))).get(i)!;
+      for (const [x, y] of b.sides) best = Math.min(best, d.get(x) ?? Infinity, d.get(y) ?? Infinity);
+    }
+    return best + 1; // from the producer's own street to this block's
+  };
+  const producerReach = new Map<number, Map<number, number>>();
   const centre = (b: { i: number; j: number }): Vec => ({ x: b.i + 0.5, y: b.j + 0.5 });
   // Snowflake towns put businesses at the ends of their cul-de-sacs, and depots on through streets.
   const degree = new Map<number, number>();
@@ -335,6 +368,10 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
         return locations.every((l) => l.kind !== loc.kind || l.good !== loc.good || Math.abs(l.x - c.x) + Math.abs(l.y - c.y) >= cfg.sameGap);
       });
       if (spread.length > 0) candidates = spread;
+    }
+    if (loc.kind === 'consumer' && cfg.shopReach > 0 && loc.good !== null) {
+      const near = candidates.filter(({ b }) => nearProducer(loc.good!, b) <= cfg.shopReach);
+      if (near.length > 0) candidates = near;
     }
     if (cfg.layout === 'snowflake') {
       const ends = candidates.filter(({ b }) => deadEnd(b));
@@ -388,7 +425,7 @@ function tryGenerate(cfg: TownConfig, rng: Rng, attempt: number): Town {
   cfg.goods.forEach((_, g) => {
     const np = rng.int(...cfg.producersPerGood);
     for (let k = 0; k < np; k++) place({ kind: 'producer', good: g, level: 1, bays: cfg.bays, startCompany: null });
-    const nc = rng.int(...cfg.consumersPerGood);
+    const nc = cfg.shopsPerProducer > 0 ? Math.round(np * cfg.shopsPerProducer) : rng.int(...cfg.consumersPerGood);
     for (let k = 0; k < nc; k++) place({ kind: 'consumer', good: g, level: 1, bays: cfg.bays, startCompany: null });
   });
   const nd = rng.int(...cfg.extraDepotSites);

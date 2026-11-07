@@ -816,8 +816,8 @@ export class Renderer {
       const st = byId.get(l.id);
       const closing = st?.closingIn !== null && st?.closingIn !== undefined;
       drawBusiness(ctx, l.kind as 'producer' | 'consumer', l.good!, x, y, r, detail);
-      // Level: pips when zoomed in, a ring tint when zoomed out.
-      if (st) {
+      // Level: pips when zoomed in, a ring tint when zoomed out (none when every business has the same level).
+      if (st && this.levelled) {
         if (detail) {
           const n = 5;
           const gap = Math.max(4, r * 0.42);
@@ -1024,6 +1024,8 @@ export class Renderer {
 
   /** The ordinary pallet price: shops paying more are premium (drawn with a gold coin). */
   palletPrice = 2.4;
+  /** Whether businesses have levels to show (off when they're all fixed at one). */
+  levelled = true;
 
   /** How long loading/unloading and factory processing take (seconds), for the progress pies. */
   serviceSec = 3;

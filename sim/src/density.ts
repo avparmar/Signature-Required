@@ -93,6 +93,10 @@ if (which === 'economy') {
   variant('Fixed level 3 (today otherwise)', { cycles: fixed(3) });
   variant('Fixed level 3 + all three', { ...all3, cycles: fixed(3) });
   variant('Fixed level 2 + all three', { ...all3, cycles: fixed(2) });
+} else if (which === 'tuned') {
+  // The new defaults (fixed level 2, 2x density with shops matched to and placed near producers,
+  // $6 trucks, 16 per factory, a starting truck), at a few pallet prices.
+  for (const price of [2.4, 2, 1.7, 1.4]) variant(`New defaults, pallet $${price}`, { money: { palletPrice: price, premiumPrice: +(price * 1.5).toFixed(2) } });
 } else if (which === 'dense2') {
   const dense2 = { producersPerGood: [8, 10] as [number, number], consumersPerGood: [14, 22] as [number, number] };
   variant('Fixed level 2 + cheap/big fleets + 2× density', { depots: { truckPrice: 6, capacity: 16 }, town: dense2, cycles: fixed(2) });

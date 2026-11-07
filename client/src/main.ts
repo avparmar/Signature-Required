@@ -92,6 +92,7 @@ renderer.via = session.cfg.trucks.viaDepot;
 renderer.serviceSec = session.cfg.trucks.serviceSec;
 renderer.processSec = session.cfg.trucks.signOffSec;
 renderer.palletPrice = session.cfg.money.palletPrice;
+renderer.levelled = session.cfg.cycles.maxLevel > session.cfg.cycles.startLevel;
 let last = performance.now();
 let lastUi = 0;
 
@@ -174,6 +175,8 @@ function updateHint(obs: Observation) {
 let paint: { add: boolean } | null = null;
 /** The area before each of the last few strokes (a double-click to focus undoes its two clicks). */
 const before: number[][] = [];
+/** Businesses fixed at one level: no level to show, nothing grows, shrinks or closes. */
+const fixedLevels = () => session.cfg.cycles.maxLevel <= session.cfg.cycles.startLevel;
 /** A share certificate: a gold-edged sheet with a seal. */
 const shareIcon = `<svg class="share-icon" viewBox="0 0 24 20" aria-hidden="true"><rect x="1.5" y="2" width="21" height="15" rx="2" fill="#fff8de" stroke="#b08a1e" stroke-width="1.5"/><rect x="4" y="4.5" width="16" height="10" rx="1" fill="none" stroke="#d9bb5c" stroke-width="1"/><path d="M6.5 8h7M6.5 11h5" stroke="#b08a1e" stroke-width="1.4" stroke-linecap="round"/><circle cx="17" cy="11.5" r="2.6" fill="#d9542c"/><path d="M15.8 13.6l-.8 3.4 2-1 2 1-.8-3.4" fill="#d9542c"/></svg>`;
 /** A little box truck: the cargo box in the company's colour, a cab with a window, speed lines. */
@@ -406,10 +409,10 @@ function tooltip(obs: Observation) {
     if (s) {
       const n = names(s.good);
       const recent = s.history.length ? Math.round((100 * s.history.reduce((a, b) => a + b, 0)) / s.history.length) : null;
-      // At a glance: level, this cycle's progress, and when the next cycle comes.
+      // At a glance: level (when businesses have levels), this cycle's progress, and when the next cycle comes.
       const prod = s.kind === 'producer';
       html = `<b>${cap(prod ? n.source : n.shop)} ${at(l.id)}</b>`;
-      html += `<div class="tip-stats"><div><span>Level</span><b>${s.level}/${g.cfg.cycles.maxLevel}</b></div><div><span>${prod ? 'Shipped / made' : 'Received / needed'}</span><b>${s.served}/${s.cycleAmount}</b></div><div><span>Next cycle</span><b>${fmtClock(Math.max(0, s.nextCycleAt - obs.t))}</b></div></div>`;
+      html += `<div class="tip-stats">${fixedLevels() ? '' : `<div><span>Level</span><b>${s.level}/${g.cfg.cycles.maxLevel}</b></div>`}<div><span>${prod ? 'Shipped / made' : 'Received / needed'}</span><b>${s.served}/${s.cycleAmount}</b></div><div><span>Next cycle</span><b>${fmtClock(Math.max(0, s.nextCycleAt - obs.t))}</b></div></div>`;
       html += prod
         ? `<div class="muted">${s.stock} load${s.stock === 1 ? '' : 's'} of ${n.raw} waiting · a factory makes it into ${n.product}</div>`
         : `<div class="muted">Pays ${cents(s.price)} a pallet${s.price > g.cfg.money.palletPrice ? ' (premium)' : ''}</div>`;
@@ -1417,12 +1420,12 @@ const GUIDE: { img?: string[]; icons?: GuideIcons; flow?: boolean; title: string
     img: ['routes'],
     icons: 'chain',
     title: 'Your trucks run themselves!',
-    text: "<p>A company <b>routes its own trucks</b>. Each picks up raw material at a <b>producer</b>, has it made into the product at one of the company's <b>factories</b>, and delivers it to a <b>shop</b>: <span class=\"hl\">timber → furniture, wheat → bread, crude oil → fuel</span>. Shorter trips and better-paying shops come first. Shops with a gold <b>$</b> coin pay 50% more.</p><p><span class=\"hl\">Every delivery earns money</span>, so as president, <b>buy trucks</b> (in your company's panel) to make more of them. The number on a route is how many trucks run it.</p>",
+    text: "<p>A company <b>routes its own trucks</b>. Each picks up raw material at a <b>producer</b>, has it made into the product at one of the company's <b>factories</b>, and delivers it to a <b>shop</b>: <span class=\"hl\">timber → furniture, wheat → bread, crude oil → fuel</span>. Shorter trips and better-paying shops come first. Shops with a gold <b>$</b> coin pay 50% more.</p><p><span class=\"hl\">Every delivery earns money</span>, so as president, <b>buy trucks</b> (the 🚚 tab on your company's card) to make more of them. The number on a route is how many trucks run it.</p>",
   },
   {
     img: ['area'],
     title: 'Choose where it delivers!',
-    text: `<p>In your company's panel, <b>Edit area</b> sets its <b>delivery area</b>: the shops it serves. <span class="hl">Click or drag over blocks</span> to add them, and right-click or right-drag to take them out. It still fetches from producers anywhere. With no area, it delivers anywhere.</p><p><b>Double-click</b> a producer or shop while editing to <span class="hl">focus</span> on it (up to ${session.cfg.maxFocus}): trucks go there first, even outside the area. Handy for moving in on a rival's best shop.</p>`,
+    text: `<p>On your company's card, the <b>Area</b> tab sets its <b>delivery area</b>: the shops it serves. <span class="hl">Click or drag over blocks</span> to add them, and right-click or right-drag to take them out. It still fetches from producers anywhere. With no area, it delivers anywhere.</p><p><b>Double-click</b> a producer or shop while editing to <span class="hl">focus</span> on it (up to ${session.cfg.maxFocus}): trucks go there first, even outside the area. Handy for moving in on a rival's best shop.</p>`,
   },
   {
     img: ['factory'],
@@ -1648,6 +1651,7 @@ function beginMatch(m: Match) {
   renderer.serviceSec = session.cfg.trucks.serviceSec;
   renderer.processSec = session.cfg.trucks.signOffSec;
   renderer.palletPrice = session.cfg.money.palletPrice;
+  renderer.levelled = session.cfg.cycles.maxLevel > session.cfg.cycles.startLevel;
   renderer.resize(true);
   viewMoved = false;
   logList.innerHTML = '';
