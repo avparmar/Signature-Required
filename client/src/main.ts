@@ -37,7 +37,7 @@ const COMPANY_NAMES: [string, string][] = [
   ['Greenway Freight', 'GWF'],
   ['Purple Pony Transport', 'PPT'],
   ['Orange Owl Logistics', 'OOL'],
-  ['Iron Horse Haulage', 'IHH'],
+  ['Iron Horse Solutions', 'IHS'],
   ['Magenta Moth Movers', 'MMM'],
   ['Lime Lizard Lines', 'LLL'],
   ['Skyhook Shipping', 'SKY'],
