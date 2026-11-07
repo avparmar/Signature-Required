@@ -37,6 +37,13 @@ export interface Company {
   assets: number;
   /** Owner (player id) of each share, or null while the company owns it itself. */
   shares: (number | null)[];
+  /**
+   * Its delivery area: the town blocks (x + y * blocksX) whose shops it serves. Empty: anywhere.
+   * Producers can be anywhere; trucks fetch from whichever is best.
+   */
+  area: number[];
+  /** Places (producers or shops) it sends trucks to first, wherever they are. */
+  focus: number[];
 }
 
 /** opening: the opening share sales, before the game clock starts. */
@@ -73,6 +80,10 @@ export type Action =
   | { type: 'assignRoute'; depot: number; producer: number; consumer: number }
   /** Take one truck off a route; it drives back to its depot and becomes free. */
   | { type: 'unassignRoute'; depot: number; producer: number; consumer: number }
+  /** President: the company's delivery area (town blocks, x + y * blocksX; empty for anywhere). */
+  | { type: 'setArea'; company: number; blocks: number[] }
+  /** President: focus the company on a producer or shop (or stop). */
+  | { type: 'setFocus'; company: number; location: number; on: boolean }
   /** Buy a truck for a company, based at one of its depots (presidents only; from the treasury). */
   | { type: 'buyTruck'; company: number; depot: number }
   /** Buy a free depot site for a company (presidents only; from the treasury). */
@@ -116,6 +127,7 @@ export type GameEvent =
   | { type: 'routeChanged'; t: number; company: number; depot: number; producer: number; consumer: number; trucks: number }
   /** A route lost one of its ends (closure); its trucks are free again at the depot. */
   | { type: 'routeLost'; t: number; company: number; depot: number; producer: number; consumer: number; trucks: number }
+  | { type: 'areaChanged'; t: number; company: number; blocks: number }
   | {
       type: 'payout';
       t: number;
@@ -228,6 +240,8 @@ export class Game {
       pot: 0,
       assets: 0,
       shares: Array.from({ length: cfg.sharesPerCompany }, () => null),
+      area: [],
+      focus: [],
     }));
     this.locations = initLocations(this.town.locations, cfg.cycles, this.rng);
     for (const l of this.locations) this.locById.set(l.id, l);
@@ -256,6 +270,8 @@ export class Game {
     this.saleCooldownUntil = this.companies.map(() => 0);
     this.books = this.companies.map(() => ({ bid: null, ask: null }));
     this.phase = cfg.auctions.openingRound ? 'opening' : 'running';
+    // Every company starts with a truck or two at its starting factory (free: it isn't in its value).
+    for (const c of this.companies) for (let i = 0; i < cfg.startingTrucks; i++) this.addTruck(c.id);
     this.emit('all', { type: 'start', t: 0 });
     if (this.phase === 'running') this.emit('all', { type: 'open', t: 0 });
   }
@@ -300,7 +316,8 @@ export class Game {
     this.maybeOpen();
     this.maybeNewSite();
     this.trucks.update(this.t, this.cfg.tickSec, (id) => this.town.locations[id].bays);
-    // (Issues #6–#7 add depots and money here.)
+    // Companies route their own trucks, once a second.
+    if (this.cfg.autoRoutes && this.tick % Math.max(1, Math.round(1 / this.cfg.tickSec)) === 0) this.autoRoute();
 
     this.tick++;
     const ending = this.tick >= this.totalTicks;
@@ -323,8 +340,32 @@ export class Game {
     switch (action.type) {
       case 'noop':
         break;
+      case 'setArea': {
+        const c = this.companies[action.company];
+        if (!c) return reject(`no company ${action.company}`);
+        if (!this.presidents(c.id).includes(player)) return reject("only a president can choose where its company delivers");
+        const n = this.cfg.town.blocksX * this.cfg.town.blocksY;
+        if (!Array.isArray(action.blocks) || action.blocks.some((b) => !Number.isInteger(b) || b < 0 || b >= n)) return reject('those blocks are not in town');
+        c.area = [...new Set(action.blocks)].sort((a, b) => a - b);
+        this.emit('all', { type: 'areaChanged', t: this.t, company: c.id, blocks: c.area.length });
+        break;
+      }
+      case 'setFocus': {
+        const c = this.companies[action.company];
+        if (!c) return reject(`no company ${action.company}`);
+        if (!this.presidents(c.id).includes(player)) return reject("only a president can choose where its company delivers");
+        const l = this.locById.get(action.location);
+        if (!l || (l.kind !== 'producer' && l.kind !== 'consumer')) return reject('you can only focus on a producer or a shop');
+        if (!action.on) c.focus = c.focus.filter((x) => x !== action.location);
+        else if (!c.focus.includes(action.location)) {
+          if (c.focus.length >= this.cfg.maxFocus) return reject(`a company can focus on ${this.cfg.maxFocus} places at once: unfocus one first`);
+          c.focus = [...c.focus, action.location];
+        }
+        break;
+      }
       case 'assignRoute':
       case 'unassignRoute': {
+        if (this.cfg.autoRoutes) return reject('companies choose their own routes: set a delivery area or focus instead');
         const company = this.depotOwner.get(action.depot);
         if (company === undefined) return reject(`nobody owns depot ${action.depot}`);
         if (!this.presidents(company).includes(player)) return reject("only a president can direct this company's trucks");
@@ -495,7 +536,7 @@ export class Game {
           const bid = this.books[c.id].bid;
           if (!bid) return reject('nobody is bidding for a share of this company');
           // During the company's own sale, its bids are for the company's share: the money goes to the company.
-          if (this.sales.some((x) => x.company === c.id)) return reject("the company is selling a share: its bids are for that one, so you can't sell yours to them now");
+          if (this.sales.some((x) => x.company === c.id)) return reject("the company is offering a share: its bids are for that one, so you can't sell yours to them now");
           if (bid.player === player) return reject("that's your own bid");
           this.books[c.id].bid = null;
           const buyer = this.players[bid.player];
@@ -518,7 +559,7 @@ export class Game {
       }
       case 'pass': {
         const sale = this.sales.find((x) => x.company === action.company);
-        if (!sale) return reject('that company has no sale running');
+        if (!sale) return reject('that company has no share offering running');
         if (this.books[sale.company].bid?.player === player) return reject("you're the highest bidder");
         if (sale.passed.includes(player)) return;
         sale.passed.push(player);
@@ -529,13 +570,13 @@ export class Game {
         break;
       }
       case 'startSale': {
-        if (this.phase !== 'running') return reject('sales open once the game starts');
+        if (this.phase !== 'running') return reject('share offerings open once the game starts');
         const c = this.companies[action.company];
         if (!c) return reject(`no company ${action.company}`);
         if (!c.shares.includes(null)) return reject('the company has no shares of its own left to sell');
-        if (this.sales.some((x) => x.company === c.id)) return reject('this company already has a sale running');
+        if (this.sales.some((x) => x.company === c.id)) return reject('this company already has a share offering running');
         if (this.elapsed < this.saleCooldownUntil[c.id] - 1e-9)
-          return reject(`it held a sale recently; try again in ${Math.ceil(this.saleCooldownUntil[c.id] - this.elapsed)}s`);
+          return reject(`it held a share offering recently; try again in ${Math.ceil(this.saleCooldownUntil[c.id] - this.elapsed)}s`);
         this.startSale(c.id, player, false);
         break;
       }
@@ -714,6 +755,131 @@ export class Game {
       this.emit('all', { type: 'routeLost', t: this.t, company: r.company, depot: r.depot, producer: r.producer, consumer: r.consumer, trucks: r.trucks });
     }
     this.trucks.locationClosed(id, this.t);
+    for (const c of this.companies) c.focus = c.focus.filter((x) => x !== id);
+  }
+
+  // ---------------------------------------------------------------- automatic routes
+
+  private nodeDist = new Map<number, Float64Array>();
+  /** Road distances from a node (cached: the roads never change). */
+  private distFrom(node: number): Float64Array {
+    let d = this.nodeDist.get(node);
+    if (!d) {
+      d = distancesFrom(this.town.graph, node);
+      this.nodeDist.set(node, d);
+    }
+    return d;
+  }
+
+  /** The town block a place is in (x + y * blocksX). */
+  blockOf(location: number): number {
+    const l = this.town.locations[location];
+    return Math.floor(l.x) + Math.floor(l.y) * this.cfg.town.blocksX;
+  }
+
+  /** Whether a company would deliver to this shop: it's in the company's area (or there's no area), or a focus. */
+  serves(company: number, consumer: number): boolean {
+    const c = this.companies[company];
+    return c.area.length === 0 || c.focus.includes(consumer) || c.area.includes(this.blockOf(consumer));
+  }
+
+  /**
+   * Trucks a producer or shop can keep busy at once: about what its output (or demand) at its level
+   * takes to carry, at most one more beyond that.
+   */
+  private placeCap(location: number): number {
+    const l = this.locById.get(location);
+    const level = l?.level ?? this.cfg.cycles.startLevel;
+    const perCycle = this.cfg.cycles.palletsPerLevel * level;
+    const cycleSec = (this.cfg.cycles.cycleSec[0] + this.cfg.cycles.cycleSec[1]) / 2;
+    const perMin = (perCycle * 60) / cycleSec;
+    const tripsPerTruckMin = this.cfg.trucks.speed / 0.25;
+    return Math.max(1, Math.round((perMin / tripsPerTruckMin) * 0.75)) + 1;
+  }
+
+  /** Length of one round trip on a route, as a truck drives it. */
+  private routeLength(depot: number, producer: number, consumer: number): number {
+    const d = this.distFrom(this.town.locations[depot].node);
+    const p = this.town.locations[producer].node;
+    const q = this.town.locations[consumer].node;
+    const via = this.cfg.trucks.viaDepot;
+    return via === 'hub' ? 2 * (d[p] + d[q]) : via === 'loaded' ? d[p] + d[q] + this.distFrom(p)[q] : d[p] + 2 * this.distFrom(p)[q];
+  }
+
+  /**
+   * Companies route their own trucks. Each free truck takes the best route it can: a producer to a
+   * shop the company serves (in its delivery area, or a focus), through whichever of its factories
+   * makes the trip shortest. Shorter trips and better-paying shops come first, and a place stops
+   * taking trucks once it has as many as it can keep busy. Focused places come first of all, and if
+   * one has none of the company's trucks, a truck from an unfocused route is freed up for it. A
+   * truck whose shop leaves the area finishes its delivery and is free again.
+   */
+  private autoRoute() {
+    if (this.phase !== 'running') return;
+    // Trucks (any company) already working each place.
+    const load = new Map<number, number>();
+    for (const t of this.trucks.trucks) for (const s of t.orders) load.set(s.location, (load.get(s.location) ?? 0) + 1);
+    const live = this.locations.filter((l) => l.kind === 'producer' || l.kind === 'consumer');
+    for (const c of this.companies) {
+      const depots = [...this.depotOwner].filter(([, o]) => o === c.id).map(([s]) => s).sort((a, b) => a - b);
+      const mine = this.trucks.trucks.filter((t) => t.company === c.id);
+      // Out of the area: finish up and come free.
+      for (const t of mine) {
+        if (!t.route || t.homing) continue;
+        const consumer = Number(t.route.split('>')[2]);
+        if (!this.serves(c.id, consumer)) this.trucks.sendHome(t, this.t);
+      }
+      // A focus with none of our trucks: free one from an unfocused route for it.
+      for (const f of c.focus) {
+        if (mine.some((t) => t.route && t.route.split('>').slice(1).map(Number).includes(f))) continue;
+        if (mine.some((t) => t.orders.length === 0 && t.cargo === null)) continue; // a free one will go
+        if ((load.get(f) ?? 0) >= this.placeCap(f)) continue; // no room there anyway: don't churn
+        const spare = mine.find((t) => t.route && !t.homing && t.cargo === null && !t.route.split('>').slice(1).map(Number).some((x) => c.focus.includes(x)));
+        if (spare) this.trucks.sendHome(spare, this.t);
+      }
+      if (depots.length === 0) continue;
+      const free = mine.filter((t) => t.orders.length === 0 && t.cargo === null && !t.route);
+      for (const truck of free) {
+        let best: { depot: number; producer: number; consumer: number; score: number } | null = null;
+        for (const q of live) {
+          if (q.kind !== 'consumer' || !this.serves(c.id, q.id)) continue;
+          for (const p of live) {
+            if (p.kind !== 'producer' || p.good !== q.good) continue;
+            const busy = Math.max((load.get(p.id) ?? 0) / this.placeCap(p.id), (load.get(q.id) ?? 0) / this.placeCap(q.id));
+            if (busy >= 1) continue;
+            let depot = depots[0];
+            let length = Infinity;
+            for (const d of depots) {
+              const len = this.routeLength(d, p.id, q.id);
+              if (len < length) {
+                length = len;
+                depot = d;
+              }
+            }
+            if (!Number.isFinite(length)) continue;
+            const focused = c.focus.includes(p.id) || c.focus.includes(q.id);
+            const score = ((q.price ?? this.cfg.money.palletPrice) / (length + 4)) * (1 - busy) * (focused ? 10 : 1);
+            if (!best || score > best.score) best = { depot, producer: p.id, consumer: q.id, score };
+          }
+        }
+        if (!best) continue;
+        this.sendOnRoute(truck, best.depot, best.producer, best.consumer);
+        load.set(best.producer, (load.get(best.producer) ?? 0) + 1);
+        load.set(best.consumer, (load.get(best.consumer) ?? 0) + 1);
+      }
+    }
+  }
+
+  /** Put a truck on a route: its orders, and the route it's on. */
+  private sendOnRoute(truck: Truck, depot: number, producer: number, consumer: number) {
+    truck.depot = depot;
+    truck.home = this.town.locations[depot].node;
+    const load = { location: producer, action: 'load' as const };
+    const unload = { location: consumer, action: 'unload' as const };
+    const sign = { location: depot, action: 'signOff' as const };
+    const via = this.cfg.trucks.viaDepot;
+    this.trucks.setOrders(truck, via === 'hub' ? [load, sign, unload, sign] : via === 'loaded' ? [load, sign, unload] : [load, unload], this.t);
+    truck.route = routeKey(depot, producer, consumer);
   }
 
   /** Every route in play, from the trucks' assignments. */
@@ -910,6 +1076,8 @@ export class Game {
       companies: this.companies.map((c) => ({
         ...c,
         shares: [...c.shares],
+        area: [...c.area],
+        focus: [...c.focus],
         presidents: this.presidents(c.id),
         succession: this.succession(c.id),
         dividendPerShare: c.pot / c.shares.length,

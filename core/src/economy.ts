@@ -17,8 +17,10 @@ import type { Location } from './town.js';
 export interface CycleConfig {
   /** Cycle length range in seconds; each location gets its own length and a random phase. */
   cycleSec: [number, number];
-  /** Pallets per cycle, per level: what a producer makes and a consumer wants (the same at the same level). */
+  /** Pallets per cycle, per level, that a producer makes. */
   palletsPerLevel: number;
+  /** A shop wants this share of what a producer makes (0.5 with two shops per producer: supply = demand). */
+  shopShare: number;
   /** Level new and starting locations begin at. */
   startLevel: number;
   /** Highest level. */
@@ -40,12 +42,14 @@ export interface CycleConfig {
 export const DEFAULT_CYCLES: CycleConfig = {
   cycleSec: [45, 45],
   palletsPerLevel: 2,
-  startLevel: 3,
-  maxLevel: 5,
+  shopShare: 0.5,
+  // Businesses stay at one level: they don't grow, shrink or close (growAbove/shrinkBelow out of reach).
+  startLevel: 2,
+  maxLevel: 2,
   carryCycles: 2,
   window: 2,
-  growAbove: 0.75,
-  shrinkBelow: 0.5,
+  growAbove: 2,
+  shrinkBelow: -1,
   closingCycles: 1,
   graceSec: 60,
 };
@@ -87,7 +91,8 @@ export type CycleEvent =
 
 /** Pallets per cycle for a location at its level: the same for producers and consumers. */
 export function cycleRate(s: Pick<LocationState, 'kind' | 'level'>, cfg: CycleConfig): number {
-  return Math.max(1, Math.round(cfg.palletsPerLevel * s.level));
+  const per = s.kind === 'consumer' ? cfg.palletsPerLevel * cfg.shopShare : cfg.palletsPerLevel;
+  return Math.max(1, Math.round(per * s.level));
 }
 
 /** Fresh state for a producer or consumer (a town location, or one that just opened). */

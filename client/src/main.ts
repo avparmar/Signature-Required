@@ -2,9 +2,9 @@
  * The client: a solo game against bots in real time.
  *
  * - The town, trucks and routes are drawn by render.ts; drag to pan, scroll to zoom.
- * - Routes (#33): click a producer and a consumer of the same good (and optionally one of your
- *   depots first) to send a free truck on that route. Click a route line to add a truck, right-click
- *   it to take one off. Esc or right-click on the map clears the selection.
+ * - Companies route their own trucks. A president edits its delivery area from the company panel:
+ *   click (or drag across) blocks to add them, right-click (or right-drag) to take them out, and
+ *   double-click a producer or shop to focus on it. Esc or Done ends editing.
  * - Company panel (#34): treasury, fleet, depots and routes for companies you run; buy trucks and
  *   depots (affordable sites light up on the map with your price).
  * - The share market lives in the company cards: each company's sale (when one is running), its
@@ -92,6 +92,7 @@ renderer.via = session.cfg.trucks.viaDepot;
 renderer.serviceSec = session.cfg.trucks.serviceSec;
 renderer.processSec = session.cfg.trucks.signOffSec;
 renderer.palletPrice = session.cfg.money.palletPrice;
+renderer.levelled = session.cfg.cycles.maxLevel > session.cfg.cycles.startLevel;
 let last = performance.now();
 let lastUi = 0;
 
@@ -111,6 +112,9 @@ const hl: Highlights = {
   siteBase: session.cfg.depots.depotBase,
   maxSubsidy: session.cfg.depots.maxSubsidy,
   flash: new Map(),
+  areaEdit: null,
+  hoverBlock: null,
+  areaHover: null,
 };
 /** Company the player last acted for (route clicks default to it). */
 let activeCompany: number | null = null;
@@ -160,61 +164,79 @@ function updateHint(obs: Observation) {
     hint.textContent = 'Opening round: bid for shares in the company cards along the bottom. The president of a company runs it.';
     return;
   }
-  const picks = hl.picked.map((id) => g.town.locations[id]);
-  const p = picks.find((l) => l.kind === 'producer');
-  const c = picks.find((l) => l.kind === 'consumer');
-  if (p && !c) hint.textContent = `${cap(names(p.good!).source)} picked: now a ${names(p.good!).shop} to sell the ${names(p.good!).product} to.`;
-  else if (c && !p) hint.textContent = `${cap(names(c.good!).shop)} picked: now a ${names(c.good!).source} to supply it.`;
-  else if (picks.length) hint.textContent = 'Factory picked: now a producer and a shop.';
+  if (hl.areaEdit) hint.textContent = `Editing ${coName(hl.areaEdit.company)}'s delivery area.`;
   else if (myCompanies(obs).length === 0) hint.textContent = 'You run no company yet: own the most shares of one to become its president.';
-  else hint.textContent = 'Click a producer and a shop of the same good to send a truck. Right-click a route to take one off.';
+  else hint.textContent = 'Your companies route their own trucks. Buy trucks and choose where they deliver on the tabs atop their cards; click a free factory site to buy it.';
 }
 
-// ------------------------------------------------------------------ routes from clicks
+// ------------------------------------------------------------------ delivery areas
 
-function tryAssign(obs: Observation) {
-  const g = session.game;
-  const picks = hl.picked.map((id) => g.town.locations[id]);
-  const p = picks.find((l) => l.kind === 'producer');
-  const c = picks.find((l) => l.kind === 'consumer');
-  if (!p || !c) return;
-  if (p.good !== c.good) {
-    toast(`A ${names(c.good!).shop} doesn't sell ${names(p.good!).product}.`, 'error');
-    hl.picked = hl.picked.filter((id) => id !== c.id);
-    return;
-  }
-  const pickedDepot = picks.find((l) => l.kind === 'depot');
-  const company = pickedDepot ? obs.depots[pickedDepot.id] : currentCompany(obs);
-  if (company === null || company === undefined) {
-    toast('You need to be president of a company to run trucks.', 'error');
-    hl.picked = [];
-    return;
-  }
-  if (freeTrucks(obs, company) === 0) {
-    toast(`${coName(company)} has no free truck. Buy one in the company panel.`, 'error');
-    return;
-  }
-  const depot = pickedDepot ? pickedDepot.id : bestDepot(obs, company, p, c);
-  if (depot === null) return;
-  session.act({ type: 'assignRoute', depot, producer: p.id, consumer: c.id });
+/** Painting blocks into (or out of) the area being edited: one stroke, from press to release. */
+let paint: { add: boolean } | null = null;
+/** The area before each of the last few strokes (a double-click to focus undoes its two clicks). */
+const before: number[][] = [];
+/** Businesses fixed at one level: no level to show, nothing grows, shrinks or closes. */
+const fixedLevels = () => session.cfg.cycles.maxLevel <= session.cfg.cycles.startLevel;
+/** A share certificate: a gold-edged sheet with a seal. */
+const shareIcon = `<svg class="share-icon" viewBox="0 0 24 20" aria-hidden="true"><rect x="1.5" y="2" width="21" height="15" rx="2" fill="#fff8de" stroke="#b08a1e" stroke-width="1.5"/><rect x="4" y="4.5" width="16" height="10" rx="1" fill="none" stroke="#d9bb5c" stroke-width="1"/><path d="M6.5 8h7M6.5 11h5" stroke="#b08a1e" stroke-width="1.4" stroke-linecap="round"/><circle cx="17" cy="11.5" r="2.6" fill="#d9542c"/><path d="M15.8 13.6l-.8 3.4 2-1 2 1-.8-3.4" fill="#d9542c"/></svg>`;
+/** A little box truck: the cargo box in the company's colour, a cab with a window, speed lines. */
+const truckIcon = (color: string) =>
+  `<svg class="truck-icon" viewBox="0 0 32 20" aria-hidden="true"><g stroke="#23201b" stroke-width="1.4" stroke-linejoin="round"><path d="M1 6.5h3M2 10h3" stroke-linecap="round" opacity="0.5"/><rect x="6" y="2" width="15" height="11.5" rx="1.6" fill="${color}"/><path d="M8.5 9.5h10" stroke="#fff" stroke-width="1.6" stroke-linecap="round" opacity="0.7"/><path d="M21 5.5h5l3.5 4.2v3.8H21z" fill="#fbf9f4"/><path d="M23 7.2h2.6l2 2.5H23z" fill="#9fc4dd" stroke-width="1"/><circle cx="10.5" cy="15.5" r="2.8" fill="#23201b"/><circle cx="25" cy="15.5" r="2.8" fill="#23201b"/></g><circle cx="10.5" cy="15.5" r="1" fill="#fbf9f4"/><circle cx="25" cy="15.5" r="1" fill="#fbf9f4"/></svg>`;
+/** A little map of blocks, some in the company's colour: the delivery-area icon. */
+const areaIcon = (color: string) =>
+  `<svg class="area-icon" viewBox="0 0 24 24" aria-hidden="true"><g stroke="${color}" stroke-width="1.6"><rect x="2" y="2" width="9" height="9" rx="1.5" fill="${hexA(color, 0.3)}"/><rect x="13" y="2" width="9" height="9" rx="1.5" fill="${hexA(color, 0.3)}"/><rect x="2" y="13" width="9" height="9" rx="1.5" fill="${hexA(color, 0.3)}"/><rect x="13" y="13" width="9" height="9" rx="1.5" fill="none" stroke-dasharray="2.5 2"/></g></svg>`;
+const hexA = (hex: string, a: number) => {
+  const n = parseInt(hex.slice(1), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+};
+/** Holding Space while editing an area: drag moves the map instead of painting. */
+let spaceHeld = false;
+
+function startAreaEdit(company: number) {
+  const obs = session.obs();
+  hl.areaEdit = { company, blocks: new Set(obs.companies[company].area) };
+  hl.buyFor = null;
   activeCompany = company;
-  hl.picked = [];
+  showAreaBar();
 }
 
-/** The company's factory that makes the shortest trip from producer, via it, to the shop. */
-function bestDepot(obs: Observation, company: number, producer: Location, shop: Location): number | null {
-  let best: number | null = null;
-  let bestLen = Infinity;
-  for (const [site, owner] of Object.entries(obs.depots)) {
-    if (owner !== company) continue;
-    const d = siteReach(Number(site));
-    const len = d[producer.node] + d[shop.node];
-    if (len < bestLen) {
-      bestLen = len;
-      best = Number(site);
-    }
-  }
-  return best;
+function endAreaEdit() {
+  hl.areaEdit = null;
+  spaceHeld = false;
+  $('map').classList.remove('panning');
+  hl.hoverBlock = null;
+  paint = null;
+  $('area-bar').hidden = true;
+}
+
+function commitArea() {
+  if (!hl.areaEdit) return;
+  session.act({ type: 'setArea', company: hl.areaEdit.company, blocks: [...hl.areaEdit.blocks] });
+}
+
+function paintAt(sx: number, sy: number) {
+  if (!hl.areaEdit || !paint) return;
+  const b = renderer.blockAt(sx, sy);
+  if (b === null) return;
+  if (paint.add) hl.areaEdit.blocks.add(b);
+  else hl.areaEdit.blocks.delete(b);
+}
+
+/** The bar over the map while editing: whose area, how to edit it, Clear and Done. */
+function showAreaBar() {
+  const bar = $('area-bar');
+  if (!hl.areaEdit) return;
+  const c = hl.areaEdit.company;
+  bar.innerHTML = `<span class="sw" style="background:${companyColor(c)}"></span><b>${coName(c)}: delivery area</b>
+    <button id="area-clear">Clear</button><button id="area-done" class="go">Done</button>
+    <div class="area-hint">Click or drag over blocks to add them; right-click or right-drag to take them out. Double-click a producer or shop to focus on it (up to ${session.cfg.maxFocus}). No area: it delivers anywhere. <span class="gold">Gold arrows</span> point to the factory sites that deliveries there make cheaper. Hold Space (or the middle button) and drag to move the map.</div>`;
+  bar.hidden = false;
+  $('area-clear').onclick = () => {
+    if (!hl.areaEdit) return;
+    hl.areaEdit.blocks.clear();
+    commitArea();
+  };
+  $('area-done').onclick = endAreaEdit;
 }
 
 const reachCache = new Map<number, Float64Array>();
@@ -231,17 +253,8 @@ const freeTrucks = (obs: Observation, company: number) =>
 
 function click(sx: number, sy: number, right: boolean) {
   const obs = session.obs();
-  const g = session.game;
   const l = renderer.locationAt(sx, sy);
-  const route = l ? null : renderer.routeAt(sx, sy, obs.routes);
   if (right) {
-    if (route) {
-      if (!obs.companies[route.company].presidents.includes(obs.me)) return toast(`That route belongs to ${coName(route.company)}.`, 'error');
-      session.act({ type: 'unassignRoute', depot: route.depot, producer: route.producer, consumer: route.consumer });
-      activeCompany = route.company;
-      return;
-    }
-    hl.picked = [];
     hl.buyFor = null;
     return;
   }
@@ -253,27 +266,10 @@ function click(sx: number, sy: number, right: boolean) {
     } else toast('Click a free (dashed) factory site, or Esc to cancel.', 'error');
     return;
   }
-  if (obs.phase === 'opening' && l && l.kind !== 'lot') return toast('Routes open when the clock starts, after the opening sales.', 'info');
-  if (obs.phase !== 'running') return;
-  if (route && !l) {
-    if (!obs.companies[route.company].presidents.includes(obs.me)) return toast(`That route belongs to ${coName(route.company)}.`, 'error');
-    if (freeTrucks(obs, route.company) === 0) return toast('No free truck: buy one in the company panel.', 'error');
-    session.act({ type: 'assignRoute', depot: route.depot, producer: route.producer, consumer: route.consumer });
-    activeCompany = route.company;
-    return;
-  }
-  if (!l) {
-    hl.picked = [];
-    return;
-  }
-  if (l.kind === 'depot') {
-    const owner = obs.depots[l.id];
-    if (owner === undefined) return toast('An unclaimed factory site. Buy it from your company\'s card (Pick on map…).', 'info');
-    if (!obs.companies[owner].presidents.includes(obs.me)) return toast(`That factory belongs to ${coName(owner)}.`, 'error');
-    hl.picked = hl.picked.filter((id) => g.town.locations[id].kind !== 'depot');
-  } else hl.picked = hl.picked.filter((id) => g.town.locations[id].kind !== l.kind);
-  hl.picked.push(l.id);
-  tryAssign(obs);
+  if (l?.kind === 'depot' && obs.depots[l.id] === undefined) {
+    if (myCompanies(obs).length) sitePop = sitePop === l.id ? null : l.id;
+    else toast('An unclaimed factory site. A company you run can buy it.', 'info');
+  } else sitePop = null;
 }
 
 // ------------------------------------------------------------------ canvas events
@@ -281,11 +277,30 @@ function click(sx: number, sy: number, right: boolean) {
 const canvas = $<HTMLCanvasElement>('map');
 let drag: { x: number; y: number; moved: boolean } | null = null;
 canvas.addEventListener('mousedown', (e) => {
+  // The middle button always moves the map, and so does any drag with Space held while editing.
+  if (e.button === 1 || (hl.areaEdit && spaceHeld && e.button === 0)) {
+    e.preventDefault();
+    drag = { x: e.clientX, y: e.clientY, moved: true };
+    return;
+  }
+  if (hl.areaEdit && (e.button === 0 || e.button === 2)) {
+    // Editing an area: press and drag paints blocks in (left) or out (right).
+    before.push([...hl.areaEdit.blocks]);
+    if (before.length > 3) before.shift();
+    paint = { add: e.button === 0 };
+    const box = canvas.getBoundingClientRect();
+    paintAt(e.clientX - box.left, e.clientY - box.top);
+    return;
+  }
   if (e.button === 0) drag = { x: e.clientX, y: e.clientY, moved: false };
 });
 window.addEventListener('mousemove', (e) => {
   const box = canvas.getBoundingClientRect();
   mouse = { x: e.clientX - box.left, y: e.clientY - box.top, inside: e.target === canvas };
+  if (hl.areaEdit) {
+    hl.hoverBlock = mouse.inside ? renderer.blockAt(mouse.x, mouse.y) : null;
+    paintAt(mouse.x, mouse.y);
+  }
   if (drag) {
     const dx = e.clientX - drag.x;
     const dy = e.clientY - drag.y;
@@ -299,6 +314,15 @@ window.addEventListener('mousemove', (e) => {
   }
 });
 window.addEventListener('mouseup', (e) => {
+  if (paint) {
+    paint = null;
+    commitArea();
+    return;
+  }
+  if (drag && (e.button === 1 || hl.areaEdit)) {
+    drag = null; // a pan, not a click
+    return;
+  }
   if (e.button !== 0 || !drag) return;
   const wasDrag = drag.moved;
   drag = null;
@@ -309,6 +333,7 @@ window.addEventListener('mouseup', (e) => {
 });
 canvas.addEventListener('contextmenu', (e) => {
   e.preventDefault();
+  if (hl.areaEdit) return; // painting handles it
   const box = canvas.getBoundingClientRect();
   click(e.clientX - box.left, e.clientY - box.top, true);
 });
@@ -322,7 +347,20 @@ canvas.addEventListener(
   },
   { passive: false },
 );
-canvas.addEventListener('dblclick', () => {
+canvas.addEventListener('dblclick', (e) => {
+  if (hl.areaEdit) {
+    // Focus on (or stop focusing on) a producer or shop; the double-click's two clicks don't count.
+    const box = canvas.getBoundingClientRect();
+    const l = renderer.locationAt(e.clientX - box.left, e.clientY - box.top);
+    if (before.length >= 2) {
+      hl.areaEdit.blocks = new Set(before[before.length - 2]);
+      commitArea();
+    }
+    if (!l || (l.kind !== 'producer' && l.kind !== 'consumer')) return;
+    const c = session.obs().companies[hl.areaEdit.company];
+    session.act({ type: 'setFocus', company: c.id, location: l.id, on: !c.focus.includes(l.id) });
+    return;
+  }
   renderer.fit();
   viewMoved = false;
 });
@@ -346,6 +384,7 @@ function tooltip(obs: Observation) {
     tip.hidden = true;
     hl.hover = null;
     hl.hoverRoute = null;
+    hl.areaHover = null;
     return;
   }
   const g = session.game;
@@ -353,6 +392,15 @@ function tooltip(obs: Observation) {
   const route = l ? null : renderer.routeAt(mouse.x, mouse.y, obs.routes);
   hl.hover = l && l.kind !== 'lot' ? l.id : null;
   hl.hoverRoute = route?.key ?? null;
+  // A block in one of your companies' delivery areas: its subsidy arrows (the company you're looking at first).
+  hl.areaHover = null;
+  if (!hl.areaEdit && !route) {
+    const b = renderer.blockAt(mouse.x, mouse.y);
+    const cur = currentCompany(obs);
+    const mine = myCompanies(obs).sort((a, c) => Number(c === cur) - Number(a === cur));
+    const co = b === null ? undefined : mine.find((c) => obs.companies[c].area.includes(b));
+    if (co !== undefined) hl.areaHover = { company: co, block: b! };
+  }
   let html = '';
   // A free site's card goes in a corner of the map, away from the site, so it doesn't hide the zone.
   let docked = false;
@@ -361,10 +409,10 @@ function tooltip(obs: Observation) {
     if (s) {
       const n = names(s.good);
       const recent = s.history.length ? Math.round((100 * s.history.reduce((a, b) => a + b, 0)) / s.history.length) : null;
-      // At a glance: level, this cycle's progress, and when the next cycle comes.
+      // At a glance: level (when businesses have levels), this cycle's progress, and when the next cycle comes.
       const prod = s.kind === 'producer';
       html = `<b>${cap(prod ? n.source : n.shop)} ${at(l.id)}</b>`;
-      html += `<div class="tip-stats"><div><span>Level</span><b>${s.level}/${g.cfg.cycles.maxLevel}</b></div><div><span>${prod ? 'Shipped / made' : 'Received / needed'}</span><b>${s.served}/${s.cycleAmount}</b></div><div><span>Next cycle</span><b>${fmtClock(Math.max(0, s.nextCycleAt - obs.t))}</b></div></div>`;
+      html += `<div class="tip-stats">${fixedLevels() ? '' : `<div><span>Level</span><b>${s.level}/${g.cfg.cycles.maxLevel}</b></div>`}<div><span>${prod ? 'Shipped / made' : 'Received / needed'}</span><b>${s.served}/${s.cycleAmount}</b></div><div><span>Next cycle</span><b>${fmtClock(Math.max(0, s.nextCycleAt - obs.t))}</b></div></div>`;
       html += prod
         ? `<div class="muted">${s.stock} load${s.stock === 1 ? '' : 's'} of ${n.raw} waiting · a factory makes it into ${n.product}</div>`
         : `<div class="muted">Pays ${cents(s.price)} a pallet${s.price > g.cfg.money.palletPrice ? ' (premium)' : ''}</div>`;
@@ -400,7 +448,8 @@ function tooltip(obs: Observation) {
     html = `<b>${coName(route.company)}</b> · ${n.raw} ${at(route.producer)} → factory ${at(route.depot)} → ${n.product} ${at(route.consumer)} · ${route.trucks} truck${route.trucks === 1 ? '' : 's'}`;
     if (obs.companies[route.company].presidents.includes(obs.me)) html += '<div class="muted">Click to add a truck · right-click to take one off</div>';
   }
-  if (!html) {
+  // While drawing an area, only a free site's card (in a corner) shows: the rest would cover the map.
+  if (!html || (hl.areaEdit && !docked)) {
     tip.hidden = true;
     return;
   }
@@ -434,7 +483,7 @@ function refreshPanels(obs: Observation) {
   $('clock').textContent = obs.phase === 'opening' ? 'Opening' : fmtClock(obs.timeLeft);
   $('phase').textContent =
     obs.phase === 'opening'
-      ? 'Opening sales: one share of each company, before the clock starts'
+      ? 'Opening offerings: one share of each company, before the clock starts'
       : obs.phase === 'ended'
         ? 'Game over'
         : `Next payout in ${fmtClock(obs.nextPayoutAt - obs.t)}`;
@@ -523,7 +572,7 @@ function card(id: number): Card {
   const info = document.createElement('div');
   const form = document.createElement('div');
   form.className = 'broker';
-  form.innerHTML = `<div class="quick"><button type="button" class="sell-now"></button><button type="button" class="buy-now"></button></div><div class="slide"><span class="lo"></span><input type="range" min="1" max="2" step="1" aria-label="Price for your order" /><span class="hi"></span></div><div class="order"><b class="px"></b><button type="button" class="place-buy"></button><button type="button" class="place-sell"></button></div>`;
+  form.innerHTML = `<div class="quick"><button type="button" class="sell-now"></button><button type="button" class="buy-now"></button></div><div class="slide"><span class="lo"></span><input type="range" min="1" max="2" step="1" aria-label="Price for your order" /><span class="hi"></span></div><div class="order"><b class="px"></b><button type="button" class="place-buy"></button><button type="button" class="place-sell"></button></div><button type="button" class="offer" hidden></button>`;
   root.append(info, form);
   const q = <T extends HTMLElement>(sel: string) => form.querySelector<T>(sel)!;
   k = { slot, root, info, form, quick: q('.quick'), buyNow: q('.buy-now'), sellNow: q('.sell-now'), slider: q('input'), price: q('.px'), lo: q('.lo'), hi: q('.hi'), placeBuy: q('.place-buy'), placeSell: q('.place-sell'), key: '' };
@@ -561,7 +610,6 @@ function refreshCompanies(obs: Observation) {
     if (box.children[i] !== k.slot) box.insertBefore(k.slot, box.children[i] ?? null);
     const trucks = obs.trucks.filter((t) => t.company === c.id).length;
     const depots = Object.values(obs.depots).filter((o) => o === c.id).length;
-    const routes = obs.routes.filter((r) => r.company === c.id).length;
     // One chip per shareholder with how many shares they hold (you first, presidents crowned),
     // then the shares the company owns itself.
     const holders = new Map<number, number>();
@@ -574,7 +622,7 @@ function refreshCompanies(obs: Observation) {
     const inLine = [...c.succession.flatMap((pl) => Array<number>(holders.get(pl) ?? 0).fill(pl)), ...c.shares.filter((sh) => sh === null)];
     const boxes = inLine
       .map((pl) => {
-        if (pl === null) return '<span class="share empty" title="Owned by the company: sold in sales"></span>';
+        if (pl === null) return '<span class="share empty" title="Owned by the company: sold in share offerings"></span>';
         const pres = c.presidents.includes(pl);
         const n = holders.get(pl)!;
         const you = pl === obs.me && !watching;
@@ -587,62 +635,81 @@ function refreshCompanies(obs: Observation) {
     const who = (p: number) => (p === obs.me && !watching ? 'you' : seatShort(p));
     const pinned = pinnedCards.has(c.id);
     const pinBtn = `<button class="pin${pinned ? ' on' : ''}" data-pin="${c.id}" title="${pinned ? 'Unpin: fold this card back down' : 'Pin this card open'}">${pinned ? 'Unpin' : 'Pin'}</button>`;
-    // Open, the card has a top row (Pin and treasury) so the name gets its own line, with its ticker.
-    let html = `<div class="row head-open"><span>${pinBtn}</span><span class="treasury-box" title="The company's treasury: what it has to spend on trucks and factories, and to buy shares back"><span class="lbl">Treasury</span> <b>${money(c.treasury)}</b></span></div>`;
-    html += `<div class="row head"><span>${sw(c.id)}<b>${coName(c.id)}</b> <span class="ticker">${COMPANY_NAMES[companySlot(c.id)][1]}</span></span><span class="treasury" title="Treasury">${money(c.treasury)}</span></div>`;
-    let saleBtn = '';
-    if (acting && obs.phase === 'running' && own && !sale && c.presidents.length) {
-      const cooldown = obs.saleCooldownUntil[c.id] - obs.elapsed;
-      saleBtn = `<button class="mini" data-startsale="${c.id}" ${cooldown > 0 ? 'disabled' : ''} title="Put one of the company's own shares up for sale. The best bid at the end gets it, if it's at least ${money(obs.minPrice[c.id])}; the money goes to the company.">${cooldown > 0 ? `Sale in ${Math.ceil(cooldown)}s` : 'Start a sale'}</button>`;
+    // Open, the card has a top row (Pin) so the name gets its own line, with its ticker.
+    let html = `<div class="row head-open"><span>${pinBtn}</span></div>`;
+    // Offering one of the company's own shares: at the bottom of the card, with the trading. Any
+    // shareholder can, while the company still owns a share; after one, it waits a while.
+    const offerBtn = k.form.querySelector<HTMLButtonElement>('.offer')!;
+    const canOffer = acting && obs.phase === 'running' && own && !sale && c.presidents.length > 0 && c.shares.includes(null);
+    offerBtn.hidden = !canOffer;
+    if (canOffer) {
+      const cooldown = Math.max(0, obs.saleCooldownUntil[c.id] - obs.elapsed);
+      const wait = session.cfg.auctions.saleCooldownSec;
+      const html = `${shareIcon}<span class="txt"><b>${cooldown > 0 ? `Offer again in ${Math.ceil(cooldown)}s` : 'Offer company share'}</b></span>`;
+      if (offerBtn.dataset.html !== html) (offerBtn.innerHTML = html), (offerBtn.dataset.html = html);
+      offerBtn.dataset.startsale = String(c.id);
+      offerBtn.disabled = cooldown > 0;
+      offerBtn.style.setProperty('--wait', String(wait > 0 ? cooldown / wait : 0));
+      offerBtn.title = `Offer one of the company's own shares. Everyone has ${session.cfg.auctions.clockSec} seconds to bid; the best bid gets it if it's at least ${money(obs.minPrice[c.id])}, and the money goes to the company.`;
     }
-    html += `<div class="chips">${chips}${saleBtn}</div>`;
-    html += `<div class="row small quick-stats"><span title="Company value: trucks and factories at what they cost, plus cash">Value <b>${money(obs.value[c.id])}</b></span><span title="Next dividend per share, so far">Div <b>${money(c.dividendPerShare)}</b></span><span title="${trucks} trucks, ${depots} factor${depots === 1 ? 'y' : 'ies'}">🚚 <b>${trucks}</b> 🏭 <b>${depots}</b></span></div>`;
+    // Name and shares on the left; the company's money in a box on the right: its treasury, the
+    // dividend per share so far, and its factories.
+    const coBox = `<div class="co-box"><b class="tr" title="The company's treasury: what it has to spend on trucks and factories, and to buy shares back">${money(c.treasury)}</b><span class="stats"><span title="Next dividend per share, so far">div <b>${money(c.dividendPerShare)}</b></span><span title="${depots} factor${depots === 1 ? 'y' : 'ies'}">🏭 <b>${depots}</b></span></span></div>`;
+    html += `<div class="top"><div class="left"><div class="row head"><span title="${coName(c.id)}">${sw(c.id)}<b class="nm">${coName(c.id)}</b><b class="tk">${COMPANY_NAMES[companySlot(c.id)][1]}</b> <span class="ticker">${COMPANY_NAMES[companySlot(c.id)][1]}</span></span></div><div class="chips">${chips}</div></div>${coBox}</div>`;
     // Folded, the card stops here (plus a line for a running sale); hovering or pinning shows the rest.
     if (sale) {
       const best = book.bid;
-      html += `<div class="row small sale-line fold-only"><b>${sale.opening ? 'Opening sale' : 'Sale'} ${Math.ceil(sale.timeLeft)}s</b><span>${best ? `highest bid ${money(best.price)}${best.player === obs.me && !watching ? ' (you)' : ''}` : 'no bids yet'}</span></div>`;
+      // Folded, it takes the Buy button's place in the bottom row: time left and the top bid (the
+      // gold card and its timer bar say it's an offering).
+      html += `<div class="sale-line fold-only" title="${sale.opening ? 'Opening offering' : 'Share offering'}: ${Math.ceil(sale.timeLeft)}s left"><b>${Math.ceil(sale.timeLeft)}s</b>${best ? `<span title="Top bid: ${best.player === obs.me && !watching ? 'yours' : seatName(best.player)}"><b>${money(best.price)}</b> ${seatIcon(best.player)}</span>` : '<span>no bids</span>'}</div>`;
     }
     // Folded: the standing orders at a glance, laid out like the Sell for / Buy for buttons (buy order
     // on the left, sell order on the right). Watching the bots, there are no buttons, so all of them;
     // playing, the buttons show everyone else's, so just yours. (Opened, they're listed in full below.)
-    if (obs.phase === 'running' && !sale) {
-      const shown = (o: { player: number } | null) => o !== null && (!acting || o.player === obs.me);
+    // Playing, the Buy/Sell buttons carry the other side's icon, so this line is only for watching.
+    if (obs.phase === 'running' && !sale && !acting) {
+      const shown = (o: { player: number } | null) => o !== null;
       const bid = shown(book.bid) ? book.bid : null;
       const ask = shown(book.ask) ? book.ask : null;
       if (bid || ask) {
         const cell = (label: string, o: { player: number; price: number } | null, tip: string) =>
-          o ? `<span title="${tip}">${label} <b>${money(o.price)}</b><span class="from">${o.player === obs.me && !watching ? 'you' : seatIcon(o.player)}</span></span>` : '<span></span>';
+          o ? `<span title="${tip}">${label} <b>${money(o.price)}</b>${o.player === obs.me && !watching ? '' : `<span class="from">${seatIcon(o.player)}</span>`}</span>` : '<span></span>';
         const mine = acting ? 'Your ' : 'Standing ';
         const parts = [cell('Buying', bid, `${mine}buy order`), cell('Selling', ask, `${mine}sell order`)];
         html += `<div class="row small orders-line fold-only">${parts.join('')}</div>`;
       }
     }
     html += '<div class="more">';
-    html += `<div class="row small muted"><span>${routes} route${routes === 1 ? '' : 's'}</span><span title="Dividend per share: the last one paid (the next one so far is above)">last div ${lastDividend.has(c.id) ? money(lastDividend.get(c.id)!) : '—'}</span></div>`;
+    // Opened: its income lately, and its last dividend (the next one so far is in the box).
+    const income = obs.phase === 'running' ? companyRate(c.id, obs.t) : null;
+    html += `<div class="row small muted"><span title="What its deliveries earned per minute over the last ${RATE_WINDOW / 60} minutes (half to the treasury, half to dividends)">Income ${income === null ? '—' : `<b>${money(income)}</b>/min`}</span><span title="Dividend per share: the last one paid">last div ${lastDividend.has(c.id) ? money(lastDividend.get(c.id)!) : '—'}</span></div>`;
     // A sale running: the share goes to the best bid at the end, if it's at least the minimum.
     if (sale) {
       const best = book.bid;
       const enough = best !== null && best.price >= obs.minPrice[c.id];
       const last = sale.age + sale.timeLeft >= session.cfg.auctions.maxSec - 0.05 && sale.timeLeft < session.cfg.auctions.softCloseSec;
-      html += `<div class="sale"><div class="row"><b title="One of the company's own shares, to the highest bid at the end">${sale.opening ? 'Opening sale' : 'Share sale'}</b><b>${Math.ceil(sale.timeLeft)}s</b></div>`;
-      html += `<div class="row small"><span>Highest bid</span><span>${best ? `${money(best.price)} (${who(best.player)})` : 'none yet'}</span></div>`;
-      if (obs.minPrice[c.id] > 0) html += `<div class="row small muted"><span>Sells for at least</span><span>${money(obs.minPrice[c.id])}${best && !enough ? ' · not met yet' : ''}</span></div>`;
-      if (best?.player === obs.me && !watching) html += `<div class="good small">${enough ? 'You’re winning it.' : 'Your bid is below the minimum.'}</div>`;
-      if (sale.passed.length) html += `<div class="row small muted"><span>Passed</span><span>${sale.passed.map((pl) => (pl === obs.me && !watching ? 'you' : seatIcon(pl))).join(' ')}</span></div>`;
+      html += `<div class="sale"><div class="row"><b title="One of the company's own shares, to the highest bid at the end">${sale.opening ? 'Opening offering' : 'Share offering'}</b><b>${Math.ceil(sale.timeLeft)}s</b></div>`;
+      // The top bid and who's passed, on one line (the minimum is where the slider starts).
+      const passed = sale.passed.length ? `<span class="muted" title="Passed: ${sale.passed.map((pl) => (pl === obs.me && !watching ? 'you' : seatName(pl))).join(', ')}">passed ${sale.passed.map((pl) => seatIcon(pl)).join('')}</span>` : '';
+      html += `<div class="row small"><span>${best ? `<span title="Highest bid: ${best.player === obs.me && !watching ? 'yours' : seatName(best.player)}">top bid <b>${money(best.price)}</b> ${seatIcon(best.player)}</span>` : '<span class="muted">no bids</span>'}</span>${passed}</div>`;
+      if (best?.player === obs.me && !watching) html += `<div class="good small">${enough ? 'You’re winning it.' : `Your bid is below the minimum (${money(obs.minPrice[c.id])}).`}</div>`;
       if (last) html += `<div class="muted small">Final seconds: bids no longer add time.</div>`;
       html += `</div>`;
     }
     // The market: standing orders (yours can be withdrawn), the company's buy-back price, and starting a sale.
     if (obs.phase === 'running') {
       const rows: string[] = [];
+      // Playing, only your own orders are listed (to withdraw them): the Buy/Sell buttons already show
+      // everyone else's. Watching, all of them.
       const order = (side: 'bid' | 'ask', o: { player: number; price: number }) => {
         const yours = o.player === obs.me && !watching;
-        return `<div class="row small"><span>${side === 'bid' ? 'Buying' : 'Selling'}: ${money(o.price)} (${who(o.player)})</span>${acting && yours ? `<button class="mini" data-cancel="${c.id}:${side}">Withdraw</button>` : ''}</div>`;
+        if (acting && !yours) return;
+        rows.push(`<div class="row small"><span>${yours ? `Your ${side === 'bid' ? 'buy' : 'sell'} order: ${money(o.price)}` : `${side === 'bid' ? 'Buying' : 'Selling'}: ${money(o.price)} (${who(o.player)})`}</span>${acting && yours ? `<button class="mini" data-cancel="${c.id}:${side}">Withdraw</button>` : ''}</div>`);
       };
-      if (book.bid && !sale) rows.push(order('bid', book.bid));
-      if (book.ask) rows.push(order('ask', book.ask));
+      if (book.bid && !sale) order('bid', book.bid);
+      if (book.ask) order('ask', book.ask);
       const cb = obs.companyBid[c.id];
-      if (cb !== null) rows.push(`<div class="row small"><span title="Half the company value per share, while its cash covers that">Company buys back at ${money(cb)}</span></div>`);
+      if (cb !== null) rows.push(`<div class="row small"><span title="Half its value per share (it's worth ${money(obs.value[c.id])}: trucks and factories at cost, plus cash), while its cash covers that">Company buys back at ${money(cb)}</span></div>`);
       html += rows.join('');
     }
     html += '</div>';
@@ -651,6 +718,21 @@ function refreshCompanies(obs: Observation) {
       k.info.dataset.html = html;
     }
     k.root.classList.toggle('selling', !!sale);
+    // A sale's clock: a bar along the card's top that shortens as time runs out (and grows back when a late bid extends it).
+    let bar = k.root.querySelector<HTMLElement>(':scope > .sale-bar');
+    if (sale && !bar) {
+      bar = document.createElement('div');
+      bar.className = 'sale-bar';
+      k.root.append(bar);
+    }
+    if (bar) {
+      if (!sale) bar.remove();
+      else {
+        const full = sale.opening ? session.game.cfg.auctions.openingClockSec : session.game.cfg.auctions.clockSec;
+        bar.style.width = `${Math.max(0, Math.min(1, sale.timeLeft / full)) * 100}%`;
+        bar.classList.toggle('late', sale.timeLeft <= 5);
+      }
+    }
     k.root.classList.toggle('yours', c.presidents.includes(obs.me) && !watching);
     // Open: pinned, or the opening round's company being sold (nothing else is happening then).
     k.root.classList.toggle('pinned', pinned || (sale?.opening === true && acting));
@@ -672,7 +754,9 @@ function refreshCompanies(obs: Observation) {
     // Buttons only for what you can do; otherwise a plain note of the price (or that there's none).
     const canBuy = otherAsk !== null && free >= otherAsk;
     const seller = book.ask && book.ask.player !== obs.me ? seatIcon(book.ask.player) : '';
-    k.buyNow.innerHTML = otherAsk === null ? 'Nobody selling' : canBuy ? `Buy for <b>${money(otherAsk)}</b> <span class="from">${seller}</span>` : `${seller} sells for <b>${money(otherAsk)}</b>`;
+    // Nobody selling: the space stays, blank.
+    k.buyNow.innerHTML = otherAsk === null ? '' : `Buy <b>${money(otherAsk)}</b> <span class="from">${seller}</span>`;
+    k.buyNow.classList.toggle('blank', otherAsk === null);
     k.buyNow.disabled = !canBuy;
     k.buyNow.classList.toggle('note', !canBuy);
     k.buyNow.title = otherAsk === null ? 'Nobody is selling a share right now' : !canBuy ? 'Not enough cash to buy it' : `Buy ${seatName(book.ask!.player)}'s share at once`;
@@ -683,7 +767,8 @@ function refreshCompanies(obs: Observation) {
     // Only for your own shares: what someone would pay is no business of yours until you have one to sell.
     k.sellNow.classList.toggle('empty', mine === 0);
     const buyer = toCompany ? 'co.' : book.bid ? seatIcon(book.bid.player) : '';
-    k.sellNow.innerHTML = sellAt === null ? 'Nobody buying' : `Sell for <b>${money(sellAt)}</b> <span class="from">${buyer}</span>`;
+    k.sellNow.innerHTML = sellAt === null ? '' : `Sell <b>${money(sellAt)}</b> <span class="from">${buyer}</span>`;
+    k.sellNow.classList.toggle('blank', sellAt === null);
     k.sellNow.disabled = !canSell;
     k.sellNow.classList.toggle('note', !canSell);
     k.sellNow.title = sellAt === null ? 'Nobody is buying right now' : toCompany ? 'Sell one of your shares back to the company at once' : `Sell one of your shares to ${seatName(book.bid!.player)} at once`;
@@ -712,7 +797,7 @@ function refreshCompanies(obs: Observation) {
     // Place a buy order at that price (in a sale, that's your bid), or a sell order for one of your shares.
     k.placeBuy.textContent = myBid ? 'Raise buy' : sale ? 'Bid' : 'Place buy';
     k.placeBuy.disabled = v < low || (otherAsk !== null && v >= otherAsk) || v - myBid > free;
-    k.placeBuy.title = v - myBid > free ? 'Not enough cash' : `Offer ${money(v)} for a share${sale ? ' in this sale' : ''}; it holds that cash until it's filled, beaten or withdrawn`;
+    k.placeBuy.title = v - myBid > free ? 'Not enough cash' : `Offer ${money(v)} for a share${sale ? ' in this offering' : ''}; it holds that cash until it's filled, beaten or withdrawn`;
     k.placeSell.textContent = book.ask?.player === obs.me ? 'Lower sell' : 'Place sell';
     k.placeSell.hidden = false;
     k.placeSell.dataset.mode = sale ? 'pass' : 'ask';
@@ -724,14 +809,142 @@ function refreshCompanies(obs: Observation) {
       const passed = sale.passed.includes(obs.me);
       k.placeSell.textContent = passed ? 'Passed' : 'Pass';
       k.placeSell.disabled = passed || book.bid?.player === obs.me;
-      k.placeSell.title = book.bid?.player === obs.me ? "You're the highest bidder" : 'Done bidding (until someone bids again). Once everyone but the highest bidder has passed, the sale ends at once.';
+      k.placeSell.title = book.bid?.player === obs.me ? "You're the highest bidder" : 'Done bidding (until someone bids again). Once everyone but the highest bidder has passed, the offering ends at once.';
     }
   });
 }
 
+/** What a company's next truck costs, and whether it has room and money for it. */
+function truckOffer(obs: Observation, id: number) {
+  const g = session.game;
+  const trucks = obs.trucks.filter((t) => t.company === id).length;
+  const sites = Object.entries(obs.depots).filter(([, o]) => o === id).map(([site]) => Number(site));
+  const limit = sites.length * g.cfg.depots.capacity;
+  const price = g.cfg.depots.truckPrice + g.cfg.depots.truckPriceStep * trucks;
+  return { trucks, limit, price, home: sites[0] as number | undefined, full: trucks >= limit, afford: obs.companies[id].treasury >= price };
+}
+
+/**
+ * Tabs atop the cards: the trucks (buy one, on companies you run), then edit its delivery area
+ * ("🛻 3/8 $12", green when it has the room and the money).
+ */
+function refreshCardTabs(obs: Observation, mine: number[]) {
+  for (const [id, k] of cards) {
+    let tabs = k.root.querySelector<HTMLElement>('.co-tabs');
+    if (obs.phase !== 'running') {
+      tabs?.remove();
+      continue;
+    }
+    const own = mine.includes(id);
+    if (!tabs) {
+      tabs = document.createElement('div');
+      tabs.className = 'co-tabs';
+      tabs.innerHTML = '<button class="co-tab truck"></button><button class="co-tab area"></button>';
+      const [truck, area] = [...tabs.children] as HTMLButtonElement[];
+      // On press (the cards can re-render between press and release).
+      area.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        e.stopPropagation();
+        if (hl.areaEdit?.company === id) endAreaEdit();
+        else startAreaEdit(id);
+      });
+      truck.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0 || !truck.classList.contains('can')) return;
+        e.stopPropagation();
+        const o = truckOffer(session.obs(), id);
+        if (o.home === undefined) return;
+        session.act({ type: 'buyTruck', company: id, depot: o.home });
+        activeCompany = id;
+      });
+      k.root.prepend(tabs);
+    }
+    tabs.style.setProperty('--co', companyColor(id));
+    const [truck, area] = [...tabs.children] as HTMLButtonElement[];
+    // The area tab: only on companies you run.
+    area.hidden = !own;
+    const editing = hl.areaEdit?.company === id;
+    const areaHtml = `${areaIcon(companyColor(id))}${editing ? 'Done' : '<span class="long">Delivery area</span><span class="short">Area</span>'}`;
+    if (area.dataset.html !== areaHtml) (area.innerHTML = areaHtml), (area.dataset.html = areaHtml);
+    area.classList.toggle('on', editing);
+    area.title = editing ? 'Finish editing the delivery area' : 'Choose which blocks it delivers to';
+    // The truck tab: on every card, its fleet (trucks/limit). On yours, the next truck's price too,
+    // and the whole tab turns into a green button when it has the room and the money.
+    const o = truckOffer(obs, id);
+    const can = own && !o.full && o.afford && o.home !== undefined;
+    const pill = !own ? '' : `<span class="px">${o.full ? 'Full' : money(o.price)}</span>`;
+    const truckHtml = `${truckIcon(companyColor(id))}<span class="count">${o.trucks}/${o.limit}</span>${pill}`;
+    if (truck.dataset.html !== truckHtml) (truck.innerHTML = truckHtml), (truck.dataset.html = truckHtml);
+    truck.classList.toggle('own', own);
+    truck.classList.toggle('can', can);
+    truck.setAttribute('aria-disabled', String(!can));
+    const cap = session.game.cfg.depots.capacity;
+    truck.title = !own
+      ? `${o.trucks} trucks, room for ${o.limit} (each factory adds ${cap})`
+      : o.full
+        ? `Fleet full: ${o.trucks}/${o.limit} trucks. Each factory adds ${cap}: click a free factory site on the map to buy one.`
+        : !o.afford
+          ? `Another truck costs ${money(o.price)}, and the treasury has ${money(obs.companies[id].treasury)} (${o.trucks}/${o.limit} trucks)`
+          : `Buy another truck for ${money(o.price)} (${o.trucks}/${o.limit} trucks)`;
+  }
+}
+
+/** The free factory site you clicked, with a buy button for each company you run. */
+let sitePop: number | null = null;
+
+function refreshSitePop(obs: Observation) {
+  const pop = $('site-pop');
+  const g = session.game;
+  if (sitePop !== null && (obs.depots[sitePop] !== undefined || obs.phase !== 'running')) sitePop = null;
+  if (sitePop === null) {
+    pop.hidden = true;
+    return;
+  }
+  const site = sitePop;
+  const mine = myCompanies(obs);
+  const dc = g.cfg.depots;
+  let html = `<div class="title"><b>Factory site ${at(site)}</b><button data-popclose title="Close">✕</button></div>`;
+  for (const c of mine) {
+    const price = obs.depotPrices[site]?.[c] ?? dc.depotBase;
+    const can = obs.companies[c].treasury >= price;
+    html += `<button class="buy${can ? ' can' : ''}" data-popbuy="${c}" ${can ? '' : 'disabled'} title="${can ? `Buy it for ${coName(c)}` : `${coName(c)} has ${money(obs.companies[c].treasury)}`}"><span class="sw" style="background:${companyColor(c)}"></span>${coName(c)}<span class="px">${money(price)}</span></button>`;
+  }
+  html += `<div class="note">Each factory adds ${dc.capacity} to the truck limit. Serving the gold zone round it cuts the price (up to ${Math.round(100 * dc.maxSubsidy)}% off).</div>`;
+  if (pop.dataset.html !== html) (pop.innerHTML = html), (pop.dataset.html = html);
+  pop.hidden = false;
+  // Just above the site (below it, near the top of the map), kept on the map.
+  const l = g.town.locations[site];
+  const wrap = $('map-wrap').getBoundingClientRect();
+  const box = canvas.getBoundingClientRect();
+  const sx = box.left - wrap.left + renderer.X(l.x);
+  const sy = box.top - wrap.top + renderer.Y(l.y);
+  const gap = renderer.scale * 0.6;
+  let y = sy - gap - pop.offsetHeight;
+  if (y < 8) y = sy + gap;
+  const x = Math.max(8, Math.min(wrap.width - pop.offsetWidth - 8, sx - pop.offsetWidth / 2));
+  pop.style.left = `${x}px`;
+  pop.style.top = `${y}px`;
+}
+
+$('site-pop').addEventListener('pointerdown', (e) => {
+  const b = (e.target as HTMLElement).closest('button');
+  if (!b || e.button !== 0) return;
+  e.stopPropagation();
+  if (b.dataset.popclose !== undefined) sitePop = null;
+  else if (b.dataset.popbuy && sitePop !== null && !b.hasAttribute('disabled')) {
+    const c = Number(b.dataset.popbuy);
+    session.act({ type: 'buyDepot', company: c, site: sitePop });
+    activeCompany = c;
+    sitePop = null;
+  }
+  refreshSitePop(session.obs());
+});
+
 function refreshMyCompanies(obs: Observation) {
   const g = session.game;
   const mine = myCompanies(obs);
+  if (obs.phase === 'running') runningSince ??= obs.t;
+  refreshCardTabs(obs, mine);
+  refreshSitePop(obs);
   const box = $('mycos');
   let html = '';
   if (!mine.length) html = '<div class="muted small">You aren’t president of any company. Own the most shares of one to run it.</div>';
@@ -739,47 +952,53 @@ function refreshMyCompanies(obs: Observation) {
     const c = obs.companies[id];
     const trucks = obs.trucks.filter((t) => t.company === id);
     const free = freeTrucks(obs, id);
-    const factories = Object.values(obs.depots).filter((o) => o === id).length;
-    const limit = factories * g.cfg.depots.capacity;
-    html += `<div class="co${currentCompany(obs) === id ? ' active' : ''}" data-company="${id}" data-cohover="${id}"><div class="row big"><span>${sw(id)}<b>${coName(id)}</b></span><b>${money(c.treasury)}</b></div>`;
-    const full = trucks.length >= limit;
-    const nextTruck = g.cfg.depots.truckPrice + g.cfg.depots.truckPriceStep * trucks.length;
-    const canPay = c.treasury >= nextTruck;
-    const home = Object.entries(obs.depots).find(([, o]) => o === id)?.[0];
-    html += `<div class="row small"><span>${trucks.length}/${limit} trucks: ${free} free</span>${home === undefined ? '' : `<button data-truck="${id}:${home}" ${full || !canPay ? 'disabled' : ''} title="${full ? `Fleet full: each factory adds ${g.cfg.depots.capacity}` : canPay ? '' : 'Not enough in the treasury'}">Buy truck ${money(nextTruck)}</button>`}</div>`;
-    const myFactories = Object.entries(obs.depots).filter(([, o]) => o === id).map(([site]) => at(Number(site)));
-    html += `<div class="row small muted"><span>Factor${myFactories.length === 1 ? 'y' : 'ies'}: ${myFactories.join(', ')}</span></div>`;
-    // The free factory sites nearest this company's factories, with its price for each.
-    const sites = Object.keys(obs.depotPrices).map(Number);
-    if (sites.length) {
-      const own = Object.entries(obs.depots).filter(([, o]) => o === id).map(([site]) => g.town.locations[Number(site)].node);
-      const dist = (site: number) => Math.min(...own.map((n) => siteReach(site)[n]));
-      const near = sites.sort((a, b) => dist(a) - dist(b)).slice(0, 3);
-      html += `<div class="row small"><span class="muted">Nearby factory sites</span><button data-depot="${id}" class="${hl.buyFor === id ? 'on' : ''}">${hl.buyFor === id ? 'Cancel' : 'Pick on map…'}</button></div><div class="sites">`;
-      for (const site of near) {
-        const price = obs.depotPrices[site][id];
-        html += `<button data-buysite="${id}:${site}" ${c.treasury < price ? 'disabled' : ''} title="${Math.round(dist(site))} blocks away${price < g.cfg.depots.depotBase ? ', local subsidy' : ''}">${at(site)} ${money(price)}</button>`;
-      }
-      html += '</div>';
-    } else html += '<div class="row small muted"><span>No unclaimed factory sites left</span></div>';
+    const factorySites = Object.entries(obs.depots).filter(([, o]) => o === id).map(([site]) => Number(site));
+    const limit = factorySites.length * g.cfg.depots.capacity;
+    const rate = obs.phase === 'running' ? companyRate(id, obs.t) : null;
     const routes = obs.routes
       .filter((r) => r.company === id)
       .sort((a, b) => g.town.locations[a.producer].good! - g.town.locations[b.producer].good! || a.key.localeCompare(b.key));
-    if (routes.length) {
-      // Long lists fold away (into a count per good) until you open them; short ones stay open.
-      const open = routesOpen.get(id) ?? routes.length <= ROUTES_FOLD_AT;
-      const total = routes.reduce((n, r) => n + r.trucks, 0);
-      html += `<button class="sub fold" data-fold="${id}">${open ? '▾' : '▸'} Routes · ${routes.length} · ${total} truck${total === 1 ? '' : 's'}</button>`;
-      if (!open) {
-        const byGood = new Map<number, number>();
-        for (const r of routes) byGood.set(g.town.locations[r.producer].good!, (byGood.get(g.town.locations[r.producer].good!) ?? 0) + 1);
-        html += `<div class="row small muted"><span>${[...byGood].map(([good, n]) => `<span class="dot" style="background:${goodColor(good)}"></span>${cap(names(good).product)} ×${n}`).join(' &nbsp; ')}</span></div>`;
-      }
-      if (open) for (const r of routes) {
-        const p = g.town.locations[r.producer];
-        html += `<div class="row small route-row${hl.hoverRoute === r.key ? ' hot' : ''}${hl.saturated.has(r.key) ? ' saturated' : ''}" data-routerow="${r.key}"><span><span class="dot" style="background:${goodColor(p.good!)}"></span>${cap(names(p.good!).product)} ${at(r.producer)} → ${at(r.depot)} → ${at(r.consumer)}<span class="rate" title="What this route earned per minute over the last ${RATE_WINDOW / 60} minutes">${routeRate(r.key, obs.t, r.trucks)}</span>${saturatedNote(r.key, p.good!)}</span><span class="route-ctl"><button data-unroute="${r.key}">−</button> ${r.trucks} <button data-route="${r.key}" ${freeTrucks(obs, id) ? '' : 'disabled'}>+</button></span></div>`;
-      }
+    // Header: name and ticker, and its treasury in a box (as on its card).
+    html += `<div class="co${currentCompany(obs) === id ? ' active' : ''}" data-company="${id}" data-cohover="${id}">`;
+    html += `<div class="row head"><span>${sw(id)}<b>${coName(id)}</b> <span class="ticker">${COMPANY_NAMES[companySlot(id)][1]}</span></span><span class="treasury-box" title="The treasury: what it has to spend on trucks and factories"><span class="lbl">Treasury</span> <b>${money(c.treasury)}</b></span></div>`;
+    // At a glance: trucks, factories, and what its deliveries are earning.
+    html += `<div class="row small quick-stats"><span title="${trucks.length} trucks (${free} free), room for ${limit}: each factory adds ${g.cfg.depots.capacity}">🚚 <b>${trucks.length}</b>/${limit}</span><span title="Factories: ${factorySites.map(at).join(', ')}">🏭 <b>${factorySites.length}</b></span><span title="What its deliveries earned per minute over the last ${RATE_WINDOW / 60} minutes (half to the treasury, half to dividends)"><span class="muted">Income</span> ${!trucks.length ? '<span class="muted">—</span>' : rate === null ? '<span class="muted">earning…</span>' : `<b>${money(rate)}</b>/min`}</span></div>`;
+    // Spending: a truck, or a factory (the nearest free sites, at its price).
+    const full = trucks.length >= limit;
+    const nextTruck = g.cfg.depots.truckPrice + g.cfg.depots.truckPriceStep * trucks.length;
+    const home = factorySites[0];
+    const truckBtn = home === undefined ? '' : `<button data-truck="${id}:${home}" ${full || c.treasury < nextTruck ? 'disabled' : ''} title="${full ? `Fleet full: each factory adds ${g.cfg.depots.capacity}` : c.treasury < nextTruck ? 'Not enough in the treasury' : 'Another truck: more deliveries'}">Buy truck <b>${money(nextTruck)}</b></button>`;
+    const sites = Object.keys(obs.depotPrices).map(Number);
+    const factoryBtn = sites.length ? `<button data-depot="${id}" class="${hl.buyFor === id ? 'on' : ''}" title="Pick a free factory site on the map (the ones you can afford light up with your price)">${hl.buyFor === id ? 'Cancel' : 'Buy factory…'}</button>` : '';
+    html += `<div class="row spend">${truckBtn}${factoryBtn}</div>`;
+    if (sites.length && (hl.buyFor === id || full)) {
+      const own = factorySites.map((site) => g.town.locations[site].node);
+      const dist = (site: number) => Math.min(...own.map((n) => siteReach(site)[n]));
+      const near = sites.sort((a, b) => dist(a) - dist(b)).slice(0, 3);
+      html += `<div class="sites"><span class="muted small">Nearest:</span>${near.map((site) => {
+        const price = obs.depotPrices[site][id];
+        return `<button data-buysite="${id}:${site}" ${c.treasury < price ? 'disabled' : ''} title="${Math.round(dist(site))} blocks away${price < g.cfg.depots.depotBase ? ', local subsidy' : ''}">${at(site)} ${money(price)}</button>`;
+      }).join('')}</div>`;
     }
+    // Where it delivers: its area (or anywhere), and what it's focusing on.
+    const editing = hl.areaEdit?.company === id;
+    const blocks = c.area.length;
+    html += `<div class="row small"><span>Delivers to <b>${blocks ? `${blocks} block${blocks === 1 ? '' : 's'}` : 'anywhere'}</b></span><button data-area="${id}" class="${editing ? 'on' : ''}">${editing ? 'Done' : 'Edit area'}</button></div>`;
+    if (c.focus.length)
+      html += `<div class="row small focus-row"><span class="muted">Focus</span><span>${c.focus.map((f) => `<button data-unfocus="${id}:${f}" title="Stop focusing on it">${at(f)} ${names(g.town.locations[f].good!).product} ✕</button>`).join('')}</span></div>`;
+    // Its routes (it picks them itself): folded to a summary until you open them.
+    // Start each route's clock when it appears, folded or not, so its rate is ready when opened.
+    for (const r of routes) if (!routeLog.has(r.key)) routeLog.set(r.key, { since: obs.t, hits: [] });
+    if (routes.length) {
+      const open = routesOpen.get(id) ?? false;
+      const total = routes.reduce((n, r) => n + r.trucks, 0);
+      html += `<button class="sub fold" data-fold="${id}">${open ? '▾' : '▸'} Routes · ${routes.length} · ${total} truck${total === 1 ? '' : 's'}${rate === null ? '' : ` · ${money(rate)}/min`}</button>`;
+      if (open)
+        for (const r of routes) {
+          const p = g.town.locations[r.producer];
+          html += `<div class="row small route-row${hl.hoverRoute === r.key ? ' hot' : ''}${hl.saturated.has(r.key) ? ' saturated' : ''}" data-routerow="${r.key}"><span><span class="dot" style="background:${goodColor(p.good!)}"></span>${cap(names(p.good!).product)} ${at(r.producer)} → ${at(r.depot)} → ${at(r.consumer)}<span class="rate" title="What this route earned per minute over the last ${RATE_WINDOW / 60} minutes">${routeRate(r.key, obs.t, r.trucks)}</span>${saturatedNote(r.key, p.good!)}</span><span class="route-ctl">${r.trucks} 🚚</span></div>`;
+        }
+    } else if (obs.phase === 'running') html += `<div class="row small muted"><span>${trucks.length ? 'No routes yet: its trucks pick some within a second or two.' : 'No trucks yet: buy one to start delivering.'}</span></div>`;
     html += '</div>';
   }
   if (box.dataset.html !== html) {
@@ -788,9 +1007,8 @@ function refreshMyCompanies(obs: Observation) {
   }
 }
 
-/** Which companies' route lists you've opened or folded (otherwise: open while short). */
+/** Which companies' route lists you've opened (folded until you do). */
 const routesOpen = new Map<number, boolean>();
-const ROUTES_FOLD_AT = 5;
 
 // Panel buttons (delegated, since the panels re-render). They act on press rather than click:
 // a panel can re-render between press and release, which would swallow a click.
@@ -830,14 +1048,14 @@ document.addEventListener('pointerdown', (e) => {
     activeCompany = c;
   } else if (b.dataset.fold) {
     const c = Number(b.dataset.fold);
-    const n = obs.routes.filter((r) => r.company === c).length;
-    routesOpen.set(c, !(routesOpen.get(c) ?? n <= ROUTES_FOLD_AT));
-  } else if (b.dataset.route || b.dataset.unroute) {
-    const key = (b.dataset.route ?? b.dataset.unroute)!;
-    const r = obs.routes.find((x) => x.key === key);
-    if (!r) return;
-    session.act({ type: b.dataset.route ? 'assignRoute' : 'unassignRoute', depot: r.depot, producer: r.producer, consumer: r.consumer });
-    activeCompany = r.company;
+    routesOpen.set(c, !(routesOpen.get(c) ?? false));
+  } else if (b.dataset.area) {
+    const c = Number(b.dataset.area);
+    if (hl.areaEdit?.company === c) endAreaEdit();
+    else startAreaEdit(c);
+  } else if (b.dataset.unfocus) {
+    const [c, l] = b.dataset.unfocus.split(':').map(Number);
+    session.act({ type: 'setFocus', company: c, location: l, on: false });
   }
   refreshPanels(session.obs());
 });
@@ -1011,6 +1229,21 @@ const lastDividend = new Map<number, number>();
 
 /** Deliveries per route (time, price), for its earnings per minute. */
 const routeLog = new Map<string, { since: number; hits: { t: number; price: number }[] }>();
+/** Each company's deliveries, for its income rate. */
+const companyLog = new Map<number, { since: number; hits: { t: number; price: number }[] }>();
+
+/** When this game started running (deliveries can't come before). */
+let runningSince: number | null = null;
+
+/** What a company's deliveries earned per minute lately (null until there's a minute to go on). */
+function companyRate(company: number, now: number): number | null {
+  if (runningSince === null) return null;
+  const log = companyLog.get(company) ?? { since: now, hits: [] };
+  companyLog.set(company, log);
+  log.hits = log.hits.filter((h) => h.t > now - RATE_WINDOW);
+  const span = Math.min(RATE_WINDOW, now - runningSince);
+  return span < 60 ? null : (log.hits.reduce((a, h) => a + h.price, 0) * 60) / span;
+}
 /** Seconds of history a route's earnings rate is taken over. */
 const RATE_WINDOW = 120;
 
@@ -1053,6 +1286,9 @@ function handleEvents(evs: GameEvent[]) {
   for (const e of evs) {
     if (e.type === 'delivered') {
       earned.set(e.company, (earned.get(e.company) ?? 0) + e.price);
+      const clog = companyLog.get(e.company) ?? { since: e.t, hits: [] };
+      clog.hits.push({ t: e.t, price: e.price });
+      companyLog.set(e.company, clog);
       const key = truckRoute.get(e.truck);
       if (key) {
         const log = routeLog.get(key) ?? { since: e.t, hits: [] };
@@ -1171,7 +1407,7 @@ const GUIDE: { img?: string[]; icons?: GuideIcons; flow?: boolean; title: string
     flow: true,
     title: 'Welcome to Signature Required!',
     text: `<p>You're an <b>investor</b> in a busy little town's trucking companies. After 15 minutes, the <span class="hl">richest player wins</span>.</p>
-      <p>The next pages show you how to take control of a company, set up its routes, buy factories, raise money and get paid.</p>
+      <p>The next pages show you how to take control of a company, choose where it delivers, buy factories, raise money and get paid.</p>
       <p class="muted small">Or <a href="#" id="watch-bots">just watch the bots play</a> for a while.</p>`,
   },
   {
@@ -1181,27 +1417,15 @@ const GUIDE: { img?: string[]; icons?: GuideIcons; flow?: boolean; title: string
       <p>Your bid goes <b>straight into the company</b>. That's how companies pay for trucks and factories, so a share won for next to nothing leaves your company with nothing to build with. Bid like you mean it!</p>`,
   },
   {
-    img: ['route-1'],
-    icons: 'producers',
-    title: 'Pick a producer!',
-    text: '<p>Click a <b>producer</b>: the round buildings that make raw materials. It gets a ring, and the hint at the bottom of the map tells you what to pick next.</p>',
-  },
-  {
-    img: ['route-2'],
-    icons: 'shops',
-    title: 'Then a shop that buys the final product!',
-    text: "<p>Now click a <b>shop</b> that sells what your producer's material becomes: <span class=\"hl\">timber → furniture, wheat → bread, crude oil → fuel</span>.</p><p>Shops with a gold <b>$</b> coin are premium: they <span class=\"hl\">pay 50% more</span> for each pallet.</p>",
-  },
-  {
-    img: ['route-3'],
+    img: ['routes'],
     icons: 'chain',
-    title: 'The route is now in!',
-    text: "<p>Off it goes! A truck picks up the raw material, takes it through your company's <b>factory</b> to be made into the product, delivers it to the shop, and goes round again. <span class=\"hl\">Every delivery earns money</span>. The number on the route is how many trucks run it.</p>",
+    title: 'Your trucks run themselves!',
+    text: "<p>A company <b>routes its own trucks</b>. Each picks up raw material at a <b>producer</b>, has it made into the product at one of the company's <b>factories</b>, and delivers it to a <b>shop</b>: <span class=\"hl\">timber → furniture, wheat → bread, crude oil → fuel</span>. Shorter trips and better-paying shops come first. Shops with a gold <b>$</b> coin pay 50% more.</p><p><span class=\"hl\">Every delivery earns money</span>, so as president, <b>buy trucks</b> (the 🚚 tab on your company's card) to make more of them. The number on a route is how many trucks run it.</p>",
   },
   {
-    img: ['sidebar'],
-    title: 'Run your routes from the sidebar!',
-    text: "<p>Your companies panel lists each company's routes. <b>+</b> puts another truck on a route and <b>−</b> takes one off. Hover over a row to light up its route on the map. If no truck is free, use <b>Buy truck</b>: more trucks, more deliveries.</p><p>On the map, you can also click a route to add a truck, or right-click it to take one off.</p>",
+    img: ['area'],
+    title: 'Choose where it delivers!',
+    text: `<p>On your company's card, the <b>Area</b> tab sets its <b>delivery area</b>: the shops it serves. <span class="hl">Click or drag over blocks</span> to add them, and right-click or right-drag to take them out. It still fetches from producers anywhere. With no area, it delivers anywhere.</p><p><b>Double-click</b> a producer or shop while editing to <span class="hl">focus</span> on it (up to ${session.cfg.maxFocus}): trucks go there first, even outside the area. Handy for moving in on a rival's best shop.</p>`,
   },
   {
     img: ['factory'],
@@ -1211,17 +1435,17 @@ const GUIDE: { img?: string[]; icons?: GuideIcons; flow?: boolean; title: string
   {
     img: ['buy'],
     title: 'Buy another factory!',
-    text: `<p>Each factory lets your company run <b>${session.cfg.depots.capacity} more trucks</b>. When your company is at its truck limit, or you want to move into another part of town, buy one: in your company's card, click <b>Pick on map…</b>. The sites you can afford light up with your price. Click one and <span class="hl">start sending trucks from it</span>.</p>`,
+    text: `<p>Each factory lets your company run <b>${session.cfg.depots.capacity} more trucks</b>. When your company is at its truck limit, or you want to move into another part of town, buy one: <b>click a free factory site</b> on the map, and buy it at your company's price. Its trucks <span class="hl">start work from there</span> too. Serving the gold zone round a site makes it cheaper.</p>`,
   },
   {
     img: ['sale'],
-    title: 'Raise money with a share sale!',
-    text: `<p>A company's <b>empty share boxes</b> are shares it still owns. Anyone can put one up for sale: hover its card and click <b>Start a sale</b>. Everyone then has <span class="hl">${session.cfg.auctions.clockSec} seconds to bid</span> in the card, or <b>Pass</b>. A late bid adds a few seconds, up to ${session.cfg.auctions.maxSec} seconds in all.</p><p>The highest bid gets the share, if it's at least the company's price, and <span class="hl">the money goes to the company</span> to spend on trucks and factories. It's also how you buy into a company you don't run.</p>`,
+    title: 'Raise money with a share offering!',
+    text: `<p>A company's <b>empty share boxes</b> are shares it still owns. Anyone can offer one: hover its card and click <b>Offer company share</b>. Everyone then has <span class="hl">${session.cfg.auctions.clockSec} seconds to bid</span> in the card, or <b>Pass</b>. A late bid adds a few seconds, up to ${session.cfg.auctions.maxSec} seconds in all.</p><p>The highest bid gets the share, if it's at least the company's price, and <span class="hl">the money goes to the company</span> to spend on trucks and factories. It's also how you buy into a company you don't run.</p>`,
   },
   {
     img: ['shares', 'company'],
     title: 'Get paid!',
-    text: "<p>Half of each delivery goes to the company and half to its <b>dividend pot</b>, which is <span class=\"hl\">paid to shareholders every 3 minutes</span>. Your shares and your next payout show at the top right.</p><p>Shares trade in the <b>company cards</b>: <b>Sell for</b> and <b>Buy for</b> trade at once, and hovering a card lets you place your own price. Late on, a company with cash <span class=\"hl\">buys shares back</span>. After 15 minutes, the richest player wins. Good luck!</p>",
+    text: "<p>Half of each delivery goes to the company and half to its <b>dividend pot</b>, which is <span class=\"hl\">paid to shareholders every 3 minutes</span>. Your shares and your next payout show at the top right.</p><p>Shares trade in the <b>company cards</b>: <b>Sell</b> and <b>Buy</b> trade at once, and hovering a card lets you place your own price. Late on, a company with cash <span class=\"hl\">buys shares back</span>. After 15 minutes, the richest player wins. Good luck!</p>",
   },
 ];
 
@@ -1348,7 +1572,7 @@ function play() {
   helpWasPaused = null;
   $('overlay').hidden = true;
   if (!session.multiplayer) session.paused = false;
-  $('btn-pause').textContent = session.paused ? '▶' : '⏸';
+  setPauseIcon();
 }
 
 // ------------------------------------------------------------------ loop and controls
@@ -1389,7 +1613,7 @@ function frame(now: number) {
 function togglePause() {
   if (!session.canControlTime) return toast('Only the host can pause.', 'info');
   session.paused = !session.paused;
-  $('btn-pause').textContent = session.paused ? '▶' : '⏸';
+  setPauseIcon();
 }
 
 function newGame(watch = false) {
@@ -1404,6 +1628,8 @@ function beginMatch(m: Match) {
   watching = m.watch;
   pickCompanySlots(session.cfg.companies, session.cfg.seed);
   routeLog.clear();
+  companyLog.clear();
+  runningSince = null;
   knownBusiness.clear();
   lastDividend.clear();
   history.length = 0;
@@ -1418,13 +1644,14 @@ function beginMatch(m: Match) {
   if (session.multiplayer) speedSel.value = '1';
   session.speed = Number(speedSel.value);
   ($('btn-pause') as HTMLButtonElement).disabled = !session.canControlTime;
-  $('btn-pause').textContent = session.paused ? '▶' : '⏸';
+  setPauseIcon();
   renderer.setTown(session.game.town);
   motion.reset();
   renderer.via = session.cfg.trucks.viaDepot;
   renderer.serviceSec = session.cfg.trucks.serviceSec;
   renderer.processSec = session.cfg.trucks.signOffSec;
   renderer.palletPrice = session.cfg.money.palletPrice;
+  renderer.levelled = session.cfg.cycles.maxLevel > session.cfg.cycles.startLevel;
   renderer.resize(true);
   viewMoved = false;
   logList.innerHTML = '';
@@ -1443,6 +1670,17 @@ function beginMatch(m: Match) {
 }
 
 $('btn-pause').onclick = togglePause;
+/** The pause button: drawn bars or a play triangle (the ⏸ character renders tiny in most text fonts). */
+function setPauseIcon() {
+  const b = $('btn-pause');
+  const want = session.paused ? 'play' : 'pause';
+  if (b.dataset.icon === want) return;
+  b.dataset.icon = want;
+  b.innerHTML = want === 'play'
+    ? '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 2.8v10.4L13 8z" fill="currentColor"/></svg>'
+    : '<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3.5" y="2.8" width="3.2" height="10.4" rx="1" fill="currentColor"/><rect x="9.3" y="2.8" width="3.2" height="10.4" rx="1" fill="currentColor"/></svg>';
+  b.setAttribute('aria-label', session.paused ? 'Resume' : 'Pause');
+}
 // Hovering a company card shows the subsidy meters on every free factory site.
 document.addEventListener('pointermove', (e) => {
   const card = (e.target as HTMLElement | null)?.closest?.('[data-cohover]') as HTMLElement | null;
@@ -1513,13 +1751,25 @@ function showSettings() {
 }
 window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement) return;
-  if (e.key === 'p' || e.key === 'P' || e.key === ' ') {
+  if (e.key === ' ' && hl.areaEdit) {
+    // While editing, Space is for moving the map (P still pauses).
+    e.preventDefault();
+    spaceHeld = true;
+    canvas.classList.add('panning');
+  } else if (e.key === 'p' || e.key === 'P' || e.key === ' ') {
     e.preventDefault();
     togglePause();
   } else if (e.key === 'Escape') {
+    sitePop = null;
     hl.picked = [];
     hl.buyFor = null;
+    endAreaEdit();
   }
+});
+window.addEventListener('keyup', (e) => {
+  if (e.key !== ' ') return;
+  spaceHeld = false;
+  canvas.classList.remove('panning');
 });
 window.addEventListener('resize', () => renderer.resize(false));
 

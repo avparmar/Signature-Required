@@ -3,7 +3,7 @@ import { depotPrice, distancesFrom, DEFAULT_DEPOTS, newGame, subsidisedPrice, ty
 
 function setup(depots: Partial<DepotConfig> = {}) {
   // Pins $30 trucks and 3-truck depots, which these checks were written against.
-  const g = newGame({ seed: 7, auctions: { openingRound: false }, depots: { truckPrice: 30, capacity: 3, ...depots } });
+  const g = newGame({ seed: 7, autoRoutes: false, startingTrucks: 0, auctions: { openingRound: false }, depots: { truckPrice: 30, capacity: 3, ...depots } });
   g.companies[0].shares = [0, null, null, null, null]; // player 0 is president of company 0
   const home = g.town.locations.find((l) => l.startCompany === 0)!;
   return { g, home };
@@ -189,7 +189,7 @@ describe('buying', () => {
 
 describe('new factory sites', () => {
   it('appear every few minutes on empty lots, away from other factories', () => {
-    const g = newGame({ seed: 4, auctions: { openingRound: false }, town: { blocksX: 16, blocksY: 16 }, depots: { newSiteEverySec: 180 } });
+    const g = newGame({ seed: 4, autoRoutes: false, auctions: { openingRound: false }, town: { blocksX: 16, blocksY: 16, producersPerGood: [4, 5], shopsPerProducer: 0, consumersPerGood: [7, 11], shopReach: 0 }, cycles: { startLevel: 3, maxLevel: 5, growAbove: 0.75, shrinkBelow: 0.5, shopShare: 1 }, openings: { everySec: 0 }, depots: { newSiteEverySec: 180 } });
     const before = g.town.locations.filter((l) => l.kind === 'depot').length;
     g.runToEnd();
     const opened = g.drainEvents(0).filter((e) => e.type === 'siteOpened') as { site: number }[];

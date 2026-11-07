@@ -8,6 +8,10 @@
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
   color: var(--ink);
 }
+/* Text everywhere: controls use the page's font (browsers default buttons to their own), and bold is
+   one weight (700) wherever it sits, rather than "bolder than its parent". */
+button, input, select, textarea { font-family: inherit; }
+b, strong { font-weight: 700; }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); }
@@ -45,11 +49,12 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #right { grid-column: 2; grid-row: 2 / 5; border-left: 1px solid var(--line); }
 #companies { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 8px; }
 /* Each card sits at the bottom of its slot; folded it shows a summary, open (hovered or pinned) it grows upwards over the map. */
-#companies .slot { position: relative; height: 112px; }
+#companies .slot { position: relative; height: 80px; }
 #companies .co { position: absolute; left: 0; bottom: 0; width: 100%; min-height: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 7px 10px; }
 #companies .co:not(:hover):not(:focus-within):not(.pinned) .more,
 #companies .co:not(:hover):not(:focus-within):not(.pinned) .broker .slide,
 #companies .co:not(:hover):not(:focus-within):not(.pinned) .broker .order,
+#companies .co:not(:hover):not(:focus-within):not(.pinned) .broker .offer,
 #companies .co:not(:hover):not(:focus-within):not(.pinned) .pin,
 #companies .co:not(:hover):not(:focus-within):not(.pinned) [data-startsale] { display: none; }
 #companies .co:not(:hover):not(:focus-within):not(.pinned) .row > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
@@ -60,9 +65,11 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #companies .slot:nth-last-child(-n + 2) .co { left: auto; right: 0; }
 #companies .co .head > span { display: flex; align-items: center; gap: 6px; white-space: nowrap; min-width: 0; }
 #companies .co .head > span:first-child { overflow: hidden; text-overflow: ellipsis; }
-#companies .pin { font-size: 10px; padding: 0 6px; line-height: 1.5; }
-#companies .co .sale-line { color: #8a6a10; white-space: nowrap; }
+#companies .pin { font-size: 11px; font-weight: 600; padding: 0 7px; line-height: 1.5; }
+/* Folded, an offering sits where the Buy button would: bottom right. */
+#companies .co .sale-line { position: absolute; right: 10px; bottom: 6px; width: calc(50% - 12px); height: 24px; display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 0 8px; border-radius: 7px; background: #f6e7b4; color: #6b500b; font-size: 12px; white-space: nowrap; overflow: hidden; }
 #companies .co .sale-line > * { flex: none; }
+#companies .co.selling:not(:hover):not(:focus-within):not(.pinned) .broker .buy-now { visibility: hidden; }
 #companies .co:is(:hover, :focus-within, .pinned) .fold-only { display: none; }
 #companies .co:first-child { padding-top: 7px; }
 #companies .row { font-size: 13px; padding: 1px 0; }
@@ -83,7 +90,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #map-wrap { position: relative; padding: 0; overflow: hidden; display: block; }
 #map { display: block; background: transparent; box-shadow: none; border-radius: 0; cursor: crosshair; }
 #hint {
-  position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); pointer-events: none;
+  position: absolute; left: 50%; bottom: 36px; transform: translateX(-50%); pointer-events: none;
   font-size: 13px; color: var(--ink); background: rgba(255, 255, 255, 0.9); border: 1px solid var(--line);
   border-radius: 999px; padding: 5px 14px; white-space: nowrap; box-shadow: 0 1px 4px rgba(0,0,0,0.08);
 }
@@ -252,7 +259,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #payout .pay-close { font-size: 11px; color: var(--muted); margin-top: 6px; }
 
 /* The share market, in the company cards. */
-#companies .co.selling { background: #fff7dc; border-color: #d4b048; box-shadow: inset 0 3px 0 #d4b048; }
+#companies .co.selling { background: #fff7dc; border-color: #d4b048; box-shadow: inset 0 5px 0 #f1e3b3; }
 .co .sale { margin: 4px 0 2px; }
 .co .actions { justify-content: flex-end; gap: 4px; }
 .co .row .mini { font-size: 11px; padding: 1px 8px; line-height: 1.4; }
@@ -283,7 +290,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #companies .broker .quick button.note { background: transparent !important; border-color: transparent !important; color: var(--muted); opacity: 1; cursor: default; justify-content: center; gap: 4px; font-weight: 500; }
 /* Companies you run stand out in the strip. */
 #companies .co.yours { border-color: var(--ink); box-shadow: inset 0 3px 0 var(--ink); }
-#companies .co.yours.selling { box-shadow: inset 0 3px 0 #d4b048; }
+#companies .co.yours.selling { box-shadow: inset 0 5px 0 #f1e3b3; }
 
 #companies .broker .quick button[hidden] { display: none; }
 #companies .broker .quick .from { font-weight: 500; color: var(--muted); margin-left: auto; padding-left: 6px; }
@@ -291,7 +298,6 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #players .icon { font-size: 15px; }
 
 /* Folded cards show just the prices; who's buying or selling shows when the card is open. */
-#companies .co:not(:hover):not(:focus-within):not(.pinned) .broker .quick .from { display: none; }
 /* With no share to sell, the sell spot stays empty so Buy keeps its place on the right. */
 #companies .broker .quick .sell-now.empty { visibility: hidden; }
 #players .pl.me b { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }
@@ -344,3 +350,115 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 .start-buttons { display: flex; flex-direction: column; gap: 8px; margin: 18px 0 14px; }
 .start-buttons button { padding: 10px 14px; font-size: 15px; }
 .start-buttons button.go { font-size: 17px; padding: 12px 14px; background: var(--ink); color: #fff; border-color: var(--ink); }
+
+/* Editing a delivery area: a bar over the top of the map. */
+#area-bar { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 20; background: #fff; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.15); padding: 8px 10px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; max-width: min(640px, 92%); font-size: 14px; }
+#area-bar[hidden] { display: none; }
+#area-bar .sw { width: 12px; height: 12px; border-radius: 3px; margin: 0 2px 0 4px; }
+#area-bar b { margin-right: auto; }
+#area-bar button { padding: 5px 12px; font-size: 13px; font-weight: 600; }
+#area-bar button.go { background: #2e8a3e; color: #fff; border-color: #2e8a3e; }
+#area-bar .area-hint { flex-basis: 100%; font-size: 12px; color: var(--muted); }
+.focus-row button { margin-left: 4px; padding: 2px 7px; font-size: 12px; }
+
+/* Your companies (right): laid out like the company cards. */
+#mycos .co .head { align-items: center; margin-bottom: 4px; }
+#mycos .co .head .ticker { font-size: 11px; color: var(--muted); letter-spacing: 0.05em; }
+#mycos .treasury-box { border: 1.5px solid var(--line); border-radius: 7px; padding: 1px 8px; background: #fbf9f4; display: inline-flex; align-items: baseline; gap: 5px; }
+#mycos .treasury-box b { font-size: 15px; }
+#mycos .co .head > span:first-child { min-width: 0; }
+#mycos .treasury-box .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+#mycos .quick-stats { justify-content: space-between; margin: 2px 0 6px; }
+#mycos .spend { display: flex; gap: 6px; margin: 4px 0; }
+#mycos .spend button { flex: 1; }
+#mycos .sites { align-items: center; }
+#area-bar .gold { color: #8a6a12; font-weight: 600; }
+/* Tabs atop your companies' cards: its delivery area, and buying a truck. */
+#companies .co { container-type: inline-size; }
+#companies .co-tabs { position: absolute; top: -27px; left: 8px; right: 8px; display: flex; gap: 4px; z-index: 1; pointer-events: none; }
+#companies .co-tab { pointer-events: auto; height: 28px; display: inline-flex; align-items: center; gap: 6px; padding: 0 9px 0 7px; border: 1.5px solid var(--ink); border-bottom: none; border-radius: 9px 9px 0 0; background: var(--panel); font-size: 13px; font-weight: 600; white-space: nowrap; flex: none; }
+#companies .co-tab .area-icon { width: 17px; height: 17px; }
+#companies .co-tab .truck-icon { width: 27px; height: 17px; }
+#companies .co-tab.truck .count { font-variant-numeric: tabular-nums; }
+#companies .co-tab:hover:not(:disabled) { background: #fff; }
+#companies .co-tab.on { background: var(--co); color: #fff; border-color: var(--co); }
+/* Not yours (or nothing to buy): a quiet label. */
+#companies .co-tab.truck { cursor: default; color: var(--muted); border-color: var(--line); background: #f6f3ec; }
+#companies .co-tab.truck:hover { background: #f6f3ec; }
+#companies .co-tab.truck .px { font-weight: 700; font-size: 12px; padding: 1px 7px; border-radius: 999px; background: var(--line); color: var(--muted); }
+#companies .co-tab.truck.own { color: var(--ink); border-color: var(--ink); background: var(--panel); }
+#companies .co-tab.truck.own:hover { background: var(--panel); }
+/* You can buy one: a green button, lifted a little. */
+#companies .co-tab.truck.can { cursor: pointer; background: #d6ecd2; border-color: #6fae68; color: #1f5f29; box-shadow: inset 0 -2px 0 rgba(31,95,41,0.15); transform: translateY(-2px); }
+#companies .co-tab.truck.can:hover { background: #c6e4c1; }
+#companies .co-tab.truck.can:active { transform: translateY(0); }
+#companies .co-tab.truck.can .px { background: #2e8a3e; color: #fff; }
+#companies .co-tab .short { display: none; }
+@container (max-width: 225px) { #companies .co-tab .long { display: none; } #companies .co-tab .short { display: inline; } }
+/* Narrower still: the area tab goes to just its icon (the truck count stays). */
+@container (max-width: 190px) { #companies .co-tab .short { display: none; } #companies .co-tab.area { padding: 0 8px; } }
+@container (max-width: 140px) { #companies .co-tab .count { display: none; } }
+/* A sale's clock along the card's top. */
+#companies .co .sale-bar { position: absolute; left: 0; top: 0; height: 5px; background: #c99a1c; border-radius: 10px 0 0 0; transition: width 0.25s linear; }
+#companies .co .sale-bar.late { background: #d9542c; }
+/* Buying a factory: a little card at the site you clicked. */
+#site-pop { position: absolute; z-index: 7; width: 240px; white-space: normal; text-align: left; background: #fff; border: 1.5px solid var(--ink); border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,0.22); padding: 8px 10px; font-size: 13px; min-width: 200px; }
+#site-pop[hidden] { display: none; }
+#site-pop .title { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
+#site-pop .title button { border: none; background: none; padding: 0 2px; color: var(--muted); font-size: 13px; }
+#site-pop .buy { display: flex; align-items: center; gap: 7px; width: 100%; margin-top: 4px; padding: 5px 9px; font-size: 13px; font-weight: 600; }
+#site-pop .buy .px { margin-left: auto; font-weight: 700; }
+#site-pop .buy.can { background: #2e8a3e; border-color: #2e8a3e; color: #fff; }
+#site-pop .sw { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+#site-pop .note { color: var(--muted); font-size: 12px; margin-top: 5px; }
+#map.panning { cursor: grab; }
+#companies .quick button.blank { visibility: hidden; }
+#companies .co-tab[hidden] { display: none; }
+/* The card's top: name and shares on the left, the money box on the right. */
+#companies .top { display: flex; gap: 6px; align-items: flex-start; }
+#companies .top .left { flex: 1; min-width: 0; }
+#companies .top .head > span { display: flex; align-items: center; min-width: 0; }
+#companies .top .head > span > b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#companies .top .head .swatch { flex: none; }
+#companies .top .head .ticker { flex: none; margin-left: 5px; }
+#companies .co-box { flex: none; display: flex; flex-direction: column; align-items: flex-end; margin-top: 1px; padding: 1px 6px 2px; border: 1.5px solid var(--line); border-radius: 8px; background: rgba(255,255,255,0.7); line-height: 1.15; }
+#companies .co-box .tr { font-size: 16px; }
+#companies .co-box .stats { display: flex; gap: 5px; font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+#companies .co-box .stats b { color: var(--ink); }
+/* Opened, the box moves up beside Pin, and the name gets the whole width. */
+#companies .co:is(:hover, :focus-within, .pinned) .head-open { min-height: 40px; align-items: flex-start; }
+#companies .co:is(:hover, :focus-within, .pinned) .co-box { position: absolute; top: 7px; right: 10px; }
+#companies .co:is(:hover, :focus-within, .pinned) .co-box .tr { font-size: 18px; }
+#companies .co:is(:hover, :focus-within, .pinned) .co-box .stats { font-size: 12px; gap: 7px; }
+/* Folded, a card goes by its ticker; opened, by its full name (with the ticker beside it). */
+#companies .head .tk { display: none; letter-spacing: 0.04em; }
+#companies .co:not(:hover):not(:focus-within):not(.pinned) .head .nm { display: none; }
+#companies .co:not(:hover):not(:focus-within):not(.pinned) .head .tk { display: inline; }
+/* Offering a company share: a gold button at the bottom of the card. While it waits after the last
+   one, it's muted and a band shows the time left. */
+#companies .broker .offer { position: relative; overflow: hidden; display: flex; align-items: center; gap: 9px; width: 100%; margin-top: 8px; padding: 7px 10px; border: 1.5px solid #c99a1c; border-radius: 9px; background: linear-gradient(#fff6d6, #fbe9a9); color: #5c4508; text-align: left; box-shadow: inset 0 -2px 0 rgba(176,138,30,0.25); }
+#companies .broker .offer[hidden] { display: none; }
+#companies .broker .offer:hover:not(:disabled) { background: linear-gradient(#fff2c4, #f7df8a); }
+#companies .broker .offer:active:not(:disabled) { box-shadow: none; transform: translateY(1px); }
+#companies .broker .offer .share-icon { width: 26px; height: 22px; flex: none; }
+#companies .broker .offer .txt { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
+#companies .broker .offer .txt b { font-size: 14px; }
+#companies .broker .offer .hint { font-size: 11px; color: #8a6a12; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#companies .broker .offer:disabled { opacity: 1; background: #f6f3ec; border-color: var(--line); color: var(--muted); box-shadow: none; cursor: default; }
+#companies .broker .offer:disabled .share-icon { opacity: 0.5; filter: grayscale(1); }
+#companies .broker .offer:disabled .hint { color: var(--muted); }
+#companies .broker .offer:disabled::after { content: ''; position: absolute; left: 0; bottom: 0; height: 3px; width: calc(var(--wait, 0) * 100%); background: #d4b048; transition: width 0.25s linear; }
+/* Folded: compact, with one bottom row (Sell / Buy, or an offering) that's always there. */
+#companies .co:not(:hover):not(:focus-within):not(.pinned) { padding-top: 5px; padding-bottom: 6px; }
+#companies .co:not(:hover):not(:focus-within):not(.pinned) .broker .quick { margin-top: 4px; }
+#companies .co:not(:hover):not(:focus-within):not(.pinned) .broker .quick button { height: 24px; padding: 0 8px; font-size: 11.5px; align-items: center; }
+/* Folded bottom row: the Sell / Buy buttons and the offering pill set their text alike. */
+#companies .co:not(:hover):not(:focus-within):not(.pinned) .broker .quick button,
+#companies .co .sale-line { font-size: 12px; font-weight: 600; line-height: 1; align-items: center; }
+#companies .co:not(:hover):not(:focus-within):not(.pinned) .broker .quick button *,
+#companies .co .sale-line * { line-height: 1; }
+#companies .co .sale-line > b { font-weight: 600; }
+#companies .co:not(:hover):not(:focus-within):not(.pinned) .broker .quick button b,
+#companies .co .sale-line span b { font-weight: 700; }
+#btn-pause { display: inline-flex; align-items: center; justify-content: center; min-width: 34px; }
+#btn-pause svg { width: 15px; height: 15px; display: block; }

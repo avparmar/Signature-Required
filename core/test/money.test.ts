@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_MONEY, distancesFrom, investCost, newGame, payPerShare, Rng, assignPrices, type Game, type GameEvent } from '../src/index.js';
 
 function setup(o: Parameters<typeof newGame>[0] = {}) {
-  const g = newGame({ seed: 7, ...o, auctions: { openingRound: false, ...o.auctions } });
+  const g = newGame({ seed: 7, autoRoutes: false, ...o, auctions: { openingRound: false, ...o.auctions } }); // routes set by hand here
   const home = g.town.locations.find((l) => l.startCompany === 0)!;
   const d = distancesFrom(g.town.graph, home.node);
   const producer = g.town.locations.filter((l) => l.kind === 'producer').sort((a, b) => d[a.node] - d[b.node])[0];
@@ -120,7 +120,7 @@ describe('location investment', () => {
   });
 
   it('any player can raise a location from their own cash', () => {
-    const { g, producer } = setup();
+    const { g, producer } = setup({ cycles: { startLevel: 3, maxLevel: 5, growAbove: 0.75, shrinkBelow: 0.5, shopShare: 1 } });
     g.act(3, { type: 'invest', location: producer.id });
     g.step();
     expect(g.location(producer.id)!.level).toBe(g.cfg.cycles.startLevel + 1);
@@ -129,7 +129,7 @@ describe('location investment', () => {
   });
 
   it("can't invest without the cash, or in a depot site", () => {
-    const { g, producer, home } = setup();
+    const { g, producer, home } = setup({ cycles: { startLevel: 3, maxLevel: 5, growAbove: 0.75, shrinkBelow: 0.5, shopShare: 1 } });
     g.act(0, { type: 'invest', location: producer.id }); // $60, leaves $40
     g.act(0, { type: 'invest', location: producer.id }); // $90: too much
     g.act(1, { type: 'invest', location: home.id });

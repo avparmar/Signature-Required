@@ -13,7 +13,10 @@ import {
 
 // Fixed demand so the arithmetic is exact: 2 pallets per level, level 3 = 6 per cycle.
 // Also pins the original 4-cycle window and no grace period, which these tests were written against.
-const cfg: CycleConfig = { ...DEFAULT_CYCLES, palletsPerLevel: 2, window: 4, graceSec: 0 };
+// The level ladder (grow / shrink / close), which these tests exercise; the game's defaults now fix
+// businesses at one level, with shops wanting half a producer's output.
+export const LADDER = { startLevel: 3, maxLevel: 5, growAbove: 0.75, shrinkBelow: 0.5, shopShare: 1 };
+const cfg: CycleConfig = { ...DEFAULT_CYCLES, ...LADDER, palletsPerLevel: 2, window: 4, graceSec: 0 };
 
 function loc(kind: 'producer' | 'consumer', o: Partial<LocationState> = {}): LocationState {
   return {
@@ -67,7 +70,7 @@ describe('cycles', () => {
     for (const level of [1, 2, 3, 4, 5]) {
       const p = loc('producer', { level, stock: 0 });
       const c = loc('consumer', { level, demand: 0 });
-      updateCycles([p, c], 0, { ...DEFAULT_CYCLES, window: 1000 }, rng);
+      updateCycles([p, c], 0, { ...DEFAULT_CYCLES, ...LADDER, window: 1000 }, rng);
       expect(p.cycleAmount).toBe(DEFAULT_CYCLES.palletsPerLevel * level);
       expect(c.cycleAmount).toBe(p.cycleAmount);
     }
@@ -160,20 +163,20 @@ describe('the level ladder', () => {
 
 describe('the town over a game', () => {
   it('every producer and consumer gets state, cycles at different times, and the game stays deterministic', () => {
-    const g = newGame({ seed: 4, auctions: { openingRound: false } });
+    const g = newGame({ seed: 4, cycles: LADDER, auctions: { openingRound: false } });
     const count = g.town.locations.filter((l) => l.kind === 'producer' || l.kind === 'consumer').length;
     expect(g.locations).toHaveLength(count);
     expect(new Set(g.locations.map((l) => l.nextCycleAt.toFixed(2))).size).toBeGreaterThan(count / 2);
     for (let i = 0; i < 600; i++) g.step(); // one minute
     expect(g.locations.filter((l) => l.kind === 'producer').every((l) => l.stock > 0)).toBe(true);
     expect(g.locations.filter((l) => l.kind === 'consumer').every((l) => l.demand > 0)).toBe(true);
-    const h = newGame({ seed: 4, auctions: { openingRound: false } });
+    const h = newGame({ seed: 4, cycles: LADDER, auctions: { openingRound: false } });
     for (let i = 0; i < 600; i++) h.step();
     expect(h.stateHash()).toEqual(g.stateHash());
   });
 
   it('with nobody delivering, the original town withers and closes, while new locations keep opening', () => {
-    const g = newGame({ seed: 2, auctions: { openingRound: false } });
+    const g = newGame({ seed: 2, cycles: LADDER, auctions: { openingRound: false } });
     const original = new Set(g.locations.map((l) => l.id));
     g.runToEnd();
     const evs = g.drainEvents(0);
@@ -196,14 +199,14 @@ describe('the town over a game', () => {
   });
 
   it('openings avoid lots right next to live locations', () => {
-    const g = newGame({ seed: 6, auctions: { openingRound: false }, openings: { everySec: 20, quietStartSec: 0 } });
+    const g = newGame({ seed: 6, cycles: LADDER, auctions: { openingRound: false }, openings: { everySec: 20, quietStartSec: 0 } });
     for (let i = 0; i < 6000; i++) g.step();
     const opened = g.drainEvents(0).filter((e) => e.type === 'opened');
     expect(opened.length).toBeGreaterThan(5);
   });
 
   it('openings can be turned off', () => {
-    const g = newGame({ seed: 2, auctions: { openingRound: false }, openings: { everySec: 0 } });
+    const g = newGame({ seed: 2, cycles: LADDER, auctions: { openingRound: false }, openings: { everySec: 0 } });
     g.runToEnd();
     expect(g.drainEvents(0).some((e) => e.type === 'opened')).toBe(false);
   });
@@ -211,7 +214,7 @@ describe('the town over a game', () => {
 
 describe('grace period', () => {
   it("a new location can't level down or close during its grace period, but can level up", () => {
-    const g = { ...DEFAULT_CYCLES, palletsPerLevel: 2, window: 2, graceSec: 120 };
+    const g = { ...DEFAULT_CYCLES, ...LADDER, palletsPerLevel: 2, window: 2, graceSec: 120 };
     const c: LocationState = {
       id: 2, kind: 'consumer', good: 0, level: 1, cycleSec: 45, nextCycleAt: 0, stock: 0, demand: 0,
       cycleAmount: 0, served: 0, history: [], price: 0, closingIn: null, closed: false, graceUntil: 120,
