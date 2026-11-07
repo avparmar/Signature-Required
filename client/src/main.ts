@@ -104,7 +104,7 @@ const hl: Highlights = {
   listRoute: null,
   saturated: new Set(),
   buyFor: null,
-  spotlight: null,
+  spotlight: new Set<number>(),
   district: session.cfg.depots.districtBlocks,
   meterFor: [],
   cardCompany: null,
@@ -1302,7 +1302,7 @@ function frame(now: number) {
   for (const [id, sp] of drawn) shown.set(id, sp);
 
   tooltip(obs);
-  hl.spotlight = obs.sales.length ? obs.sales[0].company : null;
+  hl.spotlight = new Set(obs.sales.map((x) => x.company)); // every company holding a sale
   hl.meterFor = obs.companies.map((c) => c.id); // public: everyone sees every company's progress
   const trucksNow = [...shown].map(([id, sp]) => ({ id, ...sp }));
   redraw = () => renderer.draw(obs, trucksNow, hl, now / 1000);

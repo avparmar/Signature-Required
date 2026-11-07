@@ -64,8 +64,8 @@ export interface Highlights {
   saturated: Set<string>;
   /** Free depot sites to highlight with this company's prices (buy-depot mode). */
   buyFor: number | null;
-  /** Company being auctioned: its factories get a pulsing ring. */
-  spotlight: number | null;
+  /** Companies holding a sale right now: their factories pulse. */
+  spotlight: Set<number>;
   /** A free factory site's subsidy district (drive distance, blocks), shaded when it's hovered. */
   district: number;
   /** Companies whose subsidy meters show on free factory sites (the ones you run). */
@@ -655,7 +655,7 @@ export class Renderer {
           drawFactory(ctx, x, y, s, companyColor(owner));
         }
         if (picked || hovered) ring(ctx, x, y, s * 1.5, picked ? INK : '#8a8273');
-        if (owner !== undefined && owner === hl.spotlight) {
+        if (owner !== undefined && hl.spotlight.has(owner)) {
           const pulse = 0.5 + 0.5 * Math.sin(now * 4);
           ring(ctx, x, y, s * (1.7 + 0.35 * pulse), companyColor(owner), 3);
         }
