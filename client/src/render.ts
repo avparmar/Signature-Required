@@ -276,10 +276,11 @@ export class Renderer {
       const [ea, eb] = this.edgeDir.get(`${lo}-${hi}`) ?? [lo, hi];
       const list = tracks.get(`${lo}-${hi}`) ?? [r.company];
       const gap = this.trackGap(list.length);
-      // The same sideways shift as routeLine (measured from lo to hi).
+      // The same sideways shift as routeLine (measured along the street from its first end).
       const k = (list.indexOf(r.company) - (list.length - 1) / 2) * gap;
-      const A = g.nodes[lo];
-      const B = g.nodes[hi];
+      const f = this.firstEnd(lo, hi);
+      const A = g.nodes[f];
+      const B = g.nodes[f === lo ? hi : lo];
       const len = Math.hypot(B.x - A.x, B.y - A.y) || 1;
       const ox = (-(B.y - A.y) / len) * k;
       const oy = ((B.x - A.x) / len) * k;
@@ -293,6 +294,17 @@ export class Renderer {
     return out;
   }
   private edgeDir?: Map<string, [number, number]>;
+
+  /**
+   * Of a street's two ends, the one sideways shifts are measured from: the left one (or the top
+   * one, on a street running up and down), so each company keeps to the same side all along a
+   * street, whichever way the road's own nodes run.
+   */
+  private firstEnd(a: number, b: number): number {
+    const A = this.town.graph.nodes[a];
+    const B = this.town.graph.nodes[b];
+    return A.x < B.x - 1e-9 || (Math.abs(A.x - B.x) <= 1e-9 && A.y < B.y) ? a : b;
+  }
 
   /** How far apart companies' tracks are on a street several of them share. */
   private trackGap(n: number): number {
@@ -317,7 +329,7 @@ export class Renderer {
       const list = tracks.get(`${lo}-${hi}`) ?? [r.company];
       // Spread across the road, two companies a lane each: the more there are, the closer together.
       const gap = this.trackGap(list.length);
-      const k = (list.indexOf(r.company) - (list.length - 1) / 2) * gap * (ns[i - 1] === lo ? 1 : -1);
+      const k = (list.indexOf(r.company) - (list.length - 1) / 2) * gap * (ns[i - 1] === this.firstEnd(lo, hi) ? 1 : -1);
       const dx = P[i].x - P[i - 1].x;
       const dy = P[i].y - P[i - 1].y;
       const len = Math.hypot(dx, dy) || 1;
