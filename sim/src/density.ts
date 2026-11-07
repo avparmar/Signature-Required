@@ -97,6 +97,9 @@ if (which === 'economy') {
   // The new defaults (fixed level 2, 2x density with shops matched to and placed near producers,
   // $6 trucks, 16 per factory, a starting truck), at a few pallet prices.
   for (const price of [2.4, 2, 1.7, 1.4]) variant(`New defaults, pallet $${price}`, { money: { palletPrice: price, premiumPrice: +(price * 1.5).toFixed(2) } });
+} else if (which === 'demand') {
+  // The new defaults, with shops wanting more of what a producer makes (0.5 = supply matches demand).
+  for (const share of [0.75, 1]) variant(`New defaults, shops want ${share * 4}/cycle`, { cycles: { shopShare: share } });
 } else if (which === 'dense2') {
   const dense2 = { producersPerGood: [8, 10] as [number, number], consumersPerGood: [14, 22] as [number, number] };
   variant('Fixed level 2 + cheap/big fleets + 2× density', { depots: { truckPrice: 6, capacity: 16 }, town: dense2, cycles: fixed(2) });
