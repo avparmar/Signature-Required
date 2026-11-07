@@ -118,7 +118,7 @@ describe('trucks on routes', () => {
     expect(g.routes()[0].trucks).toBe(1);
     const freed = g.trucks.trucks.find((t) => t.route === null)!;
     // It may still have a pallet to deliver first (no dumping); then it heads home.
-    expect(freed.orders.every((o) => o.action === 'unload')).toBe(true);
+    expect(freed.orders.every((o) => o.action === 'unload' || o.action === 'signOff')).toBe(true);
     runFor(g, 120);
     expect(freed.state).toBe('idle');
     expect(freed.node).toBe(depot.node);
@@ -133,6 +133,23 @@ describe('trucks on routes', () => {
     g.step();
     expect(g.routes()).toHaveLength(0);
     expect(g.drainEvents(0).filter((e) => e.type === 'rejected')).toHaveLength(1); // nothing left to remove
+  });
+
+  it('a truck taken off its route with a raw pallet still has it processed before delivering it', () => {
+    const { g, depot, producer, consumer } = setup();
+    assign(g, depot.id, producer.id, consumer.id, 1);
+    const t = g.trucks.trucks.find((x) => x.route !== null)!;
+    let delivered: boolean | null = null;
+    for (let i = 0; i < 3000 && !(t.cargo && !t.cargo.processed && t.state === 'driving'); i++) g.step();
+    expect(t.cargo?.processed).toBe(false);
+    g.act(0, { type: 'unassignRoute', depot: depot.id, producer: producer.id, consumer: consumer.id });
+    g.step();
+    expect(t.orders.map((o) => o.action)).toEqual(['signOff', 'unload']);
+    for (let i = 0; i < 3000 && t.cargo; i++) {
+      if (t.state === 'servicing' && t.cargo) delivered = t.cargo.processed;
+      g.step();
+    }
+    expect(delivered).toBe(true);
   });
 
   it('co-presidents: the last order wins', () => {

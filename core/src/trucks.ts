@@ -406,15 +406,21 @@ export class TruckSystem {
 
   /**
    * Take a truck off its route: it drives back to its depot and waits there as a free truck.
-   * A truck carrying a pallet delivers it first (no dumping): it keeps only its unload stop, and
+   * A truck carrying a pallet (or loading one) delivers it first (no dumping): it keeps only its
+   * unload stop, and its factory stop before that if the pallet hasn't been processed yet, and
    * heads home once the pallet is gone.
    */
   sendHome(truck: Truck, now: number) {
     truck.route = null;
     truck.homing = true;
     truck.pendingOrders = null;
-    const unload = truck.cargo ? truck.orders.find((s) => s.action === 'unload') : undefined;
-    truck.orders = unload ? [unload] : [];
+    const loading = truck.state === 'servicing' && truck.serving?.action === 'load';
+    const carrying = truck.cargo !== null || loading;
+    const unload = carrying ? truck.orders.find((s) => s.action === 'unload') : undefined;
+    // Still raw: through the factory first (unless it's being processed there right now).
+    const raw = loading ? this.cfg.viaDepot !== 'none' : truck.cargo !== null && !truck.cargo.processed && !truck.signing;
+    const sign = raw ? truck.orders.find((s) => s.action === 'signOff') : undefined;
+    truck.orders = unload ? (sign ? [sign, unload] : [unload]) : [];
     truck.orderIndex = 0;
     if (truck.state === 'servicing') return; // finishService sends it on
     if (truck.signing) return; // goes home (or delivers first) once processing is done
