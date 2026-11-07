@@ -280,7 +280,7 @@ export class Renderer {
       if (!blocks.size) continue;
       const color = companyColor(c.id);
       ctx.fillStyle = color;
-      ctx.globalAlpha = editing ? 0.16 : 0.05;
+      ctx.globalAlpha = editing ? 0.18 : 0.1;
       for (const b of blocks) ctx.fillRect(this.X(b % W), this.Y(Math.floor(b / W)), s, s);
       const inset = this.roadWidth * 0.22;
       ctx.globalAlpha = editing ? 1 : 0.8;
