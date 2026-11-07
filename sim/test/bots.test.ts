@@ -2,16 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { newGame } from '@sr/core';
 import { Bot, PERSONALITIES, runGame } from '../src/index.js';
 
-// A full bot game on the default 16x16 town takes several seconds.
+// Bot games are kept short (a few minutes of game time): long enough for shares, trucks,
+// deliveries and a couple of dividends, without running a whole 15 minutes.
 const SLOW = 60_000;
 
 describe('bots', () => {
-  it('play a whole game: buy shares, buy trucks, deliver, and earn dividends', () => {
-    const r = runGame({ seed: 2 });
+  it('play a game: buy shares, buy trucks, deliver, and earn dividends', () => {
+    const r = runGame({ seed: 2, durationSec: 420 });
     expect(r.auctions.length).toBeGreaterThan(5);
     expect(r.companies.some((c) => c.trucks > 0)).toBe(true);
     expect(r.companies.reduce((s, c) => s + c.deliveries, 0)).toBeGreaterThan(50);
-    expect(r.payouts).toHaveLength(5);
+    expect(r.payouts).toHaveLength(3); // at 3 and 6 minutes, and at the end
     expect(Math.max(...r.cash)).toBeGreaterThan(100);
   }, SLOW);
 
@@ -74,7 +75,7 @@ describe('speculator', () => {
   });
 
   it('revives a no-minimum game: companies get funded and build fleets', () => {
-    const r = runGame({ seed: 3, auctions: { openingBid: 0 } }, [PERSONALITIES.speculator, PERSONALITIES.balanced, PERSONALITIES.balanced, PERSONALITIES.balanced]);
+    const r = runGame({ seed: 3, durationSec: 240, auctions: { openingBid: 0 } }, [PERSONALITIES.speculator, PERSONALITIES.balanced, PERSONALITIES.balanced, PERSONALITIES.balanced]);
     expect(r.companies.reduce((s, c) => s + c.trucks, 0)).toBeGreaterThan(2);
     expect(r.auctions.some((a) => a.amount > 0)).toBe(true);
   }, SLOW);

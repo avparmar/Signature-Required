@@ -2,3 +2,11 @@ DESIGN.md
 .DS_Store
 node_modules/
 dist/
+# Compiled output from a stray tsc -b (the build uses the .ts sources)
+*.tsbuildinfo
+/core/src/**/*.js
+/core/test/**/*.js
+/sim/src/**/*.js
+/sim/test/**/*.js
+/client/src/**/*.js
+/client/vite.config.js

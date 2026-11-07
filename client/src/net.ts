@@ -252,6 +252,10 @@ export class HostMatch implements Match {
   obs() {
     return this.session.obs();
   }
+
+  get renderT() {
+    return this.session.renderT;
+  }
   act(action: Action) {
     this.session.act(action);
   }
@@ -377,6 +381,7 @@ export class RemoteMatch implements Match {
         }
       }
       this.latest = msg.obs;
+      this.latestAt = performance.now();
       this.paused = msg.paused;
       this.events.push(...msg.events);
     } else if (msg.t === 'notice') this.notices.push(msg.text);
@@ -392,7 +397,17 @@ export class RemoteMatch implements Match {
     return this.latest?.phase === 'ended' || this.lostHost;
   }
 
+  /** When the latest view arrived (performance.now()), to run trucks on smoothly until the next. */
+  private latestAt = 0;
+
   update() {}
+
+  get renderT(): number {
+    const o = this.obs();
+    if (o.phase !== 'running' || this.paused) return o.t;
+    // Updates come ten times a second: carry on for up to a little longer than that.
+    return o.t + Math.min(0.15, (performance.now() - this.latestAt) / 1000);
+  }
 
   takeEvents() {
     const out = this.events;

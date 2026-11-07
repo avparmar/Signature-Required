@@ -156,7 +156,7 @@ describe('final bonus based on earnings', () => {
 });
 
 describe('pulling out', () => {
-  it('trucks sent out together leave their factory one at a time, not stacked', () => {
+  it('trucks sent out together don\'t drive stacked on top of each other', () => {
     const { g, home, producer, consumer } = setup();
     g.companies[0].shares = [0, null, null, null, null];
     g.addTruck(0);
