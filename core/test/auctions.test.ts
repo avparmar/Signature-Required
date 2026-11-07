@@ -117,9 +117,13 @@ describe('sales of company shares', () => {
 
   it("a bid made before the sale counts; below the company's minimum price, the share stays unsold", () => {
     const g = running();
-    g.companies[0].assets = 500; // value per share $100, so the minimum is $50
-    expect(g.minPrice(0)).toBe(50);
+    g.companies[0].assets = 300; // the minimum is $30
+    g.act(1, { type: 'bid', company: 0, amount: 25 }); // below it: refused
     g.act(1, { type: 'bid', company: 0, amount: 40 });
+    g.step();
+    expect(of(g.drainEvents(1), 'rejected')).toHaveLength(1);
+    g.companies[0].assets = 500; // value per share $100, so the minimum is now $50
+    expect(g.minPrice(0)).toBe(50);
     g.act(1, { type: 'startSale', company: 0 });
     stepFor(g, 31);
     expect(g.companies[0].shares).toEqual([0, null, null, null, null]);

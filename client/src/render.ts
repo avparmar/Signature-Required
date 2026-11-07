@@ -13,9 +13,9 @@ import { distancesFrom, routeVia, type Location, type Observation, type Route, t
 
 // Company colours stay clear of the goods' colours (wood brown, wheat gold, oil slate). Each game
 // uses a few of these (see pickCompanySlots), never two that are easy to mix up.
-export const COMPANY_COLORS = ['#e8432f', '#2a86e0', '#25a84a', '#9152e0', '#f5891a', '#14b2a8', '#d93a8c', '#7cbf2e', '#38b6e8'];
-/** Colours too alike to share a game: red/magenta, green/lime, blue/sky, teal/sky. */
-const CLASHES: [number, number][] = [[0, 6], [2, 7], [1, 8], [5, 8]];
+export const COMPANY_COLORS = ['#e8432f', '#2a86e0', '#25a84a', '#9152e0', '#f5891a', '#66717e', '#d93a8c', '#7cbf2e', '#38b6e8'];
+/** Colours too alike to share a game: red/magenta, green/lime, blue/sky. */
+const CLASHES: [number, number][] = [[0, 6], [2, 7], [1, 8]];
 
 /** This game's palette slot for each company (company index -> COMPANY_COLORS index). */
 let companySlots: number[] = COMPANY_COLORS.map((_, i) => i);
@@ -107,123 +107,12 @@ export class Renderer {
     this.town = town;
     this.districts.clear();
     this.paths.clear();
-    this.queueLines.clear();
-  }
-
-  /**
-   * The line trucks wait in at a building, on one of the streets round its block (a building has a
-   * driveway to each): the street from that kerb node back the way the kerb lane's traffic comes
-   * from, following the road round corners. `pts` runs upstream from the kerb; trucks there drive
-   * downstream, towards the building. Cached per building and kerb.
-   */
-  private queueLines = new Map<string, { pts: { x: number; y: number }[]; cum: number[]; back: number } | null>();
-  /** A building's first kerb (for trucks we don't know the way of, like new ones at a depot). */
-  defaultKerb(node: number): number | undefined {
-    return this.town.graph.adj[node][0]?.to;
-  }
-  queueLine(node: number, kerbNode?: number) {
-    const g = this.town.graph;
-    const kerb = kerbNode ?? this.defaultKerb(node);
-    const key = `${node}:${kerb}`;
-    if (this.queueLines.has(key)) return this.queueLines.get(key)!;
-    const l = this.locationByNode().get(node);
-    let line: { pts: { x: number; y: number }[]; cum: number[]; back: number } | null = null;
-    if (kerb !== undefined && l) {
-      const K = g.nodes[kerb];
-      const nl = Math.hypot(l.x - K.x, l.y - K.y) || 1;
-      const n = { x: (l.x - K.x) / nl, y: (l.y - K.y) / nl };
-      // The kerb lane's traffic goes (n.y, -n.x); the line runs the other way, upstream.
-      let dir = { x: -n.y, y: n.x };
-      const pts = [{ x: K.x, y: K.y }];
-      const cum = [0];
-      let cur = kerb;
-      let prev = node;
-      while (cum[cum.length - 1] < 8) {
-        let best = -1;
-        let bestDot = 0.3;
-        for (const e of g.adj[cur]) {
-          if (e.to === prev || g.terminal[e.to]) continue;
-          const v = { x: g.nodes[e.to].x - g.nodes[cur].x, y: g.nodes[e.to].y - g.nodes[cur].y };
-          const len = Math.hypot(v.x, v.y) || 1;
-          const dot = (v.x * dir.x + v.y * dir.y) / len;
-          if (dot > bestDot) {
-            bestDot = dot;
-            best = e.to;
-          }
-        }
-        if (best < 0) break;
-        const a = g.nodes[cur];
-        const b = g.nodes[best];
-        const len = Math.hypot(b.x - a.x, b.y - a.y);
-        dir = { x: (b.x - a.x) / len, y: (b.y - a.y) / len };
-        pts.push({ x: b.x, y: b.y });
-        cum.push(cum[cum.length - 1] + len);
-        prev = cur;
-        cur = best;
-      }
-      // How far the street runs on past the kerb node (downstream), where leaving trucks go.
-      let back = 0;
-      for (const e of g.adj[kerb]) {
-        if (g.terminal[e.to]) continue;
-        const v = { x: g.nodes[e.to].x - K.x, y: g.nodes[e.to].y - K.y };
-        const len = Math.hypot(v.x, v.y) || 1;
-        if ((v.x * -n.y + v.y * n.x) / len < -0.7) back = Math.max(back, len);
-      }
-      if (pts.length >= 2) line = { pts, cum, back };
-    }
-    this.queueLines.set(key, line);
-    return line;
+    this.edgeDir = undefined;
   }
 
   /** Lane offset from the middle of the road (world units). */
   get laneOffset() {
     return this.roadWidth / this.scale / 4;
-  }
-
-  /**
-   * A point on a building's waiting line, `s` along the street from its kerb: in the near lane
-   * (next to the building, facing towards it) or the far lane (facing away).
-   */
-  queuePoint(node: number, s: number, side: 'near' | 'far', kerb?: number): Spot | null {
-    const q = this.queueLine(node, kerb);
-    if (!q) return null;
-    // Stay on the street: no further than the line goes, nor past the end of the street downstream.
-    s = Math.max(-q.back, Math.min(q.cum[q.cum.length - 1], s));
-    let i = 0;
-    while (i < q.pts.length - 2 && q.cum[i + 1] < s) i++;
-    const a = q.pts[i];
-    const b = q.pts[i + 1];
-    const len = q.cum[i + 1] - q.cum[i] || 1;
-    const u = { x: (b.x - a.x) / len, y: (b.y - a.y) / len }; // upstream
-    const t = s - q.cum[i];
-    const cx = a.x + u.x * t;
-    const cy = a.y + u.y * t;
-    const lane = this.laneOffset;
-    // Keep right: the near lane is to the right of downstream (-u), the far lane to the right of u.
-    const h = side === 'near' ? { x: -u.x, y: -u.y } : u;
-    return { x: cx - h.y * lane, y: cy + h.x * lane, dx: h.x, dy: h.y, parked: true, q: { node, kerb: kerb ?? this.defaultKerb(node), s, side } };
-  }
-
-  /** Where a road position sits on a building's waiting line: how far along, which lane, how far off it. */
-  queueProject(node: number, x: number, y: number, kerb?: number): { s: number; side: 'near' | 'far'; off: number } | null {
-    const q = this.queueLine(node, kerb);
-    if (!q) return null;
-    let best: { s: number; side: 'near' | 'far'; off: number } | null = null;
-    for (let i = 0; i < q.pts.length - 1; i++) {
-      const a = q.pts[i];
-      const b = q.pts[i + 1];
-      const len = q.cum[i + 1] - q.cum[i] || 1;
-      const u = { x: (b.x - a.x) / len, y: (b.y - a.y) / len };
-      // The first stretch also runs on past the kerb node (downstream), where leaving trucks go.
-      const t = Math.max(i === 0 ? -q.back : 0, Math.min(len, (x - a.x) * u.x + (y - a.y) * u.y));
-      const px = a.x + u.x * t;
-      const py = a.y + u.y * t;
-      const off = Math.hypot(x - px, y - py);
-      // Which side of the centre line: the near lane is to the right of downstream.
-      const cross = (x - px) * u.y - (y - py) * u.x;
-      if (!best || off < best.off) best = { s: q.cum[i] + t, side: cross >= 0 ? 'near' : 'far', off };
-    }
-    return best;
   }
 
   /** Match the canvas to its box and fit the whole town. */
@@ -336,28 +225,135 @@ export class Renderer {
     return path;
   }
 
-  /**
-   * A route's line on screen, along the streets from producer to consumer. Routes with the same
-   * ends (several companies, or several depots) are nudged apart sideways.
-   */
-  private routeLine(r: Route, routes: Route[]): { x: number; y: number }[] {
-    // From kerb to kerb: leave off the zero-length driveways into the buildings themselves.
+  /** Kerb-to-kerb road nodes of a route (leaving off the zero-length driveways into the buildings). */
+  private routeNodes(r: Route): number[] {
     const path = this.routePath(r);
     const term = this.town.graph.terminal;
-    const trimmed = path.filter((n, i) => !(term[n] && (i === 0 || i === path.length - 1)) || path.length <= 2);
-    const nodes = trimmed.map((n) => this.town.graph.nodes[n]);
-    const same = routes.filter((x) => x.producer === r.producer && x.consumer === r.consumer && (this.via === 'none' || x.depot === r.depot));
-    const k = (same.indexOf(r) - (same.length - 1) / 2) * 4;
-    return nodes.map((n, i) => {
-      const a = nodes[Math.max(0, i - 1)];
-      const b = nodes[Math.min(nodes.length - 1, i + 1)];
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const len = Math.hypot(dx, dy) || 1;
-      return { x: this.X(n.x) + (-dy / len) * k, y: this.Y(n.y) + (dx / len) * k };
-    });
+    return path.filter((n, i) => !(term[n] && (i === 0 || i === path.length - 1)) || path.length <= 2);
   }
 
+  private tracksFor = '';
+  private tracks = new Map<string, number[]>();
+  /** For each street (a<b), the companies with a route along it, in order: each gets its own track. */
+  private streetTracks(routes: Route[]): Map<string, number[]> {
+    const sig = routes.map((r) => `${r.key}@${r.company}`).join('|');
+    if (sig === this.tracksFor) return this.tracks;
+    const m = new Map<string, Set<number>>();
+    for (const r of routes) {
+      const ns = this.routeNodes(r);
+      for (let i = 1; i < ns.length; i++) {
+        const k = ns[i - 1] < ns[i] ? `${ns[i - 1]}-${ns[i]}` : `${ns[i]}-${ns[i - 1]}`;
+        (m.get(k) ?? m.set(k, new Set()).get(k)!).add(r.company);
+      }
+    }
+    this.tracks = new Map([...m].map(([k, v]) => [k, [...v].sort((x, y) => x - y)]));
+    this.tracksFor = sig;
+    return this.tracks;
+  }
+
+  /** The road's centre-line dashes (the route lines use the same, so they line up). */
+  private centreDash(): number[] {
+    return [this.scale * 0.11, this.scale * 0.14];
+  }
+
+  /**
+   * A route's streets on screen, each drawn the way the road draws its centre line (same end
+   * first), shifted onto the company's track where several share it.
+   */
+  private routeStreets(r: Route, routes: Route[]): [{ x: number; y: number }, { x: number; y: number }][] {
+    const ns = this.routeNodes(r);
+    const g = this.town.graph;
+    const tracks = this.streetTracks(routes);
+    if (!this.edgeDir) {
+      this.edgeDir = new Map();
+      for (const e of g.edges) this.edgeDir.set(e.a < e.b ? `${e.a}-${e.b}` : `${e.b}-${e.a}`, [e.a, e.b]);
+    }
+    const out: [{ x: number; y: number }, { x: number; y: number }][] = [];
+    for (let i = 1; i < ns.length; i++) {
+      const lo = Math.min(ns[i - 1], ns[i]);
+      const hi = Math.max(ns[i - 1], ns[i]);
+      if (g.terminal[lo] || g.terminal[hi]) continue;
+      const [ea, eb] = this.edgeDir.get(`${lo}-${hi}`) ?? [lo, hi];
+      const list = tracks.get(`${lo}-${hi}`) ?? [r.company];
+      const gap = this.trackGap(list.length);
+      // The same sideways shift as routeLine (measured along the street from its first end).
+      const k = (list.indexOf(r.company) - (list.length - 1) / 2) * gap;
+      const f = this.firstEnd(lo, hi);
+      const A = g.nodes[f];
+      const B = g.nodes[f === lo ? hi : lo];
+      const len = Math.hypot(B.x - A.x, B.y - A.y) || 1;
+      const ox = (-(B.y - A.y) / len) * k;
+      const oy = ((B.x - A.x) / len) * k;
+      const P = g.nodes[ea];
+      const Q = g.nodes[eb];
+      out.push([
+        { x: this.X(P.x) + ox, y: this.Y(P.y) + oy },
+        { x: this.X(Q.x) + ox, y: this.Y(Q.y) + oy },
+      ]);
+    }
+    return out;
+  }
+  private edgeDir?: Map<string, [number, number]>;
+
+  /**
+   * Of a street's two ends, the one sideways shifts are measured from: the left one (or the top
+   * one, on a street running up and down), so each company keeps to the same side all along a
+   * street, whichever way the road's own nodes run.
+   */
+  private firstEnd(a: number, b: number): number {
+    const A = this.town.graph.nodes[a];
+    const B = this.town.graph.nodes[b];
+    return A.x < B.x - 1e-9 || (Math.abs(A.x - B.x) <= 1e-9 && A.y < B.y) ? a : b;
+  }
+
+  /** How far apart companies' tracks are on a street several of them share. */
+  private trackGap(n: number): number {
+    return Math.min(this.roadWidth * 0.5, (this.roadWidth * 0.75) / Math.max(1, n - 1));
+  }
+
+  /**
+   * A route's line on screen, along the streets from producer to consumer. Where several
+   * companies' routes share a street, each company has its own track across it, side by side.
+   */
+  private routeLine(r: Route, routes: Route[]): { x: number; y: number }[] {
+    const ns = this.routeNodes(r);
+    const g = this.town.graph;
+    const tracks = this.streetTracks(routes);
+    const P = ns.map((n) => ({ x: this.X(g.nodes[n].x), y: this.Y(g.nodes[n].y) }));
+    if (P.length < 2) return P;
+    // Each stretch, shifted sideways onto its track (measured the same way whichever way it's driven).
+    const segs: { a: { x: number; y: number }; b: { x: number; y: number }; u: { x: number; y: number } }[] = [];
+    for (let i = 1; i < ns.length; i++) {
+      const lo = Math.min(ns[i - 1], ns[i]);
+      const hi = Math.max(ns[i - 1], ns[i]);
+      const list = tracks.get(`${lo}-${hi}`) ?? [r.company];
+      // Spread across the road, two companies a lane each: the more there are, the closer together.
+      const gap = this.trackGap(list.length);
+      const k = (list.indexOf(r.company) - (list.length - 1) / 2) * gap * (ns[i - 1] === this.firstEnd(lo, hi) ? 1 : -1);
+      const dx = P[i].x - P[i - 1].x;
+      const dy = P[i].y - P[i - 1].y;
+      const len = Math.hypot(dx, dy) || 1;
+      const u = { x: dx / len, y: dy / len };
+      const o = { x: -u.y * k, y: u.x * k };
+      segs.push({ a: { x: P[i - 1].x + o.x, y: P[i - 1].y + o.y }, b: { x: P[i].x + o.x, y: P[i].y + o.y }, u });
+    }
+    // Joined at each corner where the shifted stretches meet (or stepped across, if they run straight on).
+    const out = [segs[0].a];
+    for (let i = 0; i < segs.length - 1; i++) {
+      const s1 = segs[i];
+      const s2 = segs[i + 1];
+      const cr = s1.u.x * s2.u.y - s1.u.y * s2.u.x;
+      if (Math.abs(cr) > 0.2) {
+        const t = ((s2.a.x - s1.a.x) * s2.u.y - (s2.a.y - s1.a.y) * s2.u.x) / cr;
+        out.push({ x: s1.a.x + s1.u.x * t, y: s1.a.y + s1.u.y * t });
+      } else {
+        out.push(s1.b);
+        if (Math.hypot(s1.b.x - s2.a.x, s1.b.y - s2.a.y) > 0.5) out.push(s2.a);
+      }
+    }
+    out.push(segs[segs.length - 1].b);
+    return out;
+  }
 
   draw(obs: Observation, trucks: { id: number; x: number; y: number; dx: number; dy: number }[], hl: Highlights, now: number) {
     const { ctx } = this;
@@ -419,10 +415,13 @@ export class Renderer {
       // Sized to the town, not the screen: they grow and shrink with the zoom like the roads.
       ctx.strokeStyle = 'rgba(255,255,255,0.75)';
       ctx.lineWidth = Math.max(1, this.scale * 0.025);
-      ctx.setLineDash([this.scale * 0.11, this.scale * 0.14]);
+      ctx.setLineDash(this.centreDash());
       ctx.beginPath();
+      // Not under a route: its line takes the middle of the street there.
+      const routed = this.streetTracks(obs.routes);
       for (const e of town.graph.edges) {
         if (term[e.a] || term[e.b]) continue;
+        if (routed.has(e.a < e.b ? `${e.a}-${e.b}` : `${e.b}-${e.a}`)) continue;
         const a = town.graph.nodes[e.a];
         const b = town.graph.nodes[e.b];
         ctx.moveTo(this.X(a.x), this.Y(a.y));
@@ -535,13 +534,21 @@ export class Renderer {
         pts.forEach((p, k) => (k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
         ctx.stroke();
       }
+      // Dashed like the road's centre line, dash for dash: street by street, from the same end,
+      // so on a street of its own its dashes sit right on the centre line's.
       ctx.strokeStyle = companyColor(r.company);
-      ctx.globalAlpha = hot ? 1 : 0.6;
-      ctx.lineWidth = Math.max(hot ? 2.5 : 1.5, this.scale * (hot ? 0.09 : 0.045));
-      ctx.setLineDash([this.scale * 0.16, this.scale * 0.13]);
+      ctx.globalAlpha = hot ? 1 : 0.75;
+      // Thicker than the centre line (scale * 0.025), so a route never reads as road paint.
+      ctx.lineWidth = Math.max(hot ? 3 : 2, this.scale * (hot ? 0.075 : 0.05));
+      ctx.setLineDash(this.centreDash());
+      ctx.lineCap = 'butt';
       ctx.beginPath();
-      pts.forEach((p, k) => (k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+      for (const [a, b] of this.routeStreets(r, routes)) {
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+      }
       ctx.stroke();
+      ctx.lineCap = 'round';
       ctx.setLineDash([]);
       ctx.globalAlpha = 1;
     }
@@ -877,94 +884,6 @@ export class Renderer {
     return this.locAtCache.map;
   }
 
-  /**
-   * Where each truck should be drawn: its road position, or, when queued or loading at a
-   * building, a slot in a neat row beside it (and likewise when parked at a depot). The facing is
-   * the direction to the next road node.
-   */
-  truckTargets(obs: Observation, kerbFor: (truck: number, node: number) => number | undefined = () => undefined): Map<number, Spot> {
-    const out = new Map<number, Spot>();
-    const tById = new Map(obs.trucks.map((t) => [t.id, t]));
-    // Trucks stopped at a building wait in a line along the kerb of its street, in the lane next
-    // to it: the first at the driveway, the rest queued back along the street in the order they
-    // came (straight on past the corner if the line gets long), all facing the way that lane's
-    // traffic goes. When the one in front leaves, the others move up.
-    const spacing = (this.truckSize.w / this.scale) * 1.15;
-    // Each street round the building has its own line: trucks wait on the one they came in by.
-    const lineCount = new Map<string, number>();
-    const park = (node: number, ids: number[]) => {
-      for (const id of ids) {
-        const kerb = kerbFor(id, node) ?? this.defaultKerb(node);
-        const key = `${node}:${kerb}`;
-        const k = lineCount.get(key) ?? 0;
-        lineCount.set(key, k + 1);
-        const p = this.queuePoint(node, k * spacing, 'near', kerb);
-        if (p) out.set(id, p);
-      }
-    };
-    // Everyone stopped at a building, by its road node: queued or loading there, idle or being
-    // processed at a factory, or waiting for their turn to pull out.
-    const term = this.town.graph.terminal;
-    const atNode = new Map<number, number[]>();
-    const add = (node: number, id: number) => atNode.set(node, [...(atNode.get(node) ?? []), id]);
-    for (const [loc, ids] of Object.entries(obs.queues)) for (const id of ids) add(this.town.locations[Number(loc)].node, id);
-    const queued = new Set(Object.values(obs.queues).flat());
-    const driving: typeof obs.trucks = [];
-    for (const t of obs.trucks) {
-      if (queued.has(t.id)) continue;
-      if (t.state === 'idle' || t.state === 'processing' || (t.state === 'driving' && t.progress === 0 && term[t.node])) add(t.node, t.id);
-      else driving.push(t);
-    }
-    for (const [node, ids] of atNode) park(node, ids);
-    // Heading for a building in the lane next to it: it stops at its place in the line as it gets
-    // there, behind the trucks already waiting (and those ahead of it on the way).
-    const approaching = new Map<string, { id: number; s: number; node: number; kerb: number }[]>();
-    for (const t of driving) {
-      const dest = t.path[t.path.length - 1];
-      if (dest === undefined || !term[dest] || t.path.length > 4) continue;
-      // The street it'll pull in from: the node before the building on its route.
-      const kerb = t.path.length >= 2 ? t.path[t.path.length - 2] : t.node;
-      const next = this.town.graph.nodes[t.path[0]];
-      const p = this.queueProject(dest, t.x, t.y, kerb);
-      if (!p || p.off > 0.05) continue;
-      const q = this.queueLine(dest, kerb)!;
-      // Heading downstream along the line (towards the building)?
-      const i = Math.max(0, q.cum.findIndex((c) => c >= p.s) - 1);
-      const a = q.pts[i];
-      const b = q.pts[Math.min(i + 1, q.pts.length - 1)];
-      const ux = b.x - a.x;
-      const uy = b.y - a.y;
-      if ((next.x - t.x) * -ux + (next.y - t.y) * -uy <= 0) continue;
-      const key = `${dest}:${kerb}`;
-      approaching.set(key, [...(approaching.get(key) ?? []), { id: t.id, s: p.s, node: dest, kerb }]);
-    }
-    const stopped = new Set<number>();
-    for (const [key, list] of approaching) {
-      list.sort((a, b) => a.s - b.s);
-      list.forEach((a, j) => {
-        const k = (lineCount.get(key) ?? 0) + j;
-        if (a.s > k * spacing + 1e-3) return; // not there yet
-        const p = this.queuePoint(a.node, k * spacing, 'near', a.kerb);
-        if (p) {
-          out.set(a.id, p);
-          stopped.add(a.id);
-        }
-      });
-    }
-    for (const t of driving) {
-      if (stopped.has(t.id)) continue;
-      // Keep right: shift the truck a quarter of the road's width to the right of its heading.
-      const next = t.path.length ? this.town.graph.nodes[t.path[0]] : null;
-      const dx = next ? next.x - t.x : 0;
-      const dy = next ? next.y - t.y : 0;
-      const len = Math.hypot(dx, dy);
-      const lane = this.roadWidth / this.scale / 4;
-      const ox = len > 1e-9 ? (-dy / len) * lane : 0;
-      const oy = len > 1e-9 ? (dx / len) * lane : 0;
-      out.set(t.id, { x: t.x + ox, y: t.y + oy, dx, dy });
-    }
-    return out;
-  }
 }
 
 /** A load in the good's colour: raw goods are a cross-braced crate, finished goods a pallet with a band and a gold trim. */
@@ -1050,17 +969,12 @@ export function drawFactory(ctx: CanvasRenderingContext2D, x: number, y: number,
   }
 }
 
-/** Where a truck should be drawn, and whether it's parked at a building (it then drives there at its own speed). */
+/** Where a truck is drawn, and which way it faces. */
 export interface Spot {
   x: number;
   y: number;
   dx: number;
   dy: number;
-  parked?: boolean;
-  /** Parked: where on the building's waiting line (it drives along the line, and U-turns into the near lane). */
-  q?: { node: number; kerb?: number; s: number; side: 'near' | 'far'; turn?: number };
-  /** Leaving a line round a corner: the junction it drives through first. */
-  via?: { x: number; y: number };
 }
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {

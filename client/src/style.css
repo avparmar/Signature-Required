@@ -319,3 +319,9 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #companies .treasury-box .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
 #companies .head .treasury { font-size: 15px; font-weight: 700; }
 #companies .broker .order .px { font-size: 13px; }
+
+/* Folded card: standing orders in one line, lined up with the Sell for / Buy for buttons. */
+#companies .orders-line { display: flex; gap: 4px; color: var(--muted); }
+#companies .orders-line > span { flex: 1; display: flex; align-items: baseline; gap: 4px; padding: 0 8px; white-space: nowrap; overflow: hidden; font-size: 12px; }
+#companies .orders-line b { color: var(--ink); }
+#companies .orders-line .from { margin-left: auto; padding-left: 6px; }

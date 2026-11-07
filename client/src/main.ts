@@ -37,7 +37,7 @@ const COMPANY_NAMES: [string, string][] = [
   ['Greenway Freight', 'GWF'],
   ['Purple Pony Transport', 'PPT'],
   ['Orange Owl Logistics', 'OOL'],
-  ['Tealwater Trucking', 'TWT'],
+  ['Iron Horse Solutions', 'IHS'],
   ['Magenta Moth Movers', 'MMM'],
   ['Lime Lizard Lines', 'LLL'],
   ['Skyhook Shipping', 'SKY'],
@@ -47,17 +47,17 @@ const coTicker = (c: number) => COMPANY_NAMES[companySlot(c)][1];
 /** A holding as a chip in the company's colour: ticker, shares, and a crown for its president. */
 const holdingChip = (c: number, n: number, pres: boolean) =>
   `<span class="chip co-chip${pres ? ' pres' : ''}" style="background:${companyColor(c)}" title="${coName(c)}: ${n} share${n === 1 ? '' : 's'}${pres ? ', president' : ''}">${pres ? '♔ ' : ''}${coTicker(c)} ×${n}</span>`;
-// While watching the bots, Player 1 isn't you.
+// While watching the bots, the first seat isn't you.
 const playerName = (p: number, me: number) => (p === me && !watching ? 'you' : seatName(p));
-/** A seat's name: the person's name online, otherwise Player N. */
-const seatName = (p: number) => session.names[p] || `Player ${p + 1}`;
+/** A seat's name: the person's name online, otherwise just their icon. */
+const seatName = (p: number) => session.names[p] || seatIcon(p);
 /** Each seat's icon, so players are easy to tell apart wherever they appear (names alone aren't, online). */
 const SEAT_ICONS = ['🦊', '🐻', '🐸', '🐧', '🦉', '🐙', '🐯', '🐨', '🐼', '🦁', '🐢', '🐝'];
 /** Each seat's icon as the game has it (players pick theirs in the opening round). */
 let seatIcons: number[] = [];
 const seatIcon = (p: number) => SEAT_ICONS[(seatIcons[p] ?? p) % SEAT_ICONS.length];
-/** A short label: icon plus their name (trimmed) online, otherwise PN. */
-const seatShort = (p: number) => `${seatIcon(p)} ${session.names[p] ? session.names[p].slice(0, 8) : `P${p + 1}`}`;
+/** A short label: icon, plus their name (trimmed) online. */
+const seatShort = (p: number) => (session.names[p] ? `${seatIcon(p)} ${session.names[p].slice(0, 8)}` : seatIcon(p));
 const fmtClock = (sec: number) => {
   const s = Math.max(0, Math.ceil(sec));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -146,8 +146,8 @@ function toast(text: string, kind: 'info' | 'error' = 'info') {
 function updateHint(obs: Observation) {
   const g = session.game;
   const hint = $('hint');
-  $('me-title').textContent = watching ? 'Player 1 (a bot: you\'re watching)' : 'You';
-  $('mycos-title').textContent = watching ? "Player 1's companies" : 'Your companies';
+  $('me-title').textContent = watching ? `${seatIcon(obs.me)} (a bot you're watching)` : 'You';
+  $('mycos-title').textContent = watching ? `${seatIcon(obs.me)}'s companies` : 'Your companies';
   if (watching) {
     hint.textContent = 'Watching the bots play. Change the speed at the top; New game to play yourself.';
     return;
@@ -471,7 +471,9 @@ function refreshPanels(obs: Observation) {
           return holdingChip(c.id, n, c.presidents.includes(p.id));
         })
         .join('');
-      return `<div class="pl${p.id === obs.me && !watching ? ' me' : ''}"><span class="icon">${seatIcon(p.id)}</span><b>${p.id === obs.me && !watching ? 'You' : seatName(p.id)}</b><span class="cash">${money(p.cash)}</span><span class="chips">${shares || '<span class="muted small">no shares</span>'}</span></div>`;
+      const me = p.id === obs.me && !watching;
+      const name = me ? 'You' : session.names[p.id] ? session.names[p.id].slice(0, 10) : '';
+      return `<div class="pl${me ? ' me' : ''}" title="${me ? 'You' : seatName(p.id)}"><span class="icon">${seatIcon(p.id)}</span>${name ? `<b>${name}</b>` : ''}<span class="cash">${money(p.cash)}</span><span class="chips">${shares || '<span class="muted small">no shares</span>'}</span></div>`;
     })
     .join('');
 
@@ -546,7 +548,7 @@ function card(id: number): Card {
 function leastBid(obs: Observation, id: number): number {
   const book = obs.books[id];
   const min = minimumBid(book, obs.me, session.cfg.auctions);
-  return obs.sales.some((x) => x.company === id) ? Math.max(min, obs.minPrice[id]) : Math.max(1, min);
+  return Math.max(1, min, obs.minPrice[id]); // never below the company's price
 }
 
 function refreshCompanies(obs: Observation) {
@@ -598,6 +600,21 @@ function refreshCompanies(obs: Observation) {
     if (sale) {
       const best = book.bid;
       html += `<div class="row small sale-line fold-only"><b>${sale.opening ? 'Opening sale' : 'Sale'} ${Math.ceil(sale.timeLeft)}s</b><span>${best ? `highest bid ${money(best.price)}${best.player === obs.me && !watching ? ' (you)' : ''}` : 'no bids yet'}</span></div>`;
+    }
+    // Folded: the standing orders at a glance, laid out like the Sell for / Buy for buttons (buy order
+    // on the left, sell order on the right). Watching the bots, there are no buttons, so all of them;
+    // playing, the buttons show everyone else's, so just yours. (Opened, they're listed in full below.)
+    if (obs.phase === 'running' && !sale) {
+      const shown = (o: { player: number } | null) => o !== null && (!acting || o.player === obs.me);
+      const bid = shown(book.bid) ? book.bid : null;
+      const ask = shown(book.ask) ? book.ask : null;
+      if (bid || ask) {
+        const cell = (label: string, o: { player: number; price: number } | null, tip: string) =>
+          o ? `<span title="${tip}">${label} <b>${money(o.price)}</b><span class="from">${o.player === obs.me && !watching ? 'you' : seatIcon(o.player)}</span></span>` : '<span></span>';
+        const mine = acting ? 'Your ' : 'Standing ';
+        const parts = [cell('Buying', bid, `${mine}buy order`), cell('Selling', ask, `${mine}sell order`)];
+        html += `<div class="row small orders-line fold-only">${parts.join('')}</div>`;
+      }
     }
     html += '<div class="more">';
     html += `<div class="row small muted"><span>${routes} route${routes === 1 ? '' : 's'}</span><span title="Dividend per share: the last one paid (the next one so far is above)">last div ${lastDividend.has(c.id) ? money(lastDividend.get(c.id)!) : '—'}</span></div>`;
@@ -843,7 +860,7 @@ function showPayout(paid: { company: number; amount: number; final: boolean }[])
         .sort((a, b) => b.amount - a.amount)
         .map((p) => `<span>${sw(p.company)}${coName(p.company)} ${money(p.amount)}</span>`)
         .join('')}</div>`
-    : `<div class="pay-title">Dividends paid</div><div class="pay-rows"><span>${watching ? 'Player 1 holds' : 'You hold'} no shares that paid this time.</span></div>`;
+    : `<div class="pay-title">Dividends paid</div><div class="pay-rows"><span>${watching ? `${seatIcon(0)} holds` : 'You hold'} no shares that paid this time.</span></div>`;
   banner.innerHTML += '<div class="pay-close">click to close</div>';
   banner.classList.remove('show');
   void banner.offsetWidth; // restart the animation
@@ -1279,9 +1296,8 @@ function frame(now: number) {
   sampleWaiting(obs);
   sampleHistory(obs);
   // Where to draw each truck: on its route in its lane (smooth between ticks), or in a building's line.
-  const moving = session.paused ? 0 : session.speed;
   const ahead = Math.max(0, session.renderT - obs.t);
-  const drawn = motion.update(obs, ahead, session.cfg.trucks.speed * dt * moving, session.cfg.trucks.speed);
+  const drawn = motion.update(obs, ahead, session.cfg.trucks, session.cfg.tickSec);
   shown.clear();
   for (const [id, sp] of drawn) shown.set(id, sp);
 
