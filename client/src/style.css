@@ -155,6 +155,15 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 .guide-imgs { display: flex; gap: 10px; align-items: flex-start; justify-content: center; background: #f7f4ec; border: 1px solid var(--line); border-radius: 10px; padding: 10px; }
 .guide-imgs img { max-width: 100%; max-height: min(300px, 38vh); min-width: 0; flex: 0 1 auto; border-radius: 6px; box-shadow: 0 1px 4px rgba(0,0,0,0.12); }
 .guide-step h2 { font-size: 17px; margin: 14px 0 4px; }
+/* The welcome page's how-it-works diagram, beside the picture of the town. */
+.guide-flow { flex: 0 0 auto; width: 190px; height: auto; align-self: center; }
+.guide-flow .ft { font: 700 12.5px system-ui, sans-serif; fill: var(--ink); }
+.guide-flow .fs { font: 10.5px system-ui, sans-serif; fill: #8a8273; }
+.guide-imgs:has(.guide-flow) img { max-width: calc(100% - 200px); }
+@media (max-width: 600px) {
+  .guide-imgs:has(.guide-flow) { flex-direction: column; align-items: center; }
+  .guide-imgs:has(.guide-flow) img { max-width: 100%; }
+}
 .guide-nav { display: flex; align-items: center; justify-content: space-between; margin: 8px 0 14px; }
 .card .guide-nav button { background: #f0ebe0; color: var(--ink); padding: 6px 12px; }
 .card .guide-nav button:disabled { opacity: 0.4; cursor: default; }

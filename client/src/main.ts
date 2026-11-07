@@ -1165,9 +1165,10 @@ const ordinal = (n: number) => `${n}${['th', 'st', 'nd', 'rd'][n % 10 > 3 || Mat
  * and/or a row of building icons drawn like the map draws them (`icons`), then what to do.
  */
 type GuideIcons = 'producers' | 'shops' | 'chain';
-const GUIDE: { img?: string[]; icons?: GuideIcons; title: string; text: string }[] = [
+const GUIDE: { img?: string[]; icons?: GuideIcons; flow?: boolean; title: string; text: string }[] = [
   {
     img: ['overview'],
+    flow: true,
     title: 'Welcome to Signature Required!',
     text: `<p>You're an <b>investor</b> in a busy little town. Trucking companies haul goods from producers to shops, and you <span class="hl">buy shares in them</span>. Every delivery fills their dividend pots, and the pots get paid out to shareholders. After 15 minutes, the <b>richest player wins</b>.</p>
       <p>The next pages show you how to:</p>
@@ -1225,6 +1226,29 @@ const GUIDE: { img?: string[]; icons?: GuideIcons; title: string; text: string }
   },
 ];
 
+/**
+ * How the game works, as a little diagram for the welcome page: buy shares, grow companies, then
+ * earn dividends and sell higher (both from the company's growth). Drawn here, so it stays sharp.
+ */
+function guideFlow(): string {
+  const you = '#fbe9a9';
+  const co = '#d9ecd9';
+  const node = (x: number, y: number, icon: string, fill: string, title: string, sub: string) =>
+    `<circle cx="${x}" cy="${y}" r="21" fill="${fill}" stroke="#23201b" stroke-width="2"/><text x="${x}" y="${y + 7}" text-anchor="middle" font-size="20">${icon}</text>` +
+    `<text class="ft" x="${x}" y="${y + 39}" text-anchor="middle">${title}</text><text class="fs" x="${x}" y="${y + 52}" text-anchor="middle">${sub}</text>`;
+  const arrow = 'stroke="#8a8273" stroke-width="2" fill="none" marker-end="url(#flow-h)"';
+  return `<svg class="guide-flow" viewBox="0 0 250 304" role="img" aria-label="Buy shares, grow companies, then earn dividends and sell higher">
+    <defs><marker id="flow-h" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#8a8273"/></marker></defs>
+    ${node(125, 28, '💵', you, 'Buy shares', 'your money funds it')}
+    <line x1="125" y1="86" x2="125" y2="110" ${arrow}/>
+    ${node(125, 136, '🏭', co, 'Grow companies', 'trucks deliver goods')}
+    <path d="M110,194 C95,206 70,208 62,220" ${arrow}/>
+    <path d="M140,194 C155,206 180,208 188,220" ${arrow}/>
+    ${node(62, 244, '💰', you, 'Earn dividends', 'every 3 minutes')}
+    ${node(188, 244, '📈', you, 'Sell higher', 'shares worth more')}
+  </svg>`;
+}
+
 /** A row of building icons for a walkthrough page. */
 function guideIcons(kind: GuideIcons): string {
   const goods = session.cfg.town.goods.map((_, g) => g);
@@ -1259,7 +1283,7 @@ function showHelp(step = 0) {
   const st = GUIDE[step];
   const last = step === GUIDE.length - 1;
   ov.innerHTML = `<div class="card help wide"><div class="guide-step">
-    ${st.img ? `<div class="guide-imgs">${st.img.map((i) => `<img src="${base}guide/${i}.webp" alt="">`).join('')}</div>` : ''}
+    ${st.img ? `<div class="guide-imgs">${st.img.map((i) => `<img src="${base}guide/${i}.webp" alt="">`).join('')}${st.flow ? guideFlow() : ''}</div>` : ''}
     ${st.icons ? guideIcons(st.icons) : ''}
     <h2>${step > 0 ? `${step}. ` : ''}${st.title}</h2>${st.text}
     <div class="guide-nav"><button data-step="${step - 1}" ${step === 0 ? 'disabled' : ''}>← Back</button><span class="dots">${GUIDE.map((_, k) => `<span class="${k === step ? 'on' : ''}" data-step="${k}"></span>`).join('')}</span>${last ? '<button id="btn-close" class="go">Start playing</button>' : `<button data-step="${step + 1}" class="go">Next →</button>`}</div>
