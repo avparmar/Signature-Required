@@ -374,12 +374,13 @@ export class Bot {
     const counts = new Map<number, number>();
     for (const s of c.shares) if (s !== null) counts.set(s, (counts.get(s) ?? 0) + 1);
     const top = Math.max(0, ...[...counts].filter(([p]) => p !== this.me).map(([, n]) => n));
-    const wouldControl = myShares + 1 >= top;
+    // A tie keeps the president, so taking a company over takes more shares than its president has.
+    const wouldControl = myShares + 1 > top || (myShares + 1 === top && c.presidents.includes(this.me));
     let value = this.shareValue(obs, a.company, min);
     if (wouldControl && !c.presidents.includes(this.me)) value *= 1 + this.personality.controlBonus;
-    // Defending its company: a rival winning this share would catch up with it.
+    // Defending its company: a rival winning this share would overtake it.
     const rival = a.highBidder;
-    if (c.presidents.includes(this.me) && rival !== null && rival !== this.me && (counts.get(rival) ?? 0) + 1 >= myShares)
+    if (c.presidents.includes(this.me) && rival !== null && rival !== this.me && (counts.get(rival) ?? 0) + 1 > myShares)
       value *= 1 + this.personality.controlBonus;
     if (min > value * this.personality.greed) return null;
     return { type: 'bid', company: a.company, amount: min };
@@ -602,7 +603,7 @@ export class Bot {
         const counts = new Map<number, number>();
         for (const s of c.shares) if (s !== null && s !== this.me) counts.set(s, (counts.get(s) ?? 0) + 1);
         const rival = Math.max(0, ...counts.values());
-        const keepControl = c.presidents.includes(this.me) && mine - 1 < rival && this.minutesLeft(obs) > 1;
+        const keepControl = c.presidents.includes(this.me) && mine - 1 <= rival && this.minutesLeft(obs) > 1;
         if (!keepControl) {
           const hold = this.holdValue(obs, c.id);
           const company = obs.companyBid[c.id];
@@ -657,7 +658,7 @@ export class Bot {
       const counts = new Map<number, number>();
       for (const s of c.shares) if (s !== null && s !== this.me) counts.set(s, (counts.get(s) ?? 0) + 1);
       const rival = Math.max(0, ...counts.values());
-      if (c.presidents.includes(this.me) && mine - 1 < rival && this.minutesLeft(obs) > 1) continue;
+      if (c.presidents.includes(this.me) && mine - 1 <= rival && this.minutesLeft(obs) > 1) continue;
       const book = obs.books[c.id];
       const hold = this.holdValue(obs, c.id);
       const floor = Math.max(Math.ceil(hold), (book.bid?.price ?? 0) + 1, (obs.companyBid[c.id] ?? 0) + 1, 1);

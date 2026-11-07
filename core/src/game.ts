@@ -147,7 +147,8 @@ export interface Observation {
   phase: Phase;
   players: Player[];
   /** Companies, with the pot shown as dividend per share (what one share will get next payout). */
-  companies: (Company & { presidents: number[]; dividendPerShare: number })[];
+  /** `presidents`: the president, if any (as a list). `succession`: shareholders in line of succession, president first. */
+  companies: (Company & { presidents: number[]; succession: number[]; dividendPerShare: number })[];
   /** Game time of the next dividend payout. */
   nextPayoutAt: number;
   /** Producers and consumers: stock, demand, level, growth, next cycle. */
@@ -469,6 +470,7 @@ export class Game {
         this.books[c.id].ask = null;
         const seller = this.players[ask.player];
         c.shares[c.shares.indexOf(ask.player)] = player;
+        this.syncHoldings(c.id);
         p.cash -= ask.price;
         seller.cash += ask.price;
         this.emit('all', { type: 'trade', t: this.t, company: c.id, buyer: player, seller: ask.player, price: ask.price });
@@ -485,6 +487,7 @@ export class Game {
           const price = this.companyBid(c.id);
           if (price === null) return reject("the company can't buy a share back right now");
           c.shares[c.shares.indexOf(player)] = null;
+          this.syncHoldings(c.id);
           c.treasury -= price;
           seller.cash += price;
           this.emit('all', { type: 'trade', t: this.t, company: c.id, buyer: 'company', seller: player, price });
@@ -500,6 +503,7 @@ export class Game {
           buyer.cash -= bid.price;
           seller.cash += bid.price;
           c.shares[c.shares.indexOf(player)] = bid.player;
+          this.syncHoldings(c.id);
           this.emit('all', { type: 'trade', t: this.t, company: c.id, buyer: bid.player, seller: player, price: bid.price });
         }
         this.afterSale(c.id, player);
@@ -648,6 +652,7 @@ export class Game {
     this.books[c.id].bid = null;
     const winner = this.players[bid.player];
     c.shares[idx] = winner.id;
+    this.syncHoldings(c.id);
     winner.held -= bid.price;
     winner.cash -= bid.price;
     c.treasury += bid.price;
@@ -861,12 +866,36 @@ export class Game {
     return this.locById.get(id);
   }
 
-  /** Players holding the most shares of a company (more than one means co-presidents). */
-  presidents(company: number): number[] {
+  /**
+   * Each player's holding in each company, and when they came to hold that many (a counter, in the
+   * order holdings changed): a tie for the most shares goes to whoever got there first.
+   */
+  private holdings: Map<number, { n: number; since: number }>[] = [];
+  private holdingSeq = 0;
+
+  /** Note any change in who holds how many of a company's shares (a changed holding starts afresh). */
+  private syncHoldings(company: number) {
+    const h = (this.holdings[company] ??= new Map());
     const counts = new Map<number, number>();
     for (const owner of this.companies[company].shares) if (owner !== null) counts.set(owner, (counts.get(owner) ?? 0) + 1);
-    const max = Math.max(0, ...counts.values());
-    return [...counts].filter(([, n]) => n === max && max > 0).map(([p]) => p).sort((a, b) => a - b);
+    for (const p of [...h.keys()]) if (!counts.has(p)) h.delete(p);
+    for (const [p, n] of [...counts].sort((a, b) => a[0] - b[0])) if (h.get(p)?.n !== n) h.set(p, { n, since: this.holdingSeq++ });
+  }
+
+  /**
+   * The company's president, as a list (empty if no player holds a share): whoever holds the most
+   * shares. A tie goes to whoever got to that many first, so a president keeps the company until
+   * someone holds more, and if the president sells down, the longest-standing of the biggest holders
+   * takes over.
+   */
+  presidents(company: number): number[] {
+    return this.succession(company).slice(0, 1);
+  }
+
+  /** The company's shareholders in line of succession: the president first, then who'd take over, and so on. */
+  succession(company: number): number[] {
+    this.syncHoldings(company);
+    return [...this.holdings[company]].sort((a, b) => b[1].n - a[1].n || a[1].since - b[1].since).map(([p]) => p);
   }
 
   observe(player: number): Observation {
@@ -882,6 +911,7 @@ export class Game {
         ...c,
         shares: [...c.shares],
         presidents: this.presidents(c.id),
+        succession: this.succession(c.id),
         dividendPerShare: c.pot / c.shares.length,
       })),
       nextPayoutAt: this.nextPayoutAt,
@@ -924,6 +954,7 @@ export class Game {
       queues: [...this.trucks.queues].sort((a, b) => a[0] - b[0]),
       depots: [...this.depotOwner].sort((a, b) => a[0] - b[0]),
       steps: this.steps,
+      holdings: this.holdings.map((h) => [...h].sort((a, b) => a[0] - b[0])),
       sales: this.sales,
       books: this.books,
       saleCooldownUntil: this.saleCooldownUntil,

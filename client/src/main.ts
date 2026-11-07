@@ -157,7 +157,7 @@ function updateHint(obs: Observation) {
     return;
   }
   if (obs.phase === 'opening') {
-    hint.textContent = 'Opening round: bid for shares in the company cards on the left. The president of a company runs it.';
+    hint.textContent = 'Opening round: bid for shares in the company cards along the bottom. The president of a company runs it.';
     return;
   }
   const picks = hl.picked.map((id) => g.town.locations[id]);
@@ -569,9 +569,10 @@ function refreshCompanies(obs: Observation) {
     const order = [...holders.keys()].sort((a, b) => (a === obs.me ? -1 : b === obs.me ? 1 : holders.get(b)! - holders.get(a)! || a - b));
     const own = c.shares.filter((sh) => sh === null).length;
     const mine = holders.get(obs.me) ?? 0;
-    // Five boxes, one per share, in the order they were sold (a trade swaps the icon in place):
-    // empty while the company owns it, the owner's icon once bought (presidents' in gold, yours outlined).
-    const boxes = c.shares
+    // Five boxes, one per share, in line of succession: the president's first (in gold), then
+    // whoever would take over if they sold, and so on (yours outlined); the company's own, empty, last.
+    const inLine = [...c.succession.flatMap((pl) => Array<number>(holders.get(pl) ?? 0).fill(pl)), ...c.shares.filter((sh) => sh === null)];
+    const boxes = inLine
       .map((pl) => {
         if (pl === null) return '<span class="share empty" title="Owned by the company: sold in sales"></span>';
         const pres = c.presidents.includes(pl);
@@ -1176,7 +1177,7 @@ const GUIDE: { img?: string[]; icons?: GuideIcons; title: string; text: string }
   {
     img: ['auction'],
     title: 'Take control of a company!',
-    text: `<p>The game opens with a <b>sale</b> of one share of each company: <span class="hl">bid in its card</span> along the bottom, and the highest bid gets it. Whoever holds the most shares of a company <span class="hl">controls it</span>: they're its president and run its trucks. You're an investor, not the company, so spread your bets across several if you like.</p>
+    text: `<p>The game opens with a <b>sale</b> of one share of each company: <span class="hl">bid in its card</span> along the bottom, and the highest bid gets it. Whoever holds the most shares of a company <span class="hl">controls it</span>: they're its president and run its trucks. A tie keeps the president in charge, so to take a company over, hold more shares than its president. Its share boxes show the line of succession, president first. You're an investor, not the company, so spread your bets across several if you like.</p>
       <p>Your bid goes <b>straight into the company</b>. That's how companies pay for trucks and factories, so a share won for next to nothing leaves your company with nothing to build with. Bid like you mean it!</p>`,
   },
   {

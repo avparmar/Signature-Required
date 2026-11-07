@@ -161,14 +161,16 @@ describe('trucks on routes', () => {
     expect(delivered).toBe(true);
   });
 
-  it('co-presidents: the last order wins', () => {
+  it('a tie keeps the president: the other holder can\'t direct the trucks', () => {
     const { g, depot, producer, consumer } = setup();
+    expect(g.presidents(0)).toEqual([0]);
     g.companies[0].shares = [0, 1, null, null, null];
     g.addTruck(0);
     g.act(0, { type: 'assignRoute', depot: depot.id, producer: producer.id, consumer: consumer.id });
     g.act(1, { type: 'unassignRoute', depot: depot.id, producer: producer.id, consumer: consumer.id });
     g.step();
-    expect(g.routes()).toHaveLength(0);
+    expect(g.routes()).toHaveLength(1);
+    expect(g.drainEvents(1).filter((e) => e.type === 'rejected')).toHaveLength(1);
   });
 
   it('queues at a building: two bays, first come first served, waiting trucks keep their place', () => {
