@@ -663,9 +663,9 @@ function refreshCompanies(obs: Observation) {
       }
     }
     html += '<div class="more">';
-    // Opened: its value, its income lately, and its last dividend (the next one so far is in the box).
+    // Opened: its income lately, and its last dividend (the next one so far is in the box).
     const income = obs.phase === 'running' ? companyRate(c.id, obs.t) : null;
-    html += `<div class="row small"><span title="Company value: trucks and factories at what they cost, plus cash">Value <b>${money(obs.value[c.id])}</b></span><span class="muted"><span title="What its deliveries earned per minute over the last ${RATE_WINDOW / 60} minutes (half to the treasury, half to dividends)">${income === null ? 'earning…' : `<b>${money(income)}</b>/min`}</span> · <span title="Dividend per share: the last one paid">last div ${lastDividend.has(c.id) ? money(lastDividend.get(c.id)!) : '—'}</span></span></div>`;
+    html += `<div class="row small muted"><span title="What its deliveries earned per minute over the last ${RATE_WINDOW / 60} minutes (half to the treasury, half to dividends)">Income ${income === null ? 'earning…' : `<b>${money(income)}</b>/min`}</span><span title="Dividend per share: the last one paid">last div ${lastDividend.has(c.id) ? money(lastDividend.get(c.id)!) : '—'}</span></div>`;
     // A sale running: the share goes to the best bid at the end, if it's at least the minimum.
     if (sale) {
       const best = book.bid;
@@ -682,14 +682,17 @@ function refreshCompanies(obs: Observation) {
     // The market: standing orders (yours can be withdrawn), the company's buy-back price, and starting a sale.
     if (obs.phase === 'running') {
       const rows: string[] = [];
+      // Playing, only your own orders are listed (to withdraw them): the Buy/Sell buttons already show
+      // everyone else's. Watching, all of them.
       const order = (side: 'bid' | 'ask', o: { player: number; price: number }) => {
         const yours = o.player === obs.me && !watching;
-        return `<div class="row small"><span>${side === 'bid' ? 'Buying' : 'Selling'}: ${money(o.price)} (${who(o.player)})</span>${acting && yours ? `<button class="mini" data-cancel="${c.id}:${side}">Withdraw</button>` : ''}</div>`;
+        if (acting && !yours) return;
+        rows.push(`<div class="row small"><span>${yours ? `Your ${side === 'bid' ? 'buy' : 'sell'} order: ${money(o.price)}` : `${side === 'bid' ? 'Buying' : 'Selling'}: ${money(o.price)} (${who(o.player)})`}</span>${acting && yours ? `<button class="mini" data-cancel="${c.id}:${side}">Withdraw</button>` : ''}</div>`);
       };
-      if (book.bid && !sale) rows.push(order('bid', book.bid));
-      if (book.ask) rows.push(order('ask', book.ask));
+      if (book.bid && !sale) order('bid', book.bid);
+      if (book.ask) order('ask', book.ask);
       const cb = obs.companyBid[c.id];
-      if (cb !== null) rows.push(`<div class="row small"><span title="Half the company value per share, while its cash covers that">Company buys back at ${money(cb)}</span></div>`);
+      if (cb !== null) rows.push(`<div class="row small"><span title="Half its value per share (it's worth ${money(obs.value[c.id])}: trucks and factories at cost, plus cash), while its cash covers that">Company buys back at ${money(cb)}</span></div>`);
       html += rows.join('');
     }
     html += '</div>';
