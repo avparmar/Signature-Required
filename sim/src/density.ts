@@ -74,12 +74,23 @@ const dense = { producersPerGood: [6, 8] as [number, number], consumersPerGood: 
 console.log(`\nDensity experiment (${games} games per variant, bots, automatic routes)\n`);
 console.log('| Variant | Shops per factory | Shops served (all cos.) | Deliveries | Trucks (all cos.) | Factories | Dividends paid | Avg final cash | Businesses at end | Closure warnings up (avg, max) | Closed |');
 console.log('|---|---|---|---|---|---|---|---|---|---|---|');
+const which = process.argv[3] ?? 'economy';
 const none = { startingTrucks: 0 };
-variant('Today (no starting truck)', none);
-variant('Start with 1 truck', {});
-variant('Trucks half price ($6)', { ...none, depots: { truckPrice: 6 } });
-variant('16 trucks per factory', { ...none, depots: { capacity: 16 } });
-variant('Denser town (1.5×)', { ...none, town: dense });
-variant('Half price + 16 per factory', { ...none, depots: { truckPrice: 6, capacity: 16 } });
-variant('All three', { ...none, depots: { truckPrice: 6, capacity: 16 }, town: dense });
-variant('All three + 1 starting truck', { depots: { truckPrice: 6, capacity: 16 }, town: dense });
+const all3 = { depots: { truckPrice: 6, capacity: 16 }, town: dense };
+// Businesses that never grow, shrink or close: fixed at one level (and investment can't raise them).
+const fixed = (level: number) => ({ startLevel: level, maxLevel: level, growAbove: 2, shrinkBelow: -1 });
+if (which === 'economy') {
+  variant('Today (no starting truck)', none);
+  variant('Start with 1 truck', {});
+  variant('Trucks half price ($6)', { ...none, depots: { truckPrice: 6 } });
+  variant('16 trucks per factory', { ...none, depots: { capacity: 16 } });
+  variant('Denser town (1.5×)', { ...none, town: dense });
+  variant('Half price + 16 per factory', { ...none, depots: { truckPrice: 6, capacity: 16 } });
+  variant('All three', { ...none, depots: { truckPrice: 6, capacity: 16 }, town: dense });
+  variant('All three + 1 starting truck', { depots: { truckPrice: 6, capacity: 16 }, town: dense });
+} else if (which === 'fixed') {
+  variant('All three + 1 starting truck', all3);
+  variant('Fixed level 3 (today otherwise)', { cycles: fixed(3) });
+  variant('Fixed level 3 + all three', { ...all3, cycles: fixed(3) });
+  variant('Fixed level 2 + all three', { ...all3, cycles: fixed(2) });
+}
