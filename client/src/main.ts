@@ -37,13 +37,16 @@ const COMPANY_NAMES: [string, string][] = [
   ['Greenway Freight', 'GWF'],
   ['Purple Pony Transport', 'PPT'],
   ['Orange Owl Logistics', 'OOL'],
-  ['Tealwater Trucking', 'TWT'],
+  ['Iron Horse Haulage', 'IHH'],
   ['Magenta Moth Movers', 'MMM'],
   ['Lime Lizard Lines', 'LLL'],
   ['Skyhook Shipping', 'SKY'],
 ];
 const coName = (c: number) => COMPANY_NAMES[companySlot(c)][0];
 const coTicker = (c: number) => COMPANY_NAMES[companySlot(c)][1];
+/** A holding as a chip in the company's colour: ticker, shares, and a crown for its president. */
+const holdingChip = (c: number, n: number, pres: boolean) =>
+  `<span class="chip co-chip${pres ? ' pres' : ''}" style="background:${companyColor(c)}" title="${coName(c)}: ${n} share${n === 1 ? '' : 's'}${pres ? ', president' : ''}">${pres ? '♔ ' : ''}${coTicker(c)} ×${n}</span>`;
 // While watching the bots, the first seat isn't you.
 const playerName = (p: number, me: number) => (p === me && !watching ? 'you' : seatName(p));
 /** A seat's name: the person's name online, otherwise just their icon. */
@@ -465,14 +468,12 @@ function refreshPanels(obs: Observation) {
       const shares = held
         .map((c) => {
           const n = c.shares.filter((s) => s === p.id).length;
-          // Compact, to keep the strip on one line: the company's colour and how many (a crown for its president).
-          const pres = c.presidents.includes(p.id);
-          return `<span class="chip co-dot${pres ? ' pres' : ''}" style="background:${companyColor(c.id)}" title="${coName(c.id)}: ${n} share${n === 1 ? '' : 's'}${pres ? ', president' : ''}">${pres ? '♔' : ''}${n}</span>`;
+          return holdingChip(c.id, n, c.presidents.includes(p.id));
         })
         .join('');
       const me = p.id === obs.me && !watching;
       const name = me ? 'You' : session.names[p.id] ? session.names[p.id].slice(0, 10) : '';
-      return `<div class="pl${me ? ' me' : ''}" title="${me ? 'You' : seatName(p.id)}"><span class="icon">${seatIcon(p.id)}</span>${name ? `<b>${name}</b>` : ''}<span class="cash">${money(p.cash)}</span><span class="chips">${shares}</span></div>`;
+      return `<div class="pl${me ? ' me' : ''}" title="${me ? 'You' : seatName(p.id)}"><span class="icon">${seatIcon(p.id)}</span>${name ? `<b>${name}</b>` : ''}<span class="cash">${money(p.cash)}</span><span class="chips">${shares || '<span class="muted small">no shares</span>'}</span></div>`;
     })
     .join('');
 
@@ -600,10 +601,13 @@ function refreshCompanies(obs: Observation) {
       const best = book.bid;
       html += `<div class="row small sale-line fold-only"><b>${sale.opening ? 'Opening sale' : 'Sale'} ${Math.ceil(sale.timeLeft)}s</b><span>${best ? `highest bid ${money(best.price)}${best.player === obs.me && !watching ? ' (you)' : ''}` : 'no bids yet'}</span></div>`;
     }
-    // Folded: the standing orders at a glance (opened, they're listed in full below).
-    if (obs.phase === 'running' && !sale && (book.bid || book.ask)) {
-      const tag = (o: { player: number; price: number }) => `<b>${money(o.price)}</b> ${o.player === obs.me && !watching ? '<span class="you">you</span>' : seatIcon(o.player)}`;
-      const parts = [book.bid ? `<span title="Standing buy order">Buying ${tag(book.bid)}</span>` : '', book.ask ? `<span title="Standing sell order">Selling ${tag(book.ask)}</span>` : ''].filter(Boolean);
+    // Folded, with no Sell for / Buy for buttons (watching the bots): the standing orders at a glance,
+    // where those buttons would be. (Opened, they're listed in full below.)
+    if (!acting && obs.phase === 'running' && !sale && (book.bid || book.ask)) {
+      // Laid out like the Sell for / Buy for buttons: the buy order on the left, the sell order on the right.
+      const cell = (label: string, o: { player: number; price: number } | null, tip: string) =>
+        o ? `<span title="${tip}">${label} <b>${money(o.price)}</b><span class="from">${o.player === obs.me && !watching ? 'you' : seatIcon(o.player)}</span></span>` : '<span></span>';
+      const parts = [cell('Buying', book.bid, 'Standing buy order'), cell('Selling', book.ask, 'Standing sell order')];
       html += `<div class="row small orders-line fold-only">${parts.join('')}</div>`;
     }
     html += '<div class="more">';

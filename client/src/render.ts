@@ -13,9 +13,9 @@ import { distancesFrom, routeVia, type Location, type Observation, type Route, t
 
 // Company colours stay clear of the goods' colours (wood brown, wheat gold, oil slate). Each game
 // uses a few of these (see pickCompanySlots), never two that are easy to mix up.
-export const COMPANY_COLORS = ['#e8432f', '#2a86e0', '#25a84a', '#9152e0', '#f5891a', '#14b2a8', '#d93a8c', '#7cbf2e', '#38b6e8'];
-/** Colours too alike to share a game: red/magenta, green/lime, blue/sky, teal/sky. */
-const CLASHES: [number, number][] = [[0, 6], [2, 7], [1, 8], [5, 8]];
+export const COMPANY_COLORS = ['#e8432f', '#2a86e0', '#25a84a', '#9152e0', '#f5891a', '#66717e', '#d93a8c', '#7cbf2e', '#38b6e8'];
+/** Colours too alike to share a game: red/magenta, green/lime, blue/sky. */
+const CLASHES: [number, number][] = [[0, 6], [2, 7], [1, 8]];
 
 /** This game's palette slot for each company (company index -> COMPANY_COLORS index). */
 let companySlots: number[] = COMPANY_COLORS.map((_, i) => i);
