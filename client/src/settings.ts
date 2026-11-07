@@ -45,8 +45,8 @@ export const SETTINGS: Setting[] = [
   { group: 'Businesses', label: 'A new business every', section: 'openings', key: 'everySec', unit: 's', min: 10, max: 300, step: 5 },
   { group: 'Businesses', label: 'Cycle length', section: 'cycles', key: 'cycleSec', unit: 's', min: 10, max: 180, step: 5 },
   { group: 'Businesses', label: 'Grace period', section: 'cycles', key: 'graceSec', unit: 's', min: 0, max: 300, step: 15, hint: 'Before a new or just-changed business can be judged again.' },
-  { group: 'Shares', label: 'Sale clock', section: 'auctions', key: 'clockSec', unit: 's', min: 10, max: 120, step: 5 },
-  { group: 'Shares', label: 'Longest a sale can run', section: 'auctions', key: 'maxSec', unit: 's', min: 10, max: 300, step: 5, hint: 'Late bids add time, but never past this.' },
+  { group: 'Shares', label: 'Offering clock', section: 'auctions', key: 'clockSec', unit: 's', min: 10, max: 120, step: 5 },
+  { group: 'Shares', label: 'Longest an offering can run', section: 'auctions', key: 'maxSec', unit: 's', min: 10, max: 300, step: 5, hint: 'Late bids add time, but never past this.' },
   { group: 'Shares', label: 'Wait after a company sells a share', section: 'auctions', key: 'saleCooldownSec', unit: 's', min: 0, max: 300, step: 15 },
   { group: 'Shares', label: 'Company buys shares back at (share of company value)', section: 'auctions', key: 'buybackShare', scale: 100, unit: '%', min: 0, max: 200, step: 5, hint: 'Of the company value per share, while its cash covers that. Also the least it sells its own shares for.' },
 ];

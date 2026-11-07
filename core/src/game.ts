@@ -534,7 +534,7 @@ export class Game {
           const bid = this.books[c.id].bid;
           if (!bid) return reject('nobody is bidding for a share of this company');
           // During the company's own sale, its bids are for the company's share: the money goes to the company.
-          if (this.sales.some((x) => x.company === c.id)) return reject("the company is selling a share: its bids are for that one, so you can't sell yours to them now");
+          if (this.sales.some((x) => x.company === c.id)) return reject("the company is offering a share: its bids are for that one, so you can't sell yours to them now");
           if (bid.player === player) return reject("that's your own bid");
           this.books[c.id].bid = null;
           const buyer = this.players[bid.player];
@@ -557,7 +557,7 @@ export class Game {
       }
       case 'pass': {
         const sale = this.sales.find((x) => x.company === action.company);
-        if (!sale) return reject('that company has no sale running');
+        if (!sale) return reject('that company has no share offering running');
         if (this.books[sale.company].bid?.player === player) return reject("you're the highest bidder");
         if (sale.passed.includes(player)) return;
         sale.passed.push(player);
@@ -568,13 +568,13 @@ export class Game {
         break;
       }
       case 'startSale': {
-        if (this.phase !== 'running') return reject('sales open once the game starts');
+        if (this.phase !== 'running') return reject('share offerings open once the game starts');
         const c = this.companies[action.company];
         if (!c) return reject(`no company ${action.company}`);
         if (!c.shares.includes(null)) return reject('the company has no shares of its own left to sell');
-        if (this.sales.some((x) => x.company === c.id)) return reject('this company already has a sale running');
+        if (this.sales.some((x) => x.company === c.id)) return reject('this company already has a share offering running');
         if (this.elapsed < this.saleCooldownUntil[c.id] - 1e-9)
-          return reject(`it held a sale recently; try again in ${Math.ceil(this.saleCooldownUntil[c.id] - this.elapsed)}s`);
+          return reject(`it held a share offering recently; try again in ${Math.ceil(this.saleCooldownUntil[c.id] - this.elapsed)}s`);
         this.startSale(c.id, player, false);
         break;
       }

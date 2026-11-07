@@ -150,11 +150,13 @@ const out = process.argv[3];
   await shot('factory', { x: fx0, y: fy0, width: fx1 - fx0, height: fy1 - fy0 });
   await p.mouse.move(5, 5);
 
-  // 6. Pick on map: sites you can buy light up with your price.
+  // 6. Buying a factory: click a free site on the map, and its card shows your price.
   await p.evaluate(() => window.sr.renderer.fit()); await tick();
   { const h = await toScreen(pts.home); for (let i = 0; i < 2; i++) { await p.mouse.move(h.x, h.y); await p.mouse.wheel(0, -250); await p.waitForTimeout(60); } }
   await p.mouse.move(5, 5); await tick();
-  await (await p.$('#mycos [data-depot]')).dispatchEvent('pointerdown', { button: 0 });
+  await p.evaluate(() => { const g = window.sr.session.game; g.companies[0].treasury = Math.max(g.companies[0].treasury, 170); }); await tick();
+  { const site = await p.evaluate(() => { const r = window.sr.renderer, g = window.sr.session.game, o = window.sr.session.obs(); const home = g.town.locations.find((l) => l.startCompany === 0); const free = g.town.locations.filter((l) => l.kind === 'depot' && o.depots[l.id] === undefined).sort((a, b) => Math.hypot(a.x - home.x, a.y - home.y) - Math.hypot(b.x - home.x, b.y - home.y)); const c = document.getElementById('map').getBoundingClientRect(); const l = free.find((f) => { const y = c.top + r.Y(f.y); return y > c.top + 200 && y < c.bottom - 120; }) ?? free[0]; return { x: c.left + r.X(l.x), y: c.top + r.Y(l.y) }; });
+    await p.mouse.click(site.x, site.y); await p.mouse.move(5, 5); }
   await tick(); await p.waitForTimeout(400);
   await shot('buy', { x: box.x, y: box.y, width: box.width, height: hintBox.y - 8 - box.y });
   await p.keyboard.press('Escape'); await tick();
@@ -171,8 +173,9 @@ const out = process.argv[3];
   await el('sale', '#companies .co');
   await p.mouse.move(5, 5);
   // 8. The whole town, for the welcome page.
-  await p.evaluate(() => window.sr.renderer.fit()); await p.mouse.move(5, 5); await tick(); await p.waitForTimeout(300);
-  await shot('overview', { x: box.x, y: box.y, width: box.width, height: hintBox.y - 8 - box.y });
+  await p.evaluate(() => window.sr.renderer.fit()); await p.mouse.move(5, 5);
+  await p.addStyleTag({ content: '#hint { display: none !important; }' }); await tick(); await p.waitForTimeout(300);
+  await shot('overview', { x: box.x, y: box.y, width: box.width, height: box.height - 30 }); // the card tabs poke into the bottom
   console.log(JSON.stringify(errs));
   await b.close();
 })();

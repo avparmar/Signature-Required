@@ -478,7 +478,7 @@ function refreshPanels(obs: Observation) {
   $('clock').textContent = obs.phase === 'opening' ? 'Opening' : fmtClock(obs.timeLeft);
   $('phase').textContent =
     obs.phase === 'opening'
-      ? 'Opening sales: one share of each company, before the clock starts'
+      ? 'Opening offerings: one share of each company, before the clock starts'
       : obs.phase === 'ended'
         ? 'Game over'
         : `Next payout in ${fmtClock(obs.nextPayoutAt - obs.t)}`;
@@ -605,7 +605,6 @@ function refreshCompanies(obs: Observation) {
     if (box.children[i] !== k.slot) box.insertBefore(k.slot, box.children[i] ?? null);
     const trucks = obs.trucks.filter((t) => t.company === c.id).length;
     const depots = Object.values(obs.depots).filter((o) => o === c.id).length;
-    const routes = obs.routes.filter((r) => r.company === c.id).length;
     // One chip per shareholder with how many shares they hold (you first, presidents crowned),
     // then the shares the company owns itself.
     const holders = new Map<number, number>();
@@ -618,7 +617,7 @@ function refreshCompanies(obs: Observation) {
     const inLine = [...c.succession.flatMap((pl) => Array<number>(holders.get(pl) ?? 0).fill(pl)), ...c.shares.filter((sh) => sh === null)];
     const boxes = inLine
       .map((pl) => {
-        if (pl === null) return '<span class="share empty" title="Owned by the company: sold in sales"></span>';
+        if (pl === null) return '<span class="share empty" title="Owned by the company: sold in share offerings"></span>';
         const pres = c.presidents.includes(pl);
         const n = holders.get(pl)!;
         const you = pl === obs.me && !watching;
@@ -636,7 +635,7 @@ function refreshCompanies(obs: Observation) {
     let saleBtn = '';
     if (acting && obs.phase === 'running' && own && !sale && c.presidents.length) {
       const cooldown = obs.saleCooldownUntil[c.id] - obs.elapsed;
-      saleBtn = `<button class="mini" data-startsale="${c.id}" ${cooldown > 0 ? 'disabled' : ''} title="Put one of the company's own shares up for sale. The best bid at the end gets it, if it's at least ${money(obs.minPrice[c.id])}; the money goes to the company.">${cooldown > 0 ? `Sale in ${Math.ceil(cooldown)}s` : 'Start a sale'}</button>`;
+      saleBtn = `<button class="mini" data-startsale="${c.id}" ${cooldown > 0 ? 'disabled' : ''} title="Offer one of the company's own shares. The best bid at the end gets it, if it's at least ${money(obs.minPrice[c.id])}; the money goes to the company.">${cooldown > 0 ? `Offer in ${Math.ceil(cooldown)}s` : 'Offer a share'}</button>`;
     }
     // Name and shares on the left; the company's money in a box on the right: its treasury, the
     // dividend per share so far, and its factories.
@@ -645,7 +644,7 @@ function refreshCompanies(obs: Observation) {
     // Folded, the card stops here (plus a line for a running sale); hovering or pinning shows the rest.
     if (sale) {
       const best = book.bid;
-      html += `<div class="row small sale-line fold-only"><b>${sale.opening ? 'Opening sale' : 'Sale'} ${Math.ceil(sale.timeLeft)}s</b><span>${best ? `highest bid ${money(best.price)}${best.player === obs.me && !watching ? ' (you)' : ''}` : 'no bids yet'}</span></div>`;
+      html += `<div class="row small sale-line fold-only"><b>${sale.opening ? 'Opening' : 'Offering'} ${Math.ceil(sale.timeLeft)}s</b><span>${best ? `<span title="Highest bid: ${best.player === obs.me && !watching ? 'yours' : seatName(best.player)}">top bid <b>${money(best.price)}</b> ${seatIcon(best.player)}</span>` : 'no bids yet'}</span></div>`;
     }
     // Folded: the standing orders at a glance, laid out like the Sell for / Buy for buttons (buy order
     // on the left, sell order on the right). Watching the bots, there are no buttons, so all of them;
@@ -664,14 +663,15 @@ function refreshCompanies(obs: Observation) {
       }
     }
     html += '<div class="more">';
-    // Opened: its value, and its routes and last dividend (the next one so far is in the box).
-    html += `<div class="row small"><span title="Company value: trucks and factories at what they cost, plus cash">Value <b>${money(obs.value[c.id])}</b></span><span class="muted">${routes} route${routes === 1 ? '' : 's'} · <span title="Dividend per share: the last one paid">last div ${lastDividend.has(c.id) ? money(lastDividend.get(c.id)!) : '—'}</span></span></div>`;
+    // Opened: its value, its income lately, and its last dividend (the next one so far is in the box).
+    const income = obs.phase === 'running' ? companyRate(c.id, obs.t) : null;
+    html += `<div class="row small"><span title="Company value: trucks and factories at what they cost, plus cash">Value <b>${money(obs.value[c.id])}</b></span><span class="muted"><span title="What its deliveries earned per minute over the last ${RATE_WINDOW / 60} minutes (half to the treasury, half to dividends)">${income === null ? 'earning…' : `<b>${money(income)}</b>/min`}</span> · <span title="Dividend per share: the last one paid">last div ${lastDividend.has(c.id) ? money(lastDividend.get(c.id)!) : '—'}</span></span></div>`;
     // A sale running: the share goes to the best bid at the end, if it's at least the minimum.
     if (sale) {
       const best = book.bid;
       const enough = best !== null && best.price >= obs.minPrice[c.id];
       const last = sale.age + sale.timeLeft >= session.cfg.auctions.maxSec - 0.05 && sale.timeLeft < session.cfg.auctions.softCloseSec;
-      html += `<div class="sale"><div class="row"><b title="One of the company's own shares, to the highest bid at the end">${sale.opening ? 'Opening sale' : 'Share sale'}</b><b>${Math.ceil(sale.timeLeft)}s</b></div>`;
+      html += `<div class="sale"><div class="row"><b title="One of the company's own shares, to the highest bid at the end">${sale.opening ? 'Opening offering' : 'Share offering'}</b><b>${Math.ceil(sale.timeLeft)}s</b></div>`;
       html += `<div class="row small"><span>Highest bid</span><span>${best ? `${money(best.price)} (${who(best.player)})` : 'none yet'}</span></div>`;
       if (obs.minPrice[c.id] > 0) html += `<div class="row small muted"><span>Sells for at least</span><span>${money(obs.minPrice[c.id])}${best && !enough ? ' · not met yet' : ''}</span></div>`;
       if (best?.player === obs.me && !watching) html += `<div class="good small">${enough ? 'You’re winning it.' : 'Your bid is below the minimum.'}</div>`;
@@ -777,7 +777,7 @@ function refreshCompanies(obs: Observation) {
     // Place a buy order at that price (in a sale, that's your bid), or a sell order for one of your shares.
     k.placeBuy.textContent = myBid ? 'Raise buy' : sale ? 'Bid' : 'Place buy';
     k.placeBuy.disabled = v < low || (otherAsk !== null && v >= otherAsk) || v - myBid > free;
-    k.placeBuy.title = v - myBid > free ? 'Not enough cash' : `Offer ${money(v)} for a share${sale ? ' in this sale' : ''}; it holds that cash until it's filled, beaten or withdrawn`;
+    k.placeBuy.title = v - myBid > free ? 'Not enough cash' : `Offer ${money(v)} for a share${sale ? ' in this offering' : ''}; it holds that cash until it's filled, beaten or withdrawn`;
     k.placeSell.textContent = book.ask?.player === obs.me ? 'Lower sell' : 'Place sell';
     k.placeSell.hidden = false;
     k.placeSell.dataset.mode = sale ? 'pass' : 'ask';
@@ -789,7 +789,7 @@ function refreshCompanies(obs: Observation) {
       const passed = sale.passed.includes(obs.me);
       k.placeSell.textContent = passed ? 'Passed' : 'Pass';
       k.placeSell.disabled = passed || book.bid?.player === obs.me;
-      k.placeSell.title = book.bid?.player === obs.me ? "You're the highest bidder" : 'Done bidding (until someone bids again). Once everyone but the highest bidder has passed, the sale ends at once.';
+      k.placeSell.title = book.bid?.player === obs.me ? "You're the highest bidder" : 'Done bidding (until someone bids again). Once everyone but the highest bidder has passed, the offering ends at once.';
     }
   });
 }
@@ -1415,12 +1415,12 @@ const GUIDE: { img?: string[]; icons?: GuideIcons; flow?: boolean; title: string
   {
     img: ['buy'],
     title: 'Buy another factory!',
-    text: `<p>Each factory lets your company run <b>${session.cfg.depots.capacity} more trucks</b>. When your company is at its truck limit, or you want to move into another part of town, buy one: in your company's card, click <b>Pick on map…</b>. The sites you can afford light up with your price. Click one, and its trucks <span class="hl">start work from there</span> too.</p>`,
+    text: `<p>Each factory lets your company run <b>${session.cfg.depots.capacity} more trucks</b>. When your company is at its truck limit, or you want to move into another part of town, buy one: <b>click a free factory site</b> on the map, and buy it at your company's price. Its trucks <span class="hl">start work from there</span> too. Serving the gold zone round a site makes it cheaper.</p>`,
   },
   {
     img: ['sale'],
-    title: 'Raise money with a share sale!',
-    text: `<p>A company's <b>empty share boxes</b> are shares it still owns. Anyone can put one up for sale: hover its card and click <b>Start a sale</b>. Everyone then has <span class="hl">${session.cfg.auctions.clockSec} seconds to bid</span> in the card, or <b>Pass</b>. A late bid adds a few seconds, up to ${session.cfg.auctions.maxSec} seconds in all.</p><p>The highest bid gets the share, if it's at least the company's price, and <span class="hl">the money goes to the company</span> to spend on trucks and factories. It's also how you buy into a company you don't run.</p>`,
+    title: 'Raise money with a share offering!',
+    text: `<p>A company's <b>empty share boxes</b> are shares it still owns. Anyone can offer one: hover its card and click <b>Offer a share</b>. Everyone then has <span class="hl">${session.cfg.auctions.clockSec} seconds to bid</span> in the card, or <b>Pass</b>. A late bid adds a few seconds, up to ${session.cfg.auctions.maxSec} seconds in all.</p><p>The highest bid gets the share, if it's at least the company's price, and <span class="hl">the money goes to the company</span> to spend on trucks and factories. It's also how you buy into a company you don't run.</p>`,
   },
   {
     img: ['shares', 'company'],
