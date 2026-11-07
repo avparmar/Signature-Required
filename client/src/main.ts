@@ -642,7 +642,7 @@ function refreshCompanies(obs: Observation) {
     if (canOffer) {
       const cooldown = Math.max(0, obs.saleCooldownUntil[c.id] - obs.elapsed);
       const wait = session.cfg.auctions.saleCooldownSec;
-      const html = `${shareIcon}<span class="txt"><b>${cooldown > 0 ? `Offer again in ${Math.ceil(cooldown)}s` : 'Offer company share'}</b><span class="hint">the money goes to the company</span></span>`;
+      const html = `${shareIcon}<span class="txt"><b>${cooldown > 0 ? `Offer again in ${Math.ceil(cooldown)}s` : 'Offer company share'}</b></span>`;
       if (offerBtn.dataset.html !== html) (offerBtn.innerHTML = html), (offerBtn.dataset.html = html);
       offerBtn.dataset.startsale = String(c.id);
       offerBtn.disabled = cooldown > 0;
