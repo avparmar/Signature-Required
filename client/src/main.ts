@@ -849,7 +849,7 @@ function refreshCardTabs(obs: Observation, mine: number[]) {
     // and the whole tab turns into a green button when it has the room and the money.
     const o = truckOffer(obs, id);
     const can = own && !o.full && o.afford && o.home !== undefined;
-    const pill = !own ? '' : `<span class="px">${o.full ? 'Full' : can ? `+ ${money(o.price)}` : money(o.price)}</span>`;
+    const pill = !own ? '' : `<span class="px">${o.full ? 'Full' : money(o.price)}</span>`;
     const truckHtml = `${truckIcon(companyColor(id))}<span class="count">${o.trucks}/${o.limit}</span>${pill}`;
     if (truck.dataset.html !== truckHtml) (truck.innerHTML = truckHtml), (truck.dataset.html = truckHtml);
     truck.classList.toggle('own', own);

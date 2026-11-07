@@ -383,10 +383,10 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #companies .co-tab.truck.own { color: var(--ink); border-color: var(--ink); background: var(--panel); }
 #companies .co-tab.truck.own:hover { background: var(--panel); }
 /* You can buy one: a green button, lifted a little. */
-#companies .co-tab.truck.can { cursor: pointer; background: #2e8a3e; border-color: #1f6a2c; color: #fff; box-shadow: inset 0 -2px 0 rgba(0,0,0,0.18); transform: translateY(-2px); }
-#companies .co-tab.truck.can:hover { background: #33994a; }
+#companies .co-tab.truck.can { cursor: pointer; background: #d6ecd2; border-color: #6fae68; color: #1f5f29; box-shadow: inset 0 -2px 0 rgba(31,95,41,0.15); transform: translateY(-2px); }
+#companies .co-tab.truck.can:hover { background: #c6e4c1; }
 #companies .co-tab.truck.can:active { transform: translateY(0); }
-#companies .co-tab.truck.can .px { background: #fff; color: #1f6a2c; }
+#companies .co-tab.truck.can .px { background: #2e8a3e; color: #fff; }
 #companies .co-tab .short { display: none; }
 @container (max-width: 225px) { #companies .co-tab .long { display: none; } #companies .co-tab .short { display: inline; } }
 /* Narrower still: the area tab goes to just its icon (the truck count stays). */
