@@ -8,6 +8,10 @@
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
   color: var(--ink);
 }
+/* Text everywhere: controls use the page's font (browsers default buttons to their own), and bold is
+   one weight (700) wherever it sits, rather than "bolder than its parent". */
+button, input, select, textarea { font-family: inherit; }
+b, strong { font-weight: 700; }
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: var(--bg); }
@@ -61,7 +65,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #companies .slot:nth-last-child(-n + 2) .co { left: auto; right: 0; }
 #companies .co .head > span { display: flex; align-items: center; gap: 6px; white-space: nowrap; min-width: 0; }
 #companies .co .head > span:first-child { overflow: hidden; text-overflow: ellipsis; }
-#companies .pin { font-size: 10px; padding: 0 6px; line-height: 1.5; }
+#companies .pin { font-size: 11px; font-weight: 600; padding: 0 7px; line-height: 1.5; }
 /* Folded, an offering sits where the Buy button would: bottom right. */
 #companies .co .sale-line { position: absolute; right: 10px; bottom: 6px; width: calc(50% - 12px); height: 24px; display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 0 8px; border-radius: 7px; background: #f6e7b4; color: #6b500b; font-size: 12px; white-space: nowrap; overflow: hidden; }
 #companies .co .sale-line > * { flex: none; }
@@ -352,7 +356,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #area-bar[hidden] { display: none; }
 #area-bar .sw { width: 12px; height: 12px; border-radius: 3px; margin: 0 2px 0 4px; }
 #area-bar b { margin-right: auto; }
-#area-bar button { padding: 5px 12px; }
+#area-bar button { padding: 5px 12px; font-size: 13px; font-weight: 600; }
 #area-bar button.go { background: #2e8a3e; color: #fff; border-color: #2e8a3e; }
 #area-bar .area-hint { flex-basis: 100%; font-size: 12px; color: var(--muted); }
 .focus-row button { margin-left: 4px; padding: 2px 7px; font-size: 12px; }
@@ -401,8 +405,8 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #site-pop { position: absolute; z-index: 7; width: 240px; white-space: normal; text-align: left; background: #fff; border: 1.5px solid var(--ink); border-radius: 10px; box-shadow: 0 6px 20px rgba(0,0,0,0.22); padding: 8px 10px; font-size: 13px; min-width: 200px; }
 #site-pop[hidden] { display: none; }
 #site-pop .title { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 6px; }
-#site-pop .title button { border: none; background: none; padding: 0 2px; color: var(--muted); }
-#site-pop .buy { display: flex; align-items: center; gap: 7px; width: 100%; margin-top: 4px; padding: 5px 9px; }
+#site-pop .title button { border: none; background: none; padding: 0 2px; color: var(--muted); font-size: 13px; }
+#site-pop .buy { display: flex; align-items: center; gap: 7px; width: 100%; margin-top: 4px; padding: 5px 9px; font-size: 13px; font-weight: 600; }
 #site-pop .buy .px { margin-left: auto; font-weight: 700; }
 #site-pop .buy.can { background: #2e8a3e; border-color: #2e8a3e; color: #fff; }
 #site-pop .sw { width: 10px; height: 10px; border-radius: 3px; flex: none; }
@@ -454,6 +458,5 @@ html, body { margin: 0; height: 100%; background: var(--bg); }
 #companies .co:not(:hover):not(:focus-within):not(.pinned) .broker .quick button *,
 #companies .co .sale-line * { line-height: 1; }
 #companies .co .sale-line > b { font-weight: 600; }
-#companies .co:not(:hover):not(:focus-within):not(.pinned) .broker .quick button { font-family: inherit; }
 #companies .co:not(:hover):not(:focus-within):not(.pinned) .broker .quick button b,
 #companies .co .sale-line span b { font-weight: 700; }
