@@ -57,6 +57,15 @@ export interface OrdersConfig {
   migratePerPallet: number;
   /** Bands: a band's demand never drops below this share of what it started with, centre, middle, outer. */
   bandFloor: [number, number, number];
+  /**
+   * Bands: the town's demand grows over the game. By `growEndSec` its total open demand reaches a
+   * level drawn at random each game from `growTo` (pallets; the bands start at their bandDemand
+   * total), and stays there. On the way it grows in `growSteps` stretches at uneven, random paces,
+   * so how big the town will get can only be guessed from how it's going. [0, 0] turns this off.
+   */
+  growTo: [number, number];
+  growEndSec: number;
+  growSteps: number;
   /** Bands: the tallest shops can grow in each band (suburbs stay low), centre, middle, outer. */
   bandTierCap: [number, number, number];
   /** Bands: what shops pay per pallet, as a multiple of their usual price, centre, middle, outer. */
@@ -107,6 +116,9 @@ export const DEFAULT_ORDERS: OrdersConfig = {
   migratePerPallet: 0.06,
   bandFloor: [1, 0.6, 0.35],
   bandTierCap: [4, 4, 2],
+  growTo: [80, 130],
+  growEndSec: 720,
+  growSteps: 8,
   bandRampSec: [0, 0, 0],
   bandPay: [1.25, 1.1, 1],
   bandQuietSec: [

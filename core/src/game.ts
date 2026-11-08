@@ -855,7 +855,7 @@ export class Game {
         ? [0, 1, 2].map((b) => {
             const ramp = cfg.bandRampSec[b];
             const share = ramp > 0 ? Math.min(1, 0.25 + (0.75 * this.t) / ramp) : 1;
-            return { shops: shops.filter((q) => this.bandOf(q.id) === b), target: this.bandBudget[b] * share, band: b };
+            return { shops: shops.filter((q) => this.bandOf(q.id) === b), target: this.bandBudget[b] * share * this.demandGrowth(), band: b };
           })
         : [{ shops, target: Math.max(cfg.minOpen, this.trucks.trucks.length * cfg.openPerTruck), band: -1 }];
     for (const grp of groups) {
@@ -937,6 +937,32 @@ export class Game {
     return b;
   }
   private bands = new Map<number, number>();
+
+  /**
+   * How much the town's demand has grown by now (1 at the start). It follows a curve made at the start
+   * of the game: up to a random level, in stretches of uneven pace (see OrdersConfig.growTo).
+   */
+  demandGrowth(): number {
+    const o = this.cfg.orders;
+    if (!this.growCurve) {
+      // Its own random numbers, so the rest of the game's draws are the same as without it.
+      const rng = new Rng(this.cfg.seed * 7919 + 13);
+      const base = o.bandDemand.reduce((a, b) => a + b, 0);
+      const [lo, hi] = o.growTo;
+      const end = hi > 0 ? (lo + rng.next() * (hi - lo)) / base : 1;
+      const paces = Array.from({ length: Math.max(1, o.growSteps) }, () => 0.3 + rng.next() * 1.4);
+      const total = paces.reduce((a, b) => a + b, 0);
+      let acc = 0;
+      this.growCurve = { end, at: [0, ...paces.map((p) => (acc += p) / total)] };
+    }
+    const { end, at } = this.growCurve;
+    if (end === 1 || o.growEndSec <= 0) return end;
+    const f = Math.min(1, Math.max(0, this.t / o.growEndSec)) * (at.length - 1);
+    const i = Math.min(at.length - 2, Math.floor(f));
+    const progress = at[i] + (at[i + 1] - at[i]) * (f - i);
+    return 1 + (end - 1) * progress;
+  }
+  private growCurve: { end: number; at: number[] } | null = null;
   /** Bands: open demand each band keeps up now (it moves inward as the town is served). */
   bandBudget: number[] = [];
   private bandReach = 0;
