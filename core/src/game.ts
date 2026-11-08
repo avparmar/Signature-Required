@@ -8,7 +8,8 @@ import { minimumBid, shareFloor, type AuctionEvent, type Book, type CancelReason
 import { depotPrice, subsidisedPrice, truckPriceFor } from './depots.js';
 import { assignPrices, investCost, payPerShare } from './money.js';
 import { chooseOpening } from './openings.js';
-import { initLocations, newLocationState, raiseLevel, updateCycles, type CycleEvent, type LocationState } from './economy.js';
+import { creditLot, creditOrder, pickLotProducer, pickOrderShop, postLot, postOrder } from './orders.js';
+import { cycleRate, initLocations, newLocationState, raiseLevel, updateCycles, type CycleEvent, type LocationState } from './economy.js';
 import { distancesFrom } from './graph.js';
 import { Rng } from './rng.js';
 import { TruckSystem, type Truck, type TruckEvent } from './trucks.js';
@@ -52,6 +53,9 @@ export type Phase = 'opening' | 'running' | 'ended';
 // ------------------------------------------------------------------ routes
 
 /** A standing assignment: trucks based at `depot` carry `producer`'s good to `consumer`. */
+/** Key for a shop's claims on one good. */
+const claimKey = (shop: number, good: number) => shop * 16 + good;
+
 export interface Route {
   key: string;
   company: number;
@@ -119,6 +123,14 @@ export type GameEvent =
   | { type: 'open'; t: number }
   /** A new unclaimed factory site, on what was an empty lot. */
   | { type: 'siteOpened'; t: number; site: number }
+  /** A shop posted an order for `size` pallets (`wants`: per good). */
+  | { type: 'orderPosted'; t: number; location: number; size: number; wants: number[] }
+  /** A producer offered a lot of `size` pallets. */
+  | { type: 'lotPosted'; t: number; location: number; size: number }
+  /** A shop or producer grew a tier. */
+  | { type: 'grew'; t: number; location: number; tier: number }
+  /** A shop's order was filled: each company's deliveries towards it, and its share of the bonus. */
+  | { type: 'orderDone'; t: number; location: number; size: number; delivered: number[]; bonus: number[] }
   | { type: 'start'; t: number }
   | { type: 'boughtTruck'; t: number; company: number; truck: number; depot: number; price: number }
   | { type: 'boughtDepot'; t: number; company: number; site: number; price: number }
@@ -264,6 +276,8 @@ export class Game {
           c.pot += e.price * this.cfg.money.deliveryToPot;
         }
         this.emit('all', e);
+        if (e.type === 'delivered' && this.cfg.orders.enabled) this.creditDelivery(e.location, e.company);
+        if (e.type === 'loaded' && this.cfg.orders.enabled) this.creditPickup(e.location, e.company);
       },
     );
     this.events = Array.from({ length: cfg.players }, () => []);
@@ -315,6 +329,7 @@ export class Game {
     }
     this.maybeOpen();
     this.maybeNewSite();
+    if (this.cfg.orders.enabled && this.phase === 'running') this.postOrders();
     this.trucks.update(this.t, this.cfg.tickSec, (id) => this.town.locations[id].bays);
     // Companies route their own trucks, once a second.
     if (this.cfg.autoRoutes && this.tick % Math.max(1, Math.round(1 / this.cfg.tickSec)) === 0) this.autoRoute();
@@ -361,6 +376,7 @@ export class Game {
           if (c.focus.length >= this.cfg.maxFocus) return reject(`a company can focus on ${this.cfg.maxFocus} places at once: unfocus one first`);
           c.focus = [...c.focus, action.location];
         }
+        this.replan = true;
         break;
       }
       case 'assignRoute':
@@ -589,6 +605,13 @@ export class Game {
   private emit(to: Audience, e: GameEvent) {
     if (to === 'all') for (const q of this.events) q.push(e);
     else this.events[to].push(e);
+    // (A filled order needs no new plan: nothing was planned beyond its last pallet.)
+    if (e.type === 'orderPosted' || e.type === 'lotPosted' || e.type === 'areaChanged' || e.type === 'boughtTruck' || e.type === 'boughtDepot') this.replan = true;
+  }
+
+  /** Events for a player not yet drained (read only: for measuring in experiments). */
+  peekEvents(player: number): readonly GameEvent[] {
+    return this.events[player];
   }
 
   /** Events for a player since the last call. */
@@ -787,6 +810,90 @@ export class Game {
    * Trucks a producer or shop can keep busy at once: about what its output (or demand) at its level
    * takes to carry, at most one more beyond that.
    */
+  // ---------------------------------------------------------------- shop orders
+
+  /**
+   * Keep the town busy: post shop orders until open demand keeps pace with the fleet, then offer
+   * producers' lots until each good's open supply covers its open demand.
+   */
+  private postOrders() {
+    const cfg = this.cfg.orders;
+    const goods = this.cfg.town.goods.length;
+    const live = this.locations.filter((l) => !l.closed);
+    const shops = live.filter((l) => l.kind === 'consumer');
+    const producers = live.filter((l) => l.kind === 'producer');
+    const target = Math.max(cfg.minOpen, this.trucks.trucks.length * cfg.openPerTruck);
+    const demand = new Array(goods).fill(0);
+    for (const q of shops) if (q.order) q.order.wants.forEach((w, g) => (demand[g] += w));
+    const supply = new Array(goods).fill(0);
+    for (const p of producers) if (p.order) supply[p.good] += p.stock;
+    let open = demand.reduce((a, b) => a + b, 0);
+    const freeSites = this.town.locations.filter((l) => l.kind === 'depot' && !this.depotOwner.has(l.id));
+    const nearSite = (s: LocationState) => {
+      const node = this.town.locations[s.id].node;
+      return freeSites.some((site) => this.siteDist(site.id)[node] <= this.cfg.depots.districtBlocks);
+    };
+    // Goods short of demand: lots of supply on offer (or producers that could offer it) and little wanted.
+    const producersOf = new Array(goods).fill(0);
+    for (const p of producers) producersOf[p.good]++;
+    const short = (g: number) => (producersOf[g] + supply[g]) / (1 + demand[g]);
+    for (let guard = 0; open < target && guard < 50; guard++) {
+      const shop = pickOrderShop(shops, this.t, short, nearSite, cfg, this.rng);
+      if (!shop) break;
+      postOrder(shop, goods, this.companies.length, this.t, cfg, this.rng);
+      shop.order!.wants.forEach((w, g) => (demand[g] += w));
+      open += shop.demand;
+      this.emit('all', { type: 'orderPosted', t: this.t, location: shop.id, size: shop.order!.size, wants: [...shop.order!.wants] });
+    }
+    // Lots: for each good, until what's on offer covers what's wanted. Producers near the shops that
+    // want it go first.
+    for (let g = 0; g < goods; g++) {
+      const wanting = shops.filter((q) => q.order && q.order.wants[g] > 0);
+      const nearby = (p: LocationState) => {
+        const d = this.distFrom(this.town.locations[p.id].node);
+        return wanting.reduce((a, q) => a + (d[this.town.locations[q.id].node] <= 8 ? q.order!.wants[g] : 0), 0);
+      };
+      for (let guard = 0; supply[g] < demand[g] * cfg.supplyShare && guard < 50; guard++) {
+        const p = pickLotProducer(producers, g, this.t, nearby, this.rng);
+        if (!p) break;
+        postLot(p, this.companies.length, this.t, cfg, this.rng);
+        supply[g] += p.stock;
+        this.emit('all', { type: 'lotPosted', t: this.t, location: p.id, size: p.stock });
+      }
+    }
+  }
+
+  /** A pallet delivered to a shop with an order: count it, and on the last one pay the completion bonus. */
+  private creditDelivery(location: number, company: number) {
+    const s = this.locById.get(location);
+    if (!s) return;
+    const done = creditOrder(s, company, this.t, this.cfg.orders, this.rng);
+    if (!done) return;
+    const total = done.size * this.cfg.orders.bonusPerPallet;
+    const bonus = done.delivered.map((n) => (total * n) / done.size);
+    bonus.forEach((b, c) => {
+      if (b <= 0) return;
+      this.companies[c].treasury += b * this.cfg.money.deliveryToTreasury;
+      this.companies[c].pot += b * this.cfg.money.deliveryToPot;
+    });
+    this.emit('all', { type: 'orderDone', t: this.t, location, size: done.size, delivered: [...done.delivered], bonus });
+    if (done.grew) this.emit('all', { type: 'grew', t: this.t, location, tier: s.tier });
+  }
+
+  /** A pallet picked up from a producer's lot: count it; the last one ends the lot. */
+  private creditPickup(location: number, company: number) {
+    const p = this.locById.get(location);
+    if (!p) return;
+    const done = creditLot(p, company, this.t, this.cfg.orders, this.rng);
+    if (done?.grew) this.emit('all', { type: 'grew', t: this.t, location, tier: p.tier });
+  }
+
+  /** Pallets of a shop's order still free to claim: wanted, less trucks already sent for them. */
+  private openSlots(location: number, reserved: Map<number, number>): number {
+    const s = this.locById.get(location);
+    return s ? s.demand - (reserved.get(location) ?? 0) : 0;
+  }
+
   private placeCap(location: number): number {
     const l = this.locById.get(location);
     const level = l?.level ?? this.cfg.cycles.startLevel;
@@ -820,9 +927,11 @@ export class Game {
     const load = new Map<number, number>();
     for (const t of this.trucks.trucks) for (const s of t.orders) load.set(s.location, (load.get(s.location) ?? 0) + 1);
     const live = this.locations.filter((l) => l.kind === 'producer' || l.kind === 'consumer');
+    const free: { truck: Truck; depots: number[] }[] = [];
     for (const c of this.companies) {
       const depots = [...this.depotOwner].filter(([, o]) => o === c.id).map(([s]) => s).sort((a, b) => a - b);
       const mine = this.trucks.trucks.filter((t) => t.company === c.id);
+      if (this.cfg.orders.enabled) continue; // the plan handles orders (a sent truck finishes its trip)
       // Out of the area: finish up and come free.
       for (const t of mine) {
         if (!t.route || t.homing) continue;
@@ -838,36 +947,221 @@ export class Game {
         if (spare) this.trucks.sendHome(spare, this.t);
       }
       if (depots.length === 0) continue;
-      const free = mine.filter((t) => t.orders.length === 0 && t.cargo === null && !t.route);
-      for (const truck of free) {
-        let best: { depot: number; producer: number; consumer: number; score: number } | null = null;
-        for (const q of live) {
-          if (q.kind !== 'consumer' || !this.serves(c.id, q.id)) continue;
-          for (const p of live) {
-            if (p.kind !== 'producer' || p.good !== q.good) continue;
-            const busy = Math.max((load.get(p.id) ?? 0) / this.placeCap(p.id), (load.get(q.id) ?? 0) / this.placeCap(q.id));
-            if (busy >= 1) continue;
-            let depot = depots[0];
-            let length = Infinity;
-            for (const d of depots) {
-              const len = this.routeLength(d, p.id, q.id);
-              if (len < length) {
-                length = len;
-                depot = d;
-              }
+      for (const t of mine) if (t.orders.length === 0 && t.cargo === null && !t.route) free.push({ truck: t, depots });
+    }
+    if (this.cfg.orders.enabled) this.dispatchPlanned();
+    else this.assignTrucks(free, load, live);
+  }
+
+  /**
+   * Routes (shops that always want more): give free trucks a route each. Each truck takes the best
+   * route it can (better pay, shorter, focused first), and a place stops taking trucks once it has
+   * as many as it can keep busy.
+   */
+  private assignTrucks(free: { truck: Truck; depots: number[] }[], load: Map<number, number>, live: LocationState[]) {
+    for (const { truck, depots } of free) {
+      const c = this.companies[truck.company];
+      let best: { depot: number; producer: number; consumer: number; score: number } | null = null;
+      for (const q of live) {
+        if (q.kind !== 'consumer' || !this.serves(c.id, q.id)) continue;
+        for (const p of live) {
+          if (p.kind !== 'producer' || p.good !== q.good) continue;
+          const busy = Math.max((load.get(p.id) ?? 0) / this.placeCap(p.id), (load.get(q.id) ?? 0) / this.placeCap(q.id));
+          if (busy >= 1) continue;
+          let depot = depots[0];
+          let length = Infinity;
+          for (const d of depots) {
+            const len = this.routeLength(d, p.id, q.id);
+            if (len < length) {
+              length = len;
+              depot = d;
             }
-            if (!Number.isFinite(length)) continue;
-            const focused = c.focus.includes(p.id) || c.focus.includes(q.id);
-            const score = ((q.price ?? this.cfg.money.palletPrice) / (length + 4)) * (1 - busy) * (focused ? 10 : 1);
-            if (!best || score > best.score) best = { depot, producer: p.id, consumer: q.id, score };
+          }
+          if (!Number.isFinite(length)) continue;
+          const focused = c.focus.includes(p.id) || c.focus.includes(q.id);
+          const score = ((q.price ?? this.cfg.money.palletPrice) / (length + 4)) * (1 - busy) * (focused ? 10 : 1);
+          if (!best || score > best.score) best = { depot, producer: p.id, consumer: q.id, score };
+        }
+      }
+      if (!best) continue;
+      this.sendOnRoute(truck, best.depot, best.producer, best.consumer);
+      load.set(best.producer, (load.get(best.producer) ?? 0) + 1);
+      load.set(best.consumer, (load.get(best.consumer) ?? 0) + 1);
+    }
+  }
+
+  // ---------------------------------------------------------------- the delivery plan (shop orders)
+
+  /**
+   * The plan: for every pallet still unclaimed in an open order, the truck that would get it there
+   * soonest, counting trucks still on a trip from when and where they'll be free. Trucks that are
+   * free now are sent on their planned trip; the rest wait for theirs. Only a truck that's been sent
+   * has a pallet: plans for later can change at no cost, so nobody ever turns back.
+   *
+   * Replanned only when something it depends on changes: an order posted or filled, an area or
+   * focus changed, a truck or factory bought, or a truck freeing up noticeably earlier or later than
+   * planned (or with nothing planned for it). Otherwise a free truck just takes its planned trip.
+   */
+  private dispatchPlanned() {
+    const free = this.trucks.trucks.filter((t) => t.orders.length === 0 && t.cargo === null && !t.route && this.depotsOf(t.company).length > 0);
+    // A truck free with no plan for it (bought, sent home, or ahead of schedule): plan again.
+    if (!this.replan && free.some((t) => !this.plan.has(t.id) && this.planFreeAt.get(t.id) !== undefined && this.t > this.planFreeAt.get(t.id)! + this.cfg.orders.lateSec)) this.replan = true;
+    // Changes are batched: plan at most every few seconds, unless a free truck has nothing to do.
+    const idleFree = free.some((t) => !this.plan.has(t.id) && !this.idleAtPlan.has(t.id));
+    if ((this.replan && (idleFree || this.t >= this.lastPlanAt + this.cfg.orders.batchSec)) || this.t >= this.nextReplanAt) this.makePlan();
+    for (const t of free) {
+      const trip = this.plan.get(t.id);
+      if (!trip) continue;
+      const s = this.locById.get(trip.consumer);
+      const key = claimKey(trip.consumer, trip.good);
+      if (!s || !s.order || (s.order.wants[trip.good] ?? 0) - (this.claimed.get(key) ?? 0) < 1) {
+        // Its pallet's gone (filled, or claimed): plan again next second.
+        this.plan.delete(t.id);
+        this.replan = true;
+        continue;
+      }
+      this.sendOnRoute(t, trip.depot, trip.producer, trip.consumer);
+      this.plan.delete(t.id);
+      this.eta.set(t.id, this.t + trip.duration);
+      this.claimed.set(key, (this.claimed.get(key) ?? 0) + 1);
+    }
+  }
+
+  private makePlan() {
+    this.replan = false;
+    this.lastPlanAt = this.t;
+    this.nextReplanAt = this.t + this.cfg.orders.replanSec;
+    this.plans++;
+    this.plan.clear();
+    this.planFreeAt.clear();
+    const speed = this.cfg.trucks.speed;
+    const extra = 2 * this.cfg.trucks.serviceSec + (this.cfg.trucks.viaDepot === 'none' ? 0 : this.cfg.trucks.signOffSec);
+    // Pallets each shop has claimed, good by good (trucks sent and not yet unloading there).
+    this.claimed.clear();
+    for (const t of this.trucks.trucks) {
+      const u = t.orders.find((o) => o.action === 'unload');
+      if (!u) continue;
+      if (t.state === 'servicing' && t.serving?.action === 'unload' && t.at === u.location) continue;
+      const load = t.orders.find((o) => o.action === 'load');
+      const good = t.cargo?.good ?? (load ? this.town.locations[load.location].good : null);
+      if (good === null || good === undefined) continue;
+      const key = claimKey(u.location, good);
+      this.claimed.set(key, (this.claimed.get(key) ?? 0) + 1);
+    }
+    const unclaimed = (q: LocationState, g: number) => (q.order ? (q.order.wants[g] ?? 0) - (this.claimed.get(claimKey(q.id, g)) ?? 0) : 0);
+    const goods = this.cfg.town.goods.length;
+    const shops = this.locations.filter((l) => l.kind === 'consumer' && !l.closed && l.order && [...Array(goods).keys()].some((g) => unclaimed(l, g) > 0));
+    if (shops.length === 0) return;
+    const producers = this.locations.filter((l) => l.kind === 'producer' && !l.closed);
+    // Each producer's pickups: its stock now, what it makes as time goes on, and the trucks already
+    // on their way to load there. A pickup is planned only if there'll be a pallet when it arrives.
+    const cyc = this.cfg.cycles;
+    const perSec = new Map(producers.map((p) => [p.id, cyc.producerCycles ? cycleRate(p, cyc) / p.cycleSec : 0]));
+    const capOf = (p: LocationState) => (cyc.producerCycles ? cycleRate(p, cyc) * cyc.carryCycles : p.stock);
+    const pickups = new Map<number, number>(producers.map((p) => [p.id, 0]));
+    for (const t of this.trucks.trucks) {
+      if (t.cargo !== null) continue;
+      const l = t.orders.find((o) => o.action === 'load');
+      if (l && pickups.has(l.location)) pickups.set(l.location, pickups.get(l.location)! + 1);
+    }
+    const prodById = new Map(producers.map((p) => [p.id, p]));
+    const hasPallet = (producer: number, at: number) => {
+      const p = prodById.get(producer)!;
+      const made = Math.min(capOf(p), p.stock + perSec.get(producer)! * Math.max(0, at - this.t));
+      return made - pickups.get(producer)! >= 1;
+    };
+    // When and where each truck is next free: now and here, or at its shop when it delivers.
+    const avail: { truck: Truck; at: number; node: number; depots: number[] }[] = [];
+    for (const t of this.trucks.trucks) {
+      const depots = this.depotsOf(t.company);
+      if (depots.length === 0) continue;
+      const u = t.orders.find((o) => o.action === 'unload');
+      if (u) avail.push({ truck: t, at: Math.max(this.t, this.eta.get(t.id) ?? this.t), node: this.town.locations[u.location].node, depots });
+      else if (t.cargo === null) avail.push({ truck: t, at: this.t, node: t.state === 'driving' && t.path.length ? t.path[0] : t.node, depots });
+    }
+    // Every truck against every shop it serves: its best producer and factory, and when it'd arrive.
+    // Better-paying and focused shops count as sooner (a pallet's worth is in the comparison).
+    const pairs: { a: number; shop: LocationState; good: number; producer: number; depot: number; duration: number; arrive: number; key: number }[] = [];
+    avail.forEach((v, a) => {
+      const c = this.companies[v.truck.company];
+      for (const q of shops) {
+        if (!this.serves(c.id, q.id)) continue;
+        for (let g = 0; g < goods; g++) {
+        if (unclaimed(q, g) < 1) continue;
+        let bestLen = Infinity;
+        let producer = -1;
+        let depot = -1;
+        for (const p of producers) {
+          if (p.good !== g || p.stock + perSec.get(p.id)! * 600 - pickups.get(p.id)! < 1) continue;
+          for (const d of v.depots) {
+            const len = this.tripLength(v.node, d, p.id, q.id);
+            if (len < bestLen) {
+              bestLen = len;
+              producer = p.id;
+              depot = d;
+            }
           }
         }
-        if (!best) continue;
-        this.sendOnRoute(truck, best.depot, best.producer, best.consumer);
-        load.set(best.producer, (load.get(best.producer) ?? 0) + 1);
-        load.set(best.consumer, (load.get(best.consumer) ?? 0) + 1);
+        if (!Number.isFinite(bestLen)) continue;
+        const duration = bestLen / speed + extra;
+        const arrive = v.at + duration;
+        const focused = c.focus.includes(q.id) || c.focus.includes(producer);
+        const worth = (q.price ?? this.cfg.money.palletPrice) / this.cfg.money.palletPrice;
+        pairs.push({ a, shop: q, good: g, producer, depot, duration, arrive, key: (arrive - this.t + 4) / worth / (focused ? 3 : 1) });
+        }
       }
+    });
+    pairs.sort((x, y) => x.key - y.key || x.a - y.a || x.shop.id - y.shop.id || x.good - y.good);
+    const open = new Map<number, number>();
+    for (const q of shops) for (let g = 0; g < goods; g++) open.set(claimKey(q.id, g), unclaimed(q, g));
+    const taken = new Set<number>();
+    for (const pr of pairs) {
+      const key = claimKey(pr.shop.id, pr.good);
+      if (taken.has(pr.a) || (open.get(key) ?? 0) < 1) continue;
+      const v = avail[pr.a];
+      // Its producer, or the next nearest that'll have a pallet when it gets there.
+      const toP = (p: number) => v.at + this.distFrom(v.node)[this.town.locations[p].node] / speed;
+      if (!hasPallet(pr.producer, toP(pr.producer))) {
+        let alt = -1;
+        let altDepot = -1;
+        let altLen = Infinity;
+        for (const p of producers) {
+          if (p.good !== pr.good || !hasPallet(p.id, toP(p.id))) continue;
+          for (const d of v.depots) {
+            const len = this.tripLength(v.node, d, p.id, pr.shop.id);
+            if (len < altLen) {
+              altLen = len;
+              alt = p.id;
+              altDepot = d;
+            }
+          }
+        }
+        if (alt < 0 || !Number.isFinite(altLen)) continue;
+        pr.producer = alt;
+        pr.depot = altDepot;
+        pr.duration = altLen / speed + extra;
+      }
+      taken.add(pr.a);
+      open.set(key, open.get(key)! - 1);
+      pickups.set(pr.producer, pickups.get(pr.producer)! + 1);
+      const truck = avail[pr.a].truck;
+      this.plan.set(truck.id, { depot: pr.depot, producer: pr.producer, consumer: pr.shop.id, good: pr.good, duration: pr.duration });
+      this.planFreeAt.set(truck.id, avail[pr.a].at);
     }
+    // Trucks with nothing planned: when they're due free, so one coming free unplanned triggers a replan.
+    for (const v of avail) if (!this.planFreeAt.has(v.truck.id)) this.planFreeAt.set(v.truck.id, v.at);
+    // Free now with nothing to do: no point planning again just for them until something changes.
+    this.idleAtPlan = new Set(avail.filter((v) => v.at <= this.t && !this.plan.has(v.truck.id)).map((v) => v.truck.id));
+  }
+
+  /** Drive distance from a node to a producer, through a factory, to a shop (one trip). */
+  private tripLength(from: number, depot: number, producer: number, consumer: number): number {
+    const p = this.town.locations[producer].node;
+    const q = this.town.locations[consumer].node;
+    const d = this.town.locations[depot].node;
+    const via = this.cfg.trucks.viaDepot;
+    const toP = this.distFrom(from)[p];
+    return via === 'none' ? toP + this.distFrom(p)[q] : toP + this.distFrom(p)[d] + this.distFrom(d)[q];
   }
 
   /** Put a truck on a route: its orders, and the route it's on. */
@@ -998,6 +1292,21 @@ export class Game {
     return counts;
   }
   private districtCache: { t: number; counts: Map<number, number[]> } = { t: -1, counts: new Map() };
+  /** Shop orders: when each truck that's been sent is expected to have delivered. */
+  private eta = new Map<number, number>();
+  /** The delivery plan: each planned truck's next trip, and how long it takes. */
+  private plan = new Map<number, { depot: number; producer: number; consumer: number; good: number; duration: number }>();
+  /** When each truck was expected to be free, as of the last plan. */
+  private planFreeAt = new Map<number, number>();
+  /** Pallets each shop has claimed by trucks already sent, per good (key: claimKey). */
+  private claimed = new Map<number, number>();
+  /** Something the plan depends on changed. */
+  private replan = true;
+  private nextReplanAt = 0;
+  private lastPlanAt = -Infinity;
+  private idleAtPlan = new Set<number>();
+  /** How many times the plan's been made (for measuring). */
+  plans = 0;
 
   /** Drive distances from a depot site (cached). */
   private siteDist(site: number): Float64Array {

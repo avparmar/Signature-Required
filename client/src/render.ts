@@ -815,6 +815,23 @@ export class Renderer {
       }
       const st = byId.get(l.id);
       const closing = st?.closingIn !== null && st?.closingIn !== undefined;
+      // A grown building (placeholder look): a taller block behind it, a storey per tier, with windows.
+      if (st && this.orders && st.tier > 1) {
+        const w = r * 1.5;
+        const storey = r * 0.62;
+        const top = y + r * 0.95 - r * 1.9 - storey * (st.tier - 1);
+        ctx.fillStyle = '#e6dfd0';
+        ctx.strokeStyle = '#8a8273';
+        ctx.lineWidth = 1.2;
+        roundRect(ctx, x - w / 2, top, w, y + r * 0.95 - top, 3);
+        ctx.fill();
+        ctx.stroke();
+        if (detail) {
+          ctx.fillStyle = '#a99f8c';
+          for (let f = 0; f < st.tier - 1; f++)
+            for (let k = 0; k < 3; k++) ctx.fillRect(x - w * 0.32 + k * w * 0.26, top + storey * (f + 0.3), w * 0.14, storey * 0.4);
+        }
+      }
       drawBusiness(ctx, l.kind as 'producer' | 'consumer', l.good!, x, y, r, detail);
       // Level: pips when zoomed in, a ring tint when zoomed out (none when every business has the same level).
       if (st && this.levelled) {
@@ -853,6 +870,50 @@ export class Renderer {
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText('$', ccx, ccy + 0.5);
+        }
+      }
+      // Orders and lots (placeholder look). A shop's open order is a green ring that fills as pallets
+      // arrive, with what it still wants (a pill per good once it orders several); a producer's lot is
+      // an amber ring that empties as it's collected, with what's left. Quiet places are faded.
+      if (st && this.orders) {
+        const rr = r * 1.45;
+        if (st.order) {
+          const shop = st.kind === 'consumer';
+          const left = shop ? st.demand : st.stock;
+          const frac = shop ? (st.order.size - left) / st.order.size : left / st.order.size;
+          ctx.lineWidth = Math.max(2.5, r * 0.22);
+          ctx.strokeStyle = 'rgba(35,32,27,0.15)';
+          ctx.beginPath();
+          ctx.arc(x, y, rr, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.strokeStyle = shop ? '#2e8a3e' : '#c98a1c';
+          ctx.beginPath();
+          ctx.arc(x, y, rr, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac);
+          ctx.stroke();
+          const goods = shop ? st.order.wants.map((w, g) => [g, w]).filter(([, w]) => w > 0) : [];
+          if (goods.length > 1) {
+            // Several goods: a pill per good, in its colour, under the building.
+            const pw = Math.max(16, r * 1.1);
+            const ph = Math.max(11, r * 0.62);
+            const x0 = x - (goods.length * pw + (goods.length - 1) * 2) / 2;
+            ctx.font = `700 ${Math.round(ph * 0.78)}px system-ui, sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            goods.forEach(([g, w], k) => {
+              const px = x0 + k * (pw + 2);
+              const py = y + rr + 2;
+              ctx.fillStyle = goodColor(g);
+              roundRect(ctx, px, py, pw, ph, ph / 2);
+              ctx.fill();
+              ctx.fillStyle = '#fff';
+              ctx.fillText(String(w), px + pw / 2, py + ph / 2 + 0.5);
+            });
+          } else if (left > 0) label(ctx, `${left}`, x + rr * 0.8, y - rr * 0.8, shop ? '#1f5f29' : '#7a5208');
+        } else {
+          ctx.fillStyle = 'rgba(244,241,234,0.6)';
+          ctx.beginPath();
+          ctx.arc(x, y, r * 1.15, 0, Math.PI * 2);
+          ctx.fill();
         }
       }
       // Closing: a slow, soft pulse rather than a hard blink (it's news, not an alarm).
@@ -1026,6 +1087,8 @@ export class Renderer {
   palletPrice = 2.4;
   /** Whether businesses have levels to show (off when they're all fixed at one). */
   levelled = true;
+  /** Whether shops take orders (draw each order's progress, and fade quiet shops). */
+  orders = false;
 
   /** How long loading/unloading and factory processing take (seconds), for the progress pies. */
   serviceSec = 3;

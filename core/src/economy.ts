@@ -21,6 +21,10 @@ export interface CycleConfig {
   palletsPerLevel: number;
   /** A shop wants this share of what a producer makes (0.5 with two shops per producer: supply = demand). */
   shopShare: number;
+  /** Shops want more every cycle (true), or only through orders the game posts (false: see orders.ts). */
+  shopCycles: boolean;
+  /** Producers make more every cycle (true), or only offer lots the game posts (false: see orders.ts). */
+  producerCycles: boolean;
   /** Level new and starting locations begin at. */
   startLevel: number;
   /** Highest level. */
@@ -43,6 +47,8 @@ export const DEFAULT_CYCLES: CycleConfig = {
   cycleSec: [45, 45],
   palletsPerLevel: 2,
   shopShare: 0.5,
+  shopCycles: true,
+  producerCycles: true,
   // Businesses stay at one level: they don't grow, shrink or close (growAbove/shrinkBelow out of reach).
   startLevel: 2,
   maxLevel: 2,
@@ -81,6 +87,17 @@ export interface LocationState {
   closed: boolean;
   /** Game time until which it can't level down or close. */
   graceUntil: number;
+  /**
+   * Orders and lots (orders.ts): a shop's open order (pallets wanted per good) or a producer's lot,
+   * with each company's deliveries (or pickups) towards it.
+   */
+  order: { size: number; wants: number[]; delivered: number[]; postedAt: number } | null;
+  /** Orders and lots: no new one here before this time. */
+  quietUntil: number;
+  /** Orders and lots: how big the building has grown (1-4). */
+  tier: number;
+  /** Orders and lots: completed at this tier (towards the next). */
+  completed: number;
 }
 
 export type CycleEvent =
@@ -107,8 +124,8 @@ export function newLocationState(l: Location, cfg: CycleConfig, rng: Rng, now = 
     // Random phase so the whole town doesn't tick at once; first cycle within one cycle length.
     nextCycleAt: now + rng.next() * cycleSec,
     // Open for business from the start: a producer has a cycle's goods ready, a shop a cycle's order.
-    stock: l.kind === 'producer' ? cycleRate({ kind: 'producer', level: cfg.startLevel }, cfg) : 0,
-    demand: l.kind === 'consumer' ? cycleRate({ kind: 'consumer', level: cfg.startLevel }, cfg) : 0,
+    stock: l.kind === 'producer' && cfg.producerCycles ? cycleRate({ kind: 'producer', level: cfg.startLevel }, cfg) : 0,
+    demand: l.kind === 'consumer' && cfg.shopCycles ? cycleRate({ kind: 'consumer', level: cfg.startLevel }, cfg) : 0,
     cycleAmount: 0,
     served: 0,
     history: [],
@@ -116,6 +133,10 @@ export function newLocationState(l: Location, cfg: CycleConfig, rng: Rng, now = 
     closingIn: null,
     closed: false,
     graceUntil: now + cfg.graceSec,
+    order: null,
+    quietUntil: 0,
+    tier: 1,
+    completed: 0,
   };
 }
 
@@ -151,8 +172,10 @@ export function updateCycles(states: LocationState[], t: number, cfg: CycleConfi
       }
       const amount = cycleRate(s, cfg);
       const cap = amount * cfg.carryCycles;
-      if (s.kind === 'producer') s.stock = Math.min(cap, s.stock + amount);
-      else s.demand = Math.min(cap, s.demand + amount);
+      if (s.kind === 'producer') {
+        if (cfg.producerCycles) s.stock = Math.min(cap, s.stock + amount);
+      }
+      else if (cfg.shopCycles) s.demand = Math.min(cap, s.demand + amount);
       s.cycleAmount = amount;
       s.served = 0;
       s.nextCycleAt += s.cycleSec;
@@ -206,9 +229,13 @@ export function takePallet(producer: LocationState): boolean {
  * A truck drops one pallet of `good` (picked up at `origin`). False if this consumer doesn't
  * want it right now. Credits both the consumer and the producer it came from.
  */
-export function deliverPallet(consumer: LocationState, origin: LocationState | null): boolean {
+export function deliverPallet(consumer: LocationState, origin: LocationState | null, good: number = origin?.good ?? consumer.good): boolean {
   if (consumer.kind !== 'consumer' || consumer.closed || consumer.demand <= 0) return false;
-  if (origin && origin.good !== consumer.good) return false;
+  if (consumer.order) {
+    // An order: only the goods it still wants.
+    if ((consumer.order.wants[good] ?? 0) <= 0) return false;
+    consumer.order.wants[good]--;
+  } else if (good !== consumer.good) return false;
   consumer.demand--;
   consumer.served++;
   if (origin) origin.served++;

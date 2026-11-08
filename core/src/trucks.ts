@@ -21,6 +21,8 @@ import { atGoal, berthGoal, defaultKerb, kerbLine, linePoint, spotS, stepBerth, 
 export interface TruckConfig {
   /** Driving speed, blocks per second. */
   speed: number;
+  /** A truck does one trip per dispatch: after delivering it's free again (heading home until sent out). */
+  oneTrip: boolean;
   /** Seconds to load or unload one pallet at a bay. */
   serviceSec: number;
   /** Companies take turns at a building (true), or it's first come, first served (false). */
@@ -40,6 +42,7 @@ export interface TruckConfig {
 
 export const DEFAULT_TRUCKS: TruckConfig = {
   speed: 0.35,
+  oneTrip: false,
   serviceSec: 3,
   takeTurns: true,
   viaDepot: 'loaded',
@@ -335,7 +338,8 @@ export class TruckSystem {
     if (stop.action === 'load') return truck.cargo === null;
     if (stop.action === 'signOff') return this.cfg.viaDepot === 'hub' || truck.cargo !== null;
     const c = this.loc(stop.location);
-    return truck.cargo !== null && c !== undefined && c.good === truck.cargo.good;
+    if (truck.cargo === null || c === undefined) return false;
+    return c.order && c.kind === 'consumer' ? (c.order.wants[truck.cargo.good] ?? 0) > 0 : c.good === truck.cargo.good;
   }
 
   /**
@@ -551,7 +555,7 @@ export class TruckSystem {
         truck.serving = { action: 'load', good: l.good };
       } else {
         const origin = truck.cargo ? this.loc(truck.cargo.origin) ?? null : null;
-        if (!deliverPallet(l, origin)) {
+        if (!deliverPallet(l, origin, truck.cargo?.good)) {
           if (l.closed || l.demand <= 0) return; // satisfied: everyone waits for the next cycle
           skip.add(id); // this truck's pallet is no use here; serve the others
           continue;
@@ -578,6 +582,12 @@ export class TruckSystem {
         const cargo = truck.cargo;
         truck.cargo = null;
         this.emit({ type: 'delivered', t: now, truck: truck.id, company: truck.company, location, good: cargo.good, origin: cargo.origin, price: done.price });
+        // One trip per dispatch: free again, heading home until it's sent out on the next one.
+        if (this.cfg.oneTrip) {
+          truck.route = null;
+          truck.orders = [];
+          truck.homing = true;
+        }
       }
     }
     this.leaveQueue(truck);

@@ -35,6 +35,10 @@ function loc(kind: 'producer' | 'consumer', o: Partial<LocationState> = {}): Loc
     closingIn: null,
     closed: false,
     graceUntil: 0,
+    order: null,
+    quietUntil: 0,
+    tier: 1,
+    completed: 0,
     ...o,
   };
 }
@@ -163,20 +167,20 @@ describe('the level ladder', () => {
 
 describe('the town over a game', () => {
   it('every producer and consumer gets state, cycles at different times, and the game stays deterministic', () => {
-    const g = newGame({ seed: 4, cycles: LADDER, auctions: { openingRound: false } });
+    const g = newGame({ seed: 4, cycles: LADDER, orders: { enabled: false }, auctions: { openingRound: false } });
     const count = g.town.locations.filter((l) => l.kind === 'producer' || l.kind === 'consumer').length;
     expect(g.locations).toHaveLength(count);
     expect(new Set(g.locations.map((l) => l.nextCycleAt.toFixed(2))).size).toBeGreaterThan(count / 2);
     for (let i = 0; i < 600; i++) g.step(); // one minute
     expect(g.locations.filter((l) => l.kind === 'producer').every((l) => l.stock > 0)).toBe(true);
     expect(g.locations.filter((l) => l.kind === 'consumer').every((l) => l.demand > 0)).toBe(true);
-    const h = newGame({ seed: 4, cycles: LADDER, auctions: { openingRound: false } });
+    const h = newGame({ seed: 4, cycles: LADDER, orders: { enabled: false }, auctions: { openingRound: false } });
     for (let i = 0; i < 600; i++) h.step();
     expect(h.stateHash()).toEqual(g.stateHash());
   });
 
   it('with nobody delivering, the original town withers and closes, while new locations keep opening', () => {
-    const g = newGame({ seed: 2, cycles: LADDER, auctions: { openingRound: false } });
+    const g = newGame({ seed: 2, cycles: LADDER, orders: { enabled: false }, auctions: { openingRound: false } });
     const original = new Set(g.locations.map((l) => l.id));
     g.runToEnd();
     const evs = g.drainEvents(0);
@@ -199,14 +203,14 @@ describe('the town over a game', () => {
   });
 
   it('openings avoid lots right next to live locations', () => {
-    const g = newGame({ seed: 6, cycles: LADDER, auctions: { openingRound: false }, openings: { everySec: 20, quietStartSec: 0 } });
+    const g = newGame({ seed: 6, cycles: LADDER, orders: { enabled: false }, auctions: { openingRound: false }, openings: { everySec: 20, quietStartSec: 0 } });
     for (let i = 0; i < 6000; i++) g.step();
     const opened = g.drainEvents(0).filter((e) => e.type === 'opened');
     expect(opened.length).toBeGreaterThan(5);
   });
 
   it('openings can be turned off', () => {
-    const g = newGame({ seed: 2, cycles: LADDER, auctions: { openingRound: false }, openings: { everySec: 0 } });
+    const g = newGame({ seed: 2, cycles: LADDER, orders: { enabled: false }, auctions: { openingRound: false }, openings: { everySec: 0 } });
     g.runToEnd();
     expect(g.drainEvents(0).some((e) => e.type === 'opened')).toBe(false);
   });
@@ -217,7 +221,7 @@ describe('grace period', () => {
     const g = { ...DEFAULT_CYCLES, ...LADDER, palletsPerLevel: 2, window: 2, graceSec: 120 };
     const c: LocationState = {
       id: 2, kind: 'consumer', good: 0, level: 1, cycleSec: 45, nextCycleAt: 0, stock: 0, demand: 0,
-      cycleAmount: 0, served: 0, history: [], price: 0, closingIn: null, closed: false, graceUntil: 120,
+      cycleAmount: 0, served: 0, history: [], price: 0, closingIn: null, closed: false, graceUntil: 120, order: null, quietUntil: 0, tier: 1, completed: 0,
     };
     const rng = new Rng(1);
     // Unserved for 2 minutes: nothing happens.
