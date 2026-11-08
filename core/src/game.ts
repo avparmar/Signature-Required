@@ -266,6 +266,7 @@ export class Game {
         if (l.kind === 'consumer') l.price = Math.round(l.price * cfg.orders.bandPay[b] * 100) / 100;
         if (b === 0) l.tier = Math.max(l.tier, cfg.orders.centreTier);
       }
+    this.bandBudget = [...cfg.orders.bandDemand];
     for (const l of this.town.locations) if (l.startCompany !== null) this.depotOwner.set(l.id, l.startCompany);
     this.trucks = new TruckSystem(
       this.town.graph,
@@ -849,20 +850,22 @@ export class Game {
     const short = (g: number) => (producersOf[g] + supply[g]) / (1 + demand[g]);
     // Each band of town (centre, middle, outer) keeps its own open demand up, a fixed amount: or,
     // with demand following the fleet, the whole town as one.
-    const groups: { shops: LocationState[]; target: number }[] =
+    const groups: { shops: LocationState[]; target: number; band: number }[] =
       cfg.demand === 'bands'
         ? [0, 1, 2].map((b) => {
             const ramp = cfg.bandRampSec[b];
             const share = ramp > 0 ? Math.min(1, 0.25 + (0.75 * this.t) / ramp) : 1;
-            return { shops: shops.filter((q) => this.bandOf(q.id) === b), target: cfg.bandDemand[b] * share };
+            return { shops: shops.filter((q) => this.bandOf(q.id) === b), target: this.bandBudget[b] * share, band: b };
           })
-        : [{ shops, target: Math.max(cfg.minOpen, this.trucks.trucks.length * cfg.openPerTruck) }];
+        : [{ shops, target: Math.max(cfg.minOpen, this.trucks.trucks.length * cfg.openPerTruck), band: -1 }];
     for (const grp of groups) {
       let open = grp.shops.reduce((a, q) => a + (q.order ? q.demand : 0), 0);
       for (let guard = 0; open < grp.target && guard < 50; guard++) {
         const shop = pickOrderShop(grp.shops, this.t, short, nearSite, cfg, this.rng);
         if (!shop) break;
-        postOrder(shop, goods, this.companies.length, this.t, cfg, this.rng);
+        // A band whose demand has moved inward asks for less per order, as well as less in all.
+        const scale = grp.band >= 0 ? Math.min(1, this.bandBudget[grp.band] / cfg.bandDemand[grp.band]) : 1;
+        postOrder(shop, goods, this.companies.length, this.t, cfg, this.rng, scale);
         shop.order!.wants.forEach((w, g) => (demand[g] += w));
         open += shop.demand;
         this.emit('all', { type: 'orderPosted', t: this.t, location: shop.id, size: shop.order!.size, wants: [...shop.order!.wants] });
@@ -890,6 +893,17 @@ export class Game {
   private creditDelivery(location: number, company: number) {
     const s = this.locById.get(location);
     if (!s) return;
+    // Bands: serving a band moves some of its demand one band in (down to the band's floor).
+    const ocfg = this.cfg.orders;
+    if (ocfg.demand === 'bands') {
+      const b = this.bandOf(location);
+      if (b > 0) {
+        const floor = ocfg.bandDemand[b] * ocfg.bandFloor[b];
+        const move = Math.min(ocfg.migratePerPallet, Math.max(0, this.bandBudget[b] - floor));
+        this.bandBudget[b] -= move;
+        this.bandBudget[b - 1] += move;
+      }
+    }
     const done = creditOrder(s, company, this.t, this.cfg.orders, this.rng, this.bandOf(location));
     if (!done) return;
     const total = done.size * this.cfg.orders.bonusPerPallet;
@@ -923,6 +937,8 @@ export class Game {
     return b;
   }
   private bands = new Map<number, number>();
+  /** Bands: open demand each band keeps up now (it moves inward as the town is served). */
+  bandBudget: number[] = [];
   private bandReach = 0;
 
   /** A pallet picked up from a producer's lot: count it; the last one ends the lot. */

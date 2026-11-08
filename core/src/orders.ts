@@ -50,6 +50,15 @@ export interface OrdersConfig {
   bandDemand: [number, number, number];
   /** Bands: seconds each band's demand takes to build up to its full amount (from a quarter), centre, middle, outer (0 = full from the start). */
   bandRampSec: [number, number, number];
+  /**
+   * Bands: demand moves inward as it's served. Each pallet delivered in the outer (or middle) band
+   * moves this much of that band's open demand to the next band in (outer -> middle -> centre).
+   */
+  migratePerPallet: number;
+  /** Bands: a band's demand never drops below this share of what it started with, centre, middle, outer. */
+  bandFloor: [number, number, number];
+  /** Bands: the tallest shops can grow in each band (suburbs stay low), centre, middle, outer. */
+  bandTierCap: [number, number, number];
   /** Bands: what shops pay per pallet, as a multiple of their usual price, centre, middle, outer. */
   bandPay: [number, number, number];
   /** Bands: seconds a shop rests after its order is filled, centre, middle, outer (inclusive ranges). */
@@ -94,7 +103,10 @@ export const DEFAULT_ORDERS: OrdersConfig = {
   lotQuietSec: [15, 45],
   demand: 'bands',
   bandEdges: [0.35, 0.68],
-  bandDemand: [14, 20, 36],
+  bandDemand: [12, 22, 30],
+  migratePerPallet: 0.12,
+  bandFloor: [1, 0.6, 0.35],
+  bandTierCap: [4, 4, 2],
   bandRampSec: [0, 0, 0],
   bandPay: [1.25, 1.1, 1],
   bandQuietSec: [
@@ -149,11 +161,12 @@ const sizeAt = (ranges: [number, number][], tier: number, rng: Rng) => {
 };
 
 /** Post an order at a shop: its own good, plus others from tier 3 (other goods drawn at random). */
-export function postOrder(s: LocationState, goods: number, companies: number, t: number, cfg: OrdersConfig, rng: Rng) {
+export function postOrder(s: LocationState, goods: number, companies: number, t: number, cfg: OrdersConfig, rng: Rng, scale = 1) {
   const wants = new Array(goods).fill(0);
   const n = Math.min(goods, cfg.orderGoods[Math.min(cfg.orderGoods.length, s.tier) - 1] ?? 1);
   const others = rng.shuffle([...Array(goods).keys()].filter((g) => g !== s.good));
-  for (const g of [s.good, ...others.slice(0, n - 1)]) wants[g] = sizeAt(cfg.orderSize, s.tier, rng);
+  // `scale`: a band whose demand has moved inward asks for less per order (at least 2 pallets).
+  for (const g of [s.good, ...others.slice(0, n - 1)]) wants[g] = Math.max(2, Math.round(sizeAt(cfg.orderSize, s.tier, rng) * scale));
   const size = wants.reduce((a, b) => a + b, 0);
   s.order = { size, wants, delivered: new Array(companies).fill(0), postedAt: t };
   s.demand = size;
@@ -172,12 +185,13 @@ export function postLot(p: LocationState, companies: number, t: number, cfg: Ord
 
 /** Done: quiet for a while, and count towards the next tier. True if it moved up a tier. */
 function finish(s: LocationState, t: number, cfg: OrdersConfig, rng: Rng, band: number | null): boolean {
+  const cap = s.kind === 'consumer' && band !== null && cfg.demand === 'bands' ? cfg.bandTierCap[band] : 4;
   s.order = null;
   const [lo, hi] = s.kind === 'producer' ? cfg.lotQuietSec : band !== null && cfg.demand === 'bands' ? cfg.bandQuietSec[band] : cfg.quietSec;
   s.quietUntil = t + lo + rng.next() * (hi - lo);
   s.completed++;
   const need = cfg.tierUpAfter[s.tier - 1];
-  if (need !== undefined && s.completed >= need) {
+  if (need !== undefined && s.completed >= need && s.tier < cap) {
     s.tier++;
     s.completed = 0;
     return true;
