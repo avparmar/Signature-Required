@@ -259,6 +259,13 @@ export class Game {
     for (const l of this.locations) this.locById.set(l.id, l);
     const prices = assignPrices(this.locations.filter((l) => l.kind === 'consumer').map((l) => l.id), cfg.money, this.rng);
     for (const [id, price] of prices) this.locById.get(id)!.price = price;
+    // Bands of town: shops nearer the centre pay more, and centre shops (and producers) start bigger.
+    if (cfg.orders.enabled && cfg.orders.demand === 'bands')
+      for (const l of this.locations) {
+        const b = this.bandOf(l.id);
+        if (l.kind === 'consumer') l.price = Math.round(l.price * cfg.orders.bandPay[b] * 100) / 100;
+        if (b === 0) l.tier = Math.max(l.tier, cfg.orders.centreTier);
+      }
     for (const l of this.town.locations) if (l.startCompany !== null) this.depotOwner.set(l.id, l.startCompany);
     this.trucks = new TruckSystem(
       this.town.graph,
@@ -336,6 +343,11 @@ export class Game {
 
     this.tick++;
     const ending = this.tick >= this.totalTicks;
+    // Running costs: every truck costs its company a little each second, from the treasury.
+    if (this.cfg.depots.upkeepPerMin > 0 && this.phase === 'running') {
+      const per = (this.cfg.depots.upkeepPerMin * this.cfg.tickSec) / 60;
+      for (const t of this.trucks.trucks) this.companies[t.company].treasury -= per;
+    }
     if (ending || this.tick % this.payoutTicks === 0) this.payDividends(ending);
     if (ending) {
       this.phase = 'ended';
@@ -822,12 +834,10 @@ export class Game {
     const live = this.locations.filter((l) => !l.closed);
     const shops = live.filter((l) => l.kind === 'consumer');
     const producers = live.filter((l) => l.kind === 'producer');
-    const target = Math.max(cfg.minOpen, this.trucks.trucks.length * cfg.openPerTruck);
     const demand = new Array(goods).fill(0);
     for (const q of shops) if (q.order) q.order.wants.forEach((w, g) => (demand[g] += w));
     const supply = new Array(goods).fill(0);
     for (const p of producers) if (p.order) supply[p.good] += p.stock;
-    let open = demand.reduce((a, b) => a + b, 0);
     const freeSites = this.town.locations.filter((l) => l.kind === 'depot' && !this.depotOwner.has(l.id));
     const nearSite = (s: LocationState) => {
       const node = this.town.locations[s.id].node;
@@ -837,13 +847,26 @@ export class Game {
     const producersOf = new Array(goods).fill(0);
     for (const p of producers) producersOf[p.good]++;
     const short = (g: number) => (producersOf[g] + supply[g]) / (1 + demand[g]);
-    for (let guard = 0; open < target && guard < 50; guard++) {
-      const shop = pickOrderShop(shops, this.t, short, nearSite, cfg, this.rng);
-      if (!shop) break;
-      postOrder(shop, goods, this.companies.length, this.t, cfg, this.rng);
-      shop.order!.wants.forEach((w, g) => (demand[g] += w));
-      open += shop.demand;
-      this.emit('all', { type: 'orderPosted', t: this.t, location: shop.id, size: shop.order!.size, wants: [...shop.order!.wants] });
+    // Each band of town (centre, middle, outer) keeps its own open demand up, a fixed amount: or,
+    // with demand following the fleet, the whole town as one.
+    const groups: { shops: LocationState[]; target: number }[] =
+      cfg.demand === 'bands'
+        ? [0, 1, 2].map((b) => {
+            const ramp = cfg.bandRampSec[b];
+            const share = ramp > 0 ? Math.min(1, 0.25 + (0.75 * this.t) / ramp) : 1;
+            return { shops: shops.filter((q) => this.bandOf(q.id) === b), target: cfg.bandDemand[b] * share };
+          })
+        : [{ shops, target: Math.max(cfg.minOpen, this.trucks.trucks.length * cfg.openPerTruck) }];
+    for (const grp of groups) {
+      let open = grp.shops.reduce((a, q) => a + (q.order ? q.demand : 0), 0);
+      for (let guard = 0; open < grp.target && guard < 50; guard++) {
+        const shop = pickOrderShop(grp.shops, this.t, short, nearSite, cfg, this.rng);
+        if (!shop) break;
+        postOrder(shop, goods, this.companies.length, this.t, cfg, this.rng);
+        shop.order!.wants.forEach((w, g) => (demand[g] += w));
+        open += shop.demand;
+        this.emit('all', { type: 'orderPosted', t: this.t, location: shop.id, size: shop.order!.size, wants: [...shop.order!.wants] });
+      }
     }
     // Lots: for each good, until what's on offer covers what's wanted. Producers near the shops that
     // want it go first.
@@ -867,7 +890,7 @@ export class Game {
   private creditDelivery(location: number, company: number) {
     const s = this.locById.get(location);
     if (!s) return;
-    const done = creditOrder(s, company, this.t, this.cfg.orders, this.rng);
+    const done = creditOrder(s, company, this.t, this.cfg.orders, this.rng, this.bandOf(location));
     if (!done) return;
     const total = done.size * this.cfg.orders.bonusPerPallet;
     const bonus = done.delivered.map((n) => (total * n) / done.size);
@@ -879,6 +902,28 @@ export class Game {
     this.emit('all', { type: 'orderDone', t: this.t, location, size: done.size, delivered: [...done.delivered], bonus });
     if (done.grew) this.emit('all', { type: 'grew', t: this.t, location, tier: s.tier });
   }
+
+  /**
+   * Which band of town a place is in: 0 centre, 1 middle, 2 outer, by its distance from the middle
+   * of town against the furthest shop's.
+   */
+  bandOf(location: number): number {
+    let b = this.bands.get(location);
+    if (b !== undefined) return b;
+    const { blocksX, blocksY } = this.cfg.town;
+    const cx = blocksX / 2;
+    const cy = blocksY / 2;
+    if (this.bandReach === 0)
+      for (const l of this.town.locations) if (l.kind === 'consumer' || l.kind === 'producer') this.bandReach = Math.max(this.bandReach, Math.hypot(l.x - cx, l.y - cy));
+    const l = this.town.locations[location];
+    const f = Math.hypot(l.x - cx, l.y - cy) / Math.max(1e-9, this.bandReach);
+    const [a, z] = this.cfg.orders.bandEdges;
+    b = f <= a ? 0 : f <= z ? 1 : 2;
+    this.bands.set(location, b);
+    return b;
+  }
+  private bands = new Map<number, number>();
+  private bandReach = 0;
 
   /** A pallet picked up from a producer's lot: count it; the last one ends the lot. */
   private creditPickup(location: number, company: number) {

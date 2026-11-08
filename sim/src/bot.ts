@@ -528,7 +528,13 @@ export class Bot {
     const spare = fleet < myDepots.length * cfg.capacity ? [...myDepots].sort((a, b) => perDepot(a) - perDepot(b))[0] : undefined;
     // The next truck's price (it rises with the fleet when trucks cost more and more).
     const nextTruck = truckPriceFor(cfg, fleet);
-    const worthIt = this.truckReturn(obs) >= 0.25 * nextTruck && this.pickRoute(obs, company, load) !== null;
+    // With orders, a truck has to pay for itself (and its running cost) before the end, and there's
+    // no point while some of the fleet is standing idle: the town has no more work for it.
+    const idle = obs.trucks.filter((t) => t.company === company && t.orders.length === 0 && t.cargo === null).length;
+    const upkeep = this.cfg.depots.upkeepPerMin * this.minutesLeft(obs);
+    const worthIt = this.cfg.orders.enabled
+      ? idle === 0 && this.truckReturn(obs) - upkeep >= nextTruck
+      : this.truckReturn(obs) >= 0.25 * nextTruck && this.pickRoute(obs, company, load) !== null;
     if (spare !== undefined && c.treasury >= nextTruck && worthIt) {
       out.push({ type: 'buyTruck', company, depot: spare });
       return out;

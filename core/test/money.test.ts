@@ -129,7 +129,7 @@ describe('location investment', () => {
   });
 
   it("can't invest without the cash, or in a depot site", () => {
-    const { g, producer, home } = setup({ cycles: { startLevel: 3, maxLevel: 5, growAbove: 0.75, shrinkBelow: 0.5, shopShare: 1 } });
+    const { g, producer, home } = setup({ startingCash: 100, cycles: { startLevel: 3, maxLevel: 5, growAbove: 0.75, shrinkBelow: 0.5, shopShare: 1 } });
     g.act(0, { type: 'invest', location: producer.id }); // $60, leaves $40
     g.act(0, { type: 'invest', location: producer.id }); // $90: too much
     g.act(1, { type: 'invest', location: home.id });

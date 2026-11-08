@@ -39,7 +39,24 @@ export interface OrdersConfig {
   quietSec: [number, number];
   /** Seconds a producer rests after its lot is collected, inclusive range. */
   lotQuietSec: [number, number];
-  /** Open demand the town keeps up, in pallets per truck in town (all companies)... */
+  /**
+   * How open demand is set: 'bands' (a fixed amount in each band of town, centre to edge: the town's
+   * appetite doesn't grow with the fleets), or 'fleet' (in step with the trucks in town).
+   */
+  demand: 'bands' | 'fleet';
+  /** Bands: where the centre and middle bands end, as a share of the furthest shop's distance from the centre. */
+  bandEdges: [number, number];
+  /** Bands: open demand kept up in the centre, middle and outer bands (pallets). */
+  bandDemand: [number, number, number];
+  /** Bands: seconds each band's demand takes to build up to its full amount (from a quarter), centre, middle, outer (0 = full from the start). */
+  bandRampSec: [number, number, number];
+  /** Bands: what shops pay per pallet, as a multiple of their usual price, centre, middle, outer. */
+  bandPay: [number, number, number];
+  /** Bands: seconds a shop rests after its order is filled, centre, middle, outer (inclusive ranges). */
+  bandQuietSec: [[number, number], [number, number], [number, number]];
+  /** Bands: the tier centre shops start at (the town's busiest spot from the start). */
+  centreTier: number;
+  /** Fleet: open demand in pallets per truck in town (all companies)... */
   openPerTruck: number;
   /** ...but never less than this. */
   minOpen: number;
@@ -75,6 +92,17 @@ export const DEFAULT_ORDERS: OrdersConfig = {
   tierUpAfter: [1, 2, 3],
   quietSec: [60, 180],
   lotQuietSec: [15, 45],
+  demand: 'bands',
+  bandEdges: [0.35, 0.68],
+  bandDemand: [14, 20, 36],
+  bandRampSec: [0, 0, 0],
+  bandPay: [1.25, 1.1, 1],
+  bandQuietSec: [
+    [45, 90],
+    [60, 150],
+    [90, 210],
+  ],
+  centreTier: 2,
   openPerTruck: 1.3,
   minOpen: 40,
   supplyShare: 1.1,
@@ -143,9 +171,9 @@ export function postLot(p: LocationState, companies: number, t: number, cfg: Ord
 }
 
 /** Done: quiet for a while, and count towards the next tier. True if it moved up a tier. */
-function finish(s: LocationState, t: number, cfg: OrdersConfig, rng: Rng): boolean {
+function finish(s: LocationState, t: number, cfg: OrdersConfig, rng: Rng, band: number | null): boolean {
   s.order = null;
-  const [lo, hi] = s.kind === 'producer' ? cfg.lotQuietSec : cfg.quietSec;
+  const [lo, hi] = s.kind === 'producer' ? cfg.lotQuietSec : band !== null && cfg.demand === 'bands' ? cfg.bandQuietSec[band] : cfg.quietSec;
   s.quietUntil = t + lo + rng.next() * (hi - lo);
   s.completed++;
   const need = cfg.tierUpAfter[s.tier - 1];
@@ -161,13 +189,13 @@ function finish(s: LocationState, t: number, cfg: OrdersConfig, rng: Rng): boole
  * Credit a delivery to a shop's order. When it was the last pallet, the order is done: returns it
  * (and whether the shop moved up a tier), and the shop goes quiet.
  */
-export function creditOrder(s: LocationState, company: number, t: number, cfg: OrdersConfig, rng: Rng) {
+export function creditOrder(s: LocationState, company: number, t: number, cfg: OrdersConfig, rng: Rng, band: number | null = null) {
   if (!s.order) return null;
   s.order.delivered[company]++;
   if (s.order.delivered.reduce((a, b) => a + b, 0) < s.order.size) return null;
   const done = s.order;
   s.demand = 0;
-  const grew = finish(s, t, cfg, rng);
+  const grew = finish(s, t, cfg, rng, band);
   return { size: done.size, delivered: done.delivered, grew };
 }
 
@@ -178,6 +206,6 @@ export function creditLot(p: LocationState, company: number, t: number, cfg: Ord
   if (p.order.delivered.reduce((a, b) => a + b, 0) < p.order.size) return null;
   const done = p.order;
   p.stock = 0;
-  const grew = finish(p, t, cfg, rng);
+  const grew = finish(p, t, cfg, rng, null);
   return { size: done.size, delivered: done.delivered, grew };
 }

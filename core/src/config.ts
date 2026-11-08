@@ -52,7 +52,7 @@ export const DEFAULT_GAME: Omit<GameConfig, 'town' | 'companies' | 'cycles' | 't
   sharesPerCompany: 5,
   durationSec: 15 * 60,
   tickSec: 0.1,
-  startingCash: 100,
+  startingCash: 150,
   startingTreasury: 0,
   startingTrucks: 1,
   autoRoutes: true,
