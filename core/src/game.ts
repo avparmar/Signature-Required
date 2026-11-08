@@ -441,7 +441,7 @@ export class Game {
         if (this.depotOwner.get(action.depot) !== c.id) return reject('that depot belongs to someone else (or nobody)');
         if (this.trucksOf(c.id) >= this.truckLimit(c.id))
           return reject(`the fleet is full (${this.cfg.depots.capacity} trucks per factory): buy another factory`);
-        const price = truckPriceFor(this.cfg.depots, this.trucksOf(c.id));
+        const price = truckPriceFor(this.cfg.depots, this.trucksOf(c.id), this.trucks.trucks.length);
         if (c.treasury < price) return reject(`the treasury has $${c.treasury.toFixed(2)}; the next truck costs $${price.toFixed(2)}`);
         c.treasury -= price;
         c.assets += price;

@@ -248,7 +248,7 @@ export class Bot {
     const mins = Math.max(0, Math.round(this.minutesLeft(obs) - 1)); // the last stretch is discounted
     const buy = () => {
       for (;;) {
-        const tp = truckPriceFor(d, fleet);
+        const tp = truckPriceFor(d, fleet, obs.trucks.length);
         if (fleet < Math.min(cap, routeCap) && cash >= tp) {
           cash -= tp;
           assets += tp;
@@ -530,17 +530,26 @@ export class Bot {
     const fleet = obs.trucks.filter((t) => t.company === company).length;
     const spare = fleet < myDepots.length * cfg.capacity ? [...myDepots].sort((a, b) => perDepot(a) - perDepot(b))[0] : undefined;
     // The next truck's price (it rises with the fleet when trucks cost more and more).
-    const nextTruck = truckPriceFor(cfg, fleet);
+    const nextTruck = truckPriceFor(cfg, fleet, obs.trucks.length);
     // With orders, a truck has to pay for itself (and its running cost) before the end, and there's
     // no point while some of the fleet is standing idle: the town has no more work for it.
     const idle = obs.trucks.filter((t) => t.company === company && t.orders.length === 0 && t.cargo === null).length;
     const upkeep = this.cfg.depots.upkeepPerMin * this.minutesLeft(obs);
     const policy = Bot.truckPolicy?.(company) ?? 'default';
+    // Lean (with orders): only when there's work nobody is on yet: pallets wanted across town that no
+    // truck has been sent for (a new truck mostly takes pallets from rivals otherwise), none of its
+    // own trucks is idle, and it pays for itself (and its running cost) before the end.
+    let unclaimed = 0;
+    if (this.cfg.orders.enabled) {
+      const wanted = obs.locations.reduce((a, l) => a + (l.kind === 'consumer' && l.order ? l.demand : 0), 0);
+      const sent = obs.trucks.filter((t) => t.orders.some((o) => o.action === 'unload')).length;
+      unclaimed = wanted - sent;
+    }
     const worthIt =
       policy === 'greedy'
         ? true
         : this.cfg.orders.enabled
-          ? idle === 0 && this.truckReturn(obs) - upkeep >= nextTruck
+          ? idle === 0 && unclaimed >= 3 && this.truckReturn(obs) - upkeep >= nextTruck
           : this.truckReturn(obs) >= 0.25 * nextTruck && this.pickRoute(obs, company, load) !== null;
     if (spare !== undefined && c.treasury >= nextTruck && worthIt) {
       out.push({ type: 'buyTruck', company, depot: spare });
@@ -584,9 +593,9 @@ export class Bot {
       const room = Math.max(0, Math.min(myDepots.length * cfg.capacity, routes * this.perRoute) - fleet);
       const want =
         room > 0
-          ? Array.from({ length: Math.min(room, 4) }, (_, i) => truckPriceFor(cfg, fleet + i)).reduce((a, b) => a + b, 0)
+          ? Array.from({ length: Math.min(room, 4) }, (_, i) => truckPriceFor(cfg, fleet + i, obs.trucks.length + i)).reduce((a, b) => a + b, 0)
           : Number.isFinite(cheapestSite) && factoryWorthIt
-            ? cheapestSite + nextTruck + truckPriceFor(cfg, fleet + 1)
+            ? cheapestSite + nextTruck + truckPriceFor(cfg, fleet + 1, obs.trucks.length + 1)
             : 0;
       const need = want - c.treasury;
       if (need >= nextTruck) {

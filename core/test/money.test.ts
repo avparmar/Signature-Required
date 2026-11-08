@@ -100,7 +100,7 @@ describe('deliveries and dividends', () => {
   });
 
   it('purchases count as assets for the final payout', () => {
-    const { g, home } = setup({ depots: { truckPrice: 30 } });
+    const { g, home } = setup({ depots: { truckPrice: 30, townPriceStep: 0 } });
     g.companies[0].shares = [0, null, null, null, null];
     g.companies[0].treasury = 60;
     g.act(0, { type: 'buyTruck', company: 0, depot: home.id });

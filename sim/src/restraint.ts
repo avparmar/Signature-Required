@@ -11,7 +11,9 @@ import { runGame } from './runner.js';
 
 const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
 const games = Number(process.argv[2] ?? 10);
-const low: GameConfigOverrides = { orders: { growTo: [0, 0] } }; // demand stays at its starting 64 pallets
+const level = process.argv[5] ?? 'low';
+// Low: demand stays at its starting 64 pallets. High: it grows to 130 by minute 12.
+const low: GameConfigOverrides = { orders: { growTo: level === 'high' ? [130, 130] : [0, 0] } };
 
 function trial(label: string, policy: (company: number, focus: number) => 'greedy' | 'default', extra: GameConfigOverrides = {}) {
   const rows: number[][] = [];
@@ -28,12 +30,13 @@ function trial(label: string, policy: (company: number, focus: number) => 'greed
   console.log(`| ${label} | $${a(0).toFixed(1)} | $${a(1).toFixed(0)} | ${a(2).toFixed(0)} | ${a(3).toFixed(0)} | $${a(4).toFixed(1)} |`);
 }
 
-console.log(`\nLow demand (fixed at 64 pallets), ${games} games each; "the company" rotates through the five seats.\n`);
+console.log(`\n${games} games each; "the company" rotates through the five seats.\n`);
 console.log('| Setup | The company: dividends per share | End treasury | Trucks | Deliveries | Rivals: dividends per share |');
 console.log('|---|---|---|---|---|---|');
 const which = process.argv[3] ?? 'treasury';
-const extra: GameConfigOverrides = which === 'pot' ? { depots: { upkeepFrom: 'pot', upkeepPerMin: Number(process.argv[4] ?? 0.4) } } : {};
-console.log(`Running cost: $${extra.depots?.upkeepPerMin ?? 0.4}/min per truck, from the ${which === 'pot' ? 'dividend pot' : 'treasury'}.\n`);
+const cost = Number(process.argv[4] ?? 0.7);
+const extra: GameConfigOverrides = { depots: { upkeepFrom: which === 'pot' ? 'pot' : 'treasury', upkeepPerMin: cost } };
+console.log(`Running cost: $${cost}/min per truck, from the ${which === 'pot' ? 'dividend pot' : 'treasury'}; ${level} demand.\n`);
 trial('Everyone greedy', () => 'greedy', extra);
 trial('The company restrained, rivals greedy', (c, f) => (c === f ? 'default' : 'greedy'), extra);
 trial('The company greedy, rivals restrained', (c, f) => (c === f ? 'greedy' : 'default'), extra);

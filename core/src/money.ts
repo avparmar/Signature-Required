@@ -43,8 +43,8 @@ export interface MoneyConfig {
 }
 
 export const DEFAULT_MONEY: MoneyConfig = {
-  palletPrice: 2.4,
-  premiumPrice: 3.6,
+  palletPrice: 3.6,
+  premiumPrice: 5.4,
   premiumShare: 0.25,
   deliveryToTreasury: 0.5,
   deliveryToPot: 0.5,

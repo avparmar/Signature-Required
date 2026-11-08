@@ -41,6 +41,8 @@ export interface DepotConfig {
   /** A new unclaimed factory site appears this often (seconds; 0 for never), from that long in until the last two minutes. */
   newSiteEverySec: number;
   /** Each truck costs this much more than the company's previous one (0: every truck costs truckPrice). */
+  /** A truck costs this much more for every truck in town (all companies): shared, rising prices. */
+  townPriceStep: number;
   truckPriceStep: number;
   /** Drive distance (blocks) from your nearest depot that still costs only the base price. */
   depotFreeBlocks: number;
@@ -51,8 +53,8 @@ export interface DepotConfig {
 export const DEFAULT_DEPOTS: DepotConfig = {
   capacity: 8,
   truckPrice: 12,
-  upkeepPerMin: 0.4,
-  upkeepFrom: 'treasury',
+  upkeepPerMin: 0.7,
+  upkeepFrom: 'pot',
   pricing: 'subsidy',
   depotBase: 150,
   maxSubsidy: 0.6,
@@ -62,6 +64,7 @@ export const DEFAULT_DEPOTS: DepotConfig = {
   subsidyTarget: 60,
   newSiteEverySec: 0,
   truckPriceStep: 0,
+  townPriceStep: 0.1,
   depotFreeBlocks: 4,
   depotPerBlock: 10,
 };
@@ -89,8 +92,8 @@ export function depotSites(locations: Location[]): Location[] {
  * of the recent service in the site's district. Whole dollars.
  */
 /** What a company's next truck costs, given how many it already has. */
-export function truckPriceFor(cfg: DepotConfig, owned: number): number {
-  return cfg.truckPrice + cfg.truckPriceStep * owned;
+export function truckPriceFor(cfg: DepotConfig, owned: number, inTown = 0): number {
+  return Math.round(cfg.truckPrice + cfg.truckPriceStep * owned + cfg.townPriceStep * inTown);
 }
 
 export function subsidisedPrice(cfg: DepotConfig, progress: number): number {
