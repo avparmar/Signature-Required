@@ -21,6 +21,8 @@ import { atGoal, berthGoal, defaultKerb, kerbLine, linePoint, spotS, stepBerth, 
 export interface TruckConfig {
   /** Driving speed, blocks per second. */
   speed: number;
+  /** A truck does one trip per dispatch: after delivering it's free again (heading home until sent out). */
+  oneTrip: boolean;
   /** Seconds to load or unload one pallet at a bay. */
   serviceSec: number;
   /** Companies take turns at a building (true), or it's first come, first served (false). */
@@ -40,6 +42,7 @@ export interface TruckConfig {
 
 export const DEFAULT_TRUCKS: TruckConfig = {
   speed: 0.35,
+  oneTrip: false,
   serviceSec: 3,
   takeTurns: true,
   viaDepot: 'loaded',
@@ -578,6 +581,12 @@ export class TruckSystem {
         const cargo = truck.cargo;
         truck.cargo = null;
         this.emit({ type: 'delivered', t: now, truck: truck.id, company: truck.company, location, good: cargo.good, origin: cargo.origin, price: done.price });
+        // One trip per dispatch: free again, heading home until it's sent out on the next one.
+        if (this.cfg.oneTrip) {
+          truck.route = null;
+          truck.orders = [];
+          truck.homing = true;
+        }
       }
     }
     this.leaveQueue(truck);

@@ -22,7 +22,16 @@ function variant(label: string, extra: GameConfigOverrides) {
   const closed: number[] = [];
   const cash: number[] = [];
   const businesses: number[] = [];
+  const ordersDone: number[] = [];
+  const shared: number[] = [];
+  const bumps: number[] = [];
+  const idle: number[] = [];
   for (let i = 0; i < games; i++) {
+    let done = 0;
+    let multi = 0;
+    let bumped = 0;
+    let idleSum = 0;
+    let idleN = 0;
     let warnSum = 0;
     let warnN = 0;
     let warnMax = 0;
@@ -32,8 +41,20 @@ function variant(label: string, extra: GameConfigOverrides) {
     let liveBiz = 0;
     const r = runGame({ ...extra, seed: 1 + i }, [], (g: Game) => {
       const t = Math.floor(g.t);
+      for (const e of g.peekEvents(0)) {
+        if (e.type === 'orderDone') {
+          done++;
+          if (e.delivered.filter((n) => n > 0).length > 1) multi++;
+        }
+        if (e.type === 'bumped') bumped++;
+      }
       if (t === lastSample || t % 15 !== 0 || g.phase !== 'running') return;
       lastSample = t;
+      const all = g.trucks.trucks;
+      if (all.length) {
+        idleSum += all.filter((tr) => tr.orders.length === 0 && tr.cargo === null).length / all.length;
+        idleN++;
+      }
       const open = g.locations.filter((s) => !s.closed);
       const w = open.filter((s) => s.closingIn !== null).length;
       warnSum += w;
@@ -64,16 +85,20 @@ function variant(label: string, extra: GameConfigOverrides) {
     closed.push(r.closed);
     cash.push(avg(r.cash));
     businesses.push(liveBiz);
+    ordersDone.push(done);
+    shared.push(done ? multi / done : 0);
+    bumps.push(bumped);
+    idle.push(idleN ? idleSum / idleN : 0);
   }
   console.log(
-    `| ${label} | ${avg(shopsPerFactory).toFixed(2)} | ${avg(shopsServed).toFixed(1)} | ${Math.round(avg(deliveries))} | ${avg(trucks).toFixed(0)} | ${avg(factories).toFixed(1)} | $${Math.round(avg(paid))} | $${Math.round(avg(cash))} | ${avg(businesses).toFixed(0)} | ${avg(warnings).toFixed(1)} (max ${avg(maxWarnings).toFixed(1)}) | ${avg(closed).toFixed(1)} |`,
+    `| ${label} | ${avg(shopsPerFactory).toFixed(2)} | ${avg(shopsServed).toFixed(1)} | ${Math.round(avg(deliveries))} | ${avg(trucks).toFixed(0)} | ${avg(factories).toFixed(1)} | $${Math.round(avg(paid))} | $${Math.round(avg(cash))} | ${avg(businesses).toFixed(0)} | ${avg(warnings).toFixed(1)} (max ${avg(maxWarnings).toFixed(1)}) | ${avg(closed).toFixed(1)} | ${avg(ordersDone).toFixed(0)} (${(100 * avg(shared)).toFixed(0)}% shared) | ${avg(bumps).toFixed(1)} | ${(100 * avg(idle)).toFixed(0)}% |`,
   );
 }
 
 const dense = { producersPerGood: [6, 8] as [number, number], consumersPerGood: [11, 16] as [number, number] };
 console.log(`\nDensity experiment (${games} games per variant, bots, automatic routes)\n`);
-console.log('| Variant | Shops per factory | Shops served (all cos.) | Deliveries | Trucks (all cos.) | Factories | Dividends paid | Avg final cash | Businesses at end | Closure warnings up (avg, max) | Closed |');
-console.log('|---|---|---|---|---|---|---|---|---|---|---|');
+console.log('| Variant | Shops per factory | Shops served (all cos.) | Deliveries | Trucks (all cos.) | Factories | Dividends paid | Avg final cash | Businesses at end | Closure warnings up (avg, max) | Closed | Orders filled | Bumps | Trucks free |');
+console.log('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|');
 const which = process.argv[3] ?? 'economy';
 const none = { startingTrucks: 0 };
 const all3 = { depots: { truckPrice: 6, capacity: 16 }, town: dense };
@@ -100,6 +125,11 @@ if (which === 'economy') {
 } else if (which === 'demand') {
   // The new defaults, with shops wanting more of what a producer makes (0.5 = supply matches demand).
   for (const share of [0.75, 1]) variant(`New defaults, shops want ${share * 4}/cycle`, { cycles: { shopShare: share } });
+} else if (which === 'orders') {
+  variant('#89 defaults (shops want 2 every cycle)', { orders: { enabled: false } });
+  variant('Shop orders (4-12, quiet 1-3 min)', {});
+  variant('Shop orders, open demand 1.5x', { orders: { openShare: 1.5 } });
+  variant('Shop orders, bump only if 30 s sooner', { orders: { bumpSec: 30 } });
 } else if (which === 'dense2') {
   const dense2 = { producersPerGood: [8, 10] as [number, number], consumersPerGood: [14, 22] as [number, number] };
   variant('Fixed level 2 + cheap/big fleets + 2× density', { depots: { truckPrice: 6, capacity: 16 }, town: dense2, cycles: fixed(2) });

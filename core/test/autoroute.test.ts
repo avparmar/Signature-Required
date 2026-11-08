@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { newGame, type Game } from '../src/index.js';
 
 /** A running game where player 0 runs company 0, which has `trucks` trucks. */
-function setup(trucks = 4) {
-  const g = newGame({ seed: 7, auctions: { openingRound: false } });
+function setup(trucks = 4, o: Parameters<typeof newGame>[0] = {}) {
+  const g = newGame({ seed: 7, startingTrucks: 0, ...o, auctions: { openingRound: false } });
   g.companies[0].shares = [0, null, null, null, null];
   for (let i = 0; i < trucks; i++) g.addTruck(0);
   return g;
@@ -65,7 +65,7 @@ describe('automatic routes', () => {
   });
 
   it('focus: sends a truck to a focused place, at most a few of them, presidents only', () => {
-    const g = setup(4);
+    const g = setup(4, { orders: { enabled: false } }); // shops that always want more, so any shop can be focused
     runFor(g, 2);
     const served = new Set(g.trucks.trucks.filter((t) => t.company === 0 && t.route).map((t) => consumerOf(g, t.route!)));
     const depot = g.town.locations.find((l) => l.startCompany === 0)!;

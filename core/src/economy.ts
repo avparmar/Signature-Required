@@ -21,6 +21,8 @@ export interface CycleConfig {
   palletsPerLevel: number;
   /** A shop wants this share of what a producer makes (0.5 with two shops per producer: supply = demand). */
   shopShare: number;
+  /** Shops want more every cycle (true), or only through orders the game posts (false: see orders.ts). */
+  shopCycles: boolean;
   /** Level new and starting locations begin at. */
   startLevel: number;
   /** Highest level. */
@@ -43,6 +45,7 @@ export const DEFAULT_CYCLES: CycleConfig = {
   cycleSec: [45, 45],
   palletsPerLevel: 2,
   shopShare: 0.5,
+  shopCycles: true,
   // Businesses stay at one level: they don't grow, shrink or close (growAbove/shrinkBelow out of reach).
   startLevel: 2,
   maxLevel: 2,
@@ -81,6 +84,10 @@ export interface LocationState {
   closed: boolean;
   /** Game time until which it can't level down or close. */
   graceUntil: number;
+  /** Shops with orders (orders.ts): the open order, with each company's deliveries towards it. */
+  order: { size: number; delivered: number[]; postedAt: number } | null;
+  /** Shops with orders: no new order here before this time. */
+  quietUntil: number;
 }
 
 export type CycleEvent =
@@ -108,7 +115,7 @@ export function newLocationState(l: Location, cfg: CycleConfig, rng: Rng, now = 
     nextCycleAt: now + rng.next() * cycleSec,
     // Open for business from the start: a producer has a cycle's goods ready, a shop a cycle's order.
     stock: l.kind === 'producer' ? cycleRate({ kind: 'producer', level: cfg.startLevel }, cfg) : 0,
-    demand: l.kind === 'consumer' ? cycleRate({ kind: 'consumer', level: cfg.startLevel }, cfg) : 0,
+    demand: l.kind === 'consumer' && cfg.shopCycles ? cycleRate({ kind: 'consumer', level: cfg.startLevel }, cfg) : 0,
     cycleAmount: 0,
     served: 0,
     history: [],
@@ -116,6 +123,8 @@ export function newLocationState(l: Location, cfg: CycleConfig, rng: Rng, now = 
     closingIn: null,
     closed: false,
     graceUntil: now + cfg.graceSec,
+    order: null,
+    quietUntil: 0,
   };
 }
 
@@ -152,7 +161,7 @@ export function updateCycles(states: LocationState[], t: number, cfg: CycleConfi
       const amount = cycleRate(s, cfg);
       const cap = amount * cfg.carryCycles;
       if (s.kind === 'producer') s.stock = Math.min(cap, s.stock + amount);
-      else s.demand = Math.min(cap, s.demand + amount);
+      else if (cfg.shopCycles) s.demand = Math.min(cap, s.demand + amount);
       s.cycleAmount = amount;
       s.served = 0;
       s.nextCycleAt += s.cycleSec;
