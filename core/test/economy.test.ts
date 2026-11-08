@@ -37,6 +37,8 @@ function loc(kind: 'producer' | 'consumer', o: Partial<LocationState> = {}): Loc
     graceUntil: 0,
     order: null,
     quietUntil: 0,
+    tier: 1,
+    completed: 0,
     ...o,
   };
 }
@@ -219,7 +221,7 @@ describe('grace period', () => {
     const g = { ...DEFAULT_CYCLES, ...LADDER, palletsPerLevel: 2, window: 2, graceSec: 120 };
     const c: LocationState = {
       id: 2, kind: 'consumer', good: 0, level: 1, cycleSec: 45, nextCycleAt: 0, stock: 0, demand: 0,
-      cycleAmount: 0, served: 0, history: [], price: 0, closingIn: null, closed: false, graceUntil: 120, order: null, quietUntil: 0,
+      cycleAmount: 0, served: 0, history: [], price: 0, closingIn: null, closed: false, graceUntil: 120, order: null, quietUntil: 0, tier: 1, completed: 0,
     };
     const rng = new Rng(1);
     // Unserved for 2 minutes: nothing happens.

@@ -338,7 +338,8 @@ export class TruckSystem {
     if (stop.action === 'load') return truck.cargo === null;
     if (stop.action === 'signOff') return this.cfg.viaDepot === 'hub' || truck.cargo !== null;
     const c = this.loc(stop.location);
-    return truck.cargo !== null && c !== undefined && c.good === truck.cargo.good;
+    if (truck.cargo === null || c === undefined) return false;
+    return c.order && c.kind === 'consumer' ? (c.order.wants[truck.cargo.good] ?? 0) > 0 : c.good === truck.cargo.good;
   }
 
   /**
@@ -554,7 +555,7 @@ export class TruckSystem {
         truck.serving = { action: 'load', good: l.good };
       } else {
         const origin = truck.cargo ? this.loc(truck.cargo.origin) ?? null : null;
-        if (!deliverPallet(l, origin)) {
+        if (!deliverPallet(l, origin, truck.cargo?.good)) {
           if (l.closed || l.demand <= 0) return; // satisfied: everyone waits for the next cycle
           skip.add(id); // this truck's pallet is no use here; serve the others
           continue;

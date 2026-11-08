@@ -21,15 +21,36 @@ function run(g: Game, sec: number) {
 const shops = (g: Game) => g.locations.filter((l) => l.kind === 'consumer' && !l.closed);
 
 describe('shop orders', () => {
-  it('the town keeps open demand up to its target, and shops without an order want nothing', () => {
+  it('the town keeps open demand in step with the fleet, and supply in step with demand', () => {
     const g = setup(0);
     run(g, 1);
-    const producers = g.locations.filter((l) => l.kind === 'producer');
-    const supply = producers.reduce((a, p) => a + g.cfg.cycles.palletsPerLevel * p.level, 0);
-    const open = shops(g).reduce((a, s) => a + (s.order ? s.demand : 0), 0);
-    expect(open).toBeGreaterThanOrEqual(supply * g.cfg.orders.openShare);
+    const goods = g.cfg.town.goods.length;
+    const demand = new Array(goods).fill(0);
+    for (const s of shops(g)) if (s.order) s.order.wants.forEach((w, k) => (demand[k] += w));
+    const open = demand.reduce((a, b) => a + b, 0);
+    expect(open).toBeGreaterThanOrEqual(Math.max(g.cfg.orders.minOpen, g.trucks.trucks.length * g.cfg.orders.openPerTruck));
     for (const s of shops(g)) if (!s.order) expect(s.demand).toBe(0);
-    for (const s of shops(g)) if (s.order) expect(s.order.size).toBeGreaterThanOrEqual(g.cfg.orders.size[0]);
+    // Every order starts at tier 1: one good, its own.
+    for (const s of shops(g)) if (s.order) expect(s.order.wants.filter((w) => w > 0)).toHaveLength(1);
+    const producers = g.locations.filter((l) => l.kind === 'producer');
+    for (let k = 0; k < goods; k++) {
+      const supply = producers.filter((p) => p.good === k && p.order).reduce((a, p) => a + p.stock, 0);
+      const free = producers.filter((p) => p.good === k && !p.order).length;
+      if (free > 0) expect(supply).toBeGreaterThanOrEqual(demand[k] * g.cfg.orders.supplyShare);
+    }
+  });
+
+  it('places grow a tier as they complete orders and lots; tier 3 shops order two goods', () => {
+    const g = setup(24);
+    const events = run(g, 600);
+    const grew = events.filter((e) => e.type === 'grew') as Extract<GameEvent, { type: 'grew' }>[];
+    expect(grew.length).toBeGreaterThan(0);
+    expect(Math.max(...g.locations.map((l) => l.tier))).toBeGreaterThanOrEqual(2);
+    const posted = events.filter((e) => e.type === 'orderPosted') as Extract<GameEvent, { type: 'orderPosted' }>[];
+    for (const p of posted) {
+      const tierThen = g.locations.find((l) => l.id === p.location)!.tier; // never shrinks, so at least
+      if (p.wants.filter((w) => w > 0).length > 1) expect(tierThen).toBeGreaterThanOrEqual(3);
+    }
   });
 
   it('a filled order pays its bonus to the companies that delivered, then the shop goes quiet', () => {
@@ -51,8 +72,15 @@ describe('shop orders', () => {
     for (let k = 0; k < 120; k++) {
       run(g, 1);
       for (const s of shops(g)) {
-        const headed = g.trucks.trucks.filter((t) => t.orders.some((o) => o.action === 'unload' && o.location === s.id) && !(t.state === 'servicing' && t.serving?.action === 'unload' && t.at === s.id)).length;
-        expect(headed).toBeLessThanOrEqual(s.order ? s.demand : 0);
+        for (let k = 0; k < g.cfg.town.goods.length; k++) {
+          const headed = g.trucks.trucks.filter((t) => {
+            if (!t.orders.some((o) => o.action === 'unload' && o.location === s.id)) return false;
+            if (t.state === 'servicing' && t.serving?.action === 'unload' && t.at === s.id) return false;
+            const load = t.orders.find((o) => o.action === 'load');
+            return (t.cargo?.good ?? (load ? g.town.locations[load.location].good : -1)) === k;
+          }).length;
+          expect(headed).toBeLessThanOrEqual(s.order ? s.order.wants[k] : 0);
+        }
       }
     }
   });

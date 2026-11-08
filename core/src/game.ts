@@ -8,7 +8,7 @@ import { minimumBid, shareFloor, type AuctionEvent, type Book, type CancelReason
 import { depotPrice, subsidisedPrice, truckPriceFor } from './depots.js';
 import { assignPrices, investCost, payPerShare } from './money.js';
 import { chooseOpening } from './openings.js';
-import { creditOrder, openPallets, pickOrderShop, postOrder } from './orders.js';
+import { creditLot, creditOrder, pickLotProducer, pickOrderShop, postLot, postOrder } from './orders.js';
 import { cycleRate, initLocations, newLocationState, raiseLevel, updateCycles, type CycleEvent, type LocationState } from './economy.js';
 import { distancesFrom } from './graph.js';
 import { Rng } from './rng.js';
@@ -53,6 +53,9 @@ export type Phase = 'opening' | 'running' | 'ended';
 // ------------------------------------------------------------------ routes
 
 /** A standing assignment: trucks based at `depot` carry `producer`'s good to `consumer`. */
+/** Key for a shop's claims on one good. */
+const claimKey = (shop: number, good: number) => shop * 16 + good;
+
 export interface Route {
   key: string;
   company: number;
@@ -120,8 +123,12 @@ export type GameEvent =
   | { type: 'open'; t: number }
   /** A new unclaimed factory site, on what was an empty lot. */
   | { type: 'siteOpened'; t: number; site: number }
-  /** A shop posted an order for `size` pallets. */
-  | { type: 'orderPosted'; t: number; location: number; size: number }
+  /** A shop posted an order for `size` pallets (`wants`: per good). */
+  | { type: 'orderPosted'; t: number; location: number; size: number; wants: number[] }
+  /** A producer offered a lot of `size` pallets. */
+  | { type: 'lotPosted'; t: number; location: number; size: number }
+  /** A shop or producer grew a tier. */
+  | { type: 'grew'; t: number; location: number; tier: number }
   /** A shop's order was filled: each company's deliveries towards it, and its share of the bonus. */
   | { type: 'orderDone'; t: number; location: number; size: number; delivered: number[]; bonus: number[] }
   | { type: 'start'; t: number }
@@ -270,6 +277,7 @@ export class Game {
         }
         this.emit('all', e);
         if (e.type === 'delivered' && this.cfg.orders.enabled) this.creditDelivery(e.location, e.company);
+        if (e.type === 'loaded' && this.cfg.orders.enabled) this.creditPickup(e.location, e.company);
       },
     );
     this.events = Array.from({ length: cfg.players }, () => []);
@@ -598,7 +606,7 @@ export class Game {
     if (to === 'all') for (const q of this.events) q.push(e);
     else this.events[to].push(e);
     // (A filled order needs no new plan: nothing was planned beyond its last pallet.)
-    if (e.type === 'orderPosted' || e.type === 'areaChanged' || e.type === 'boughtTruck' || e.type === 'boughtDepot') this.replan = true;
+    if (e.type === 'orderPosted' || e.type === 'lotPosted' || e.type === 'areaChanged' || e.type === 'boughtTruck' || e.type === 'boughtDepot') this.replan = true;
   }
 
   /** Events for a player not yet drained (read only: for measuring in experiments). */
@@ -804,26 +812,54 @@ export class Game {
    */
   // ---------------------------------------------------------------- shop orders
 
-  /** Keep the town's open demand up: post orders until the pallets still wanted reach the target. */
+  /**
+   * Keep the town busy: post shop orders until open demand keeps pace with the fleet, then offer
+   * producers' lots until each good's open supply covers its open demand.
+   */
   private postOrders() {
     const cfg = this.cfg.orders;
+    const goods = this.cfg.town.goods.length;
     const live = this.locations.filter((l) => !l.closed);
     const shops = live.filter((l) => l.kind === 'consumer');
     const producers = live.filter((l) => l.kind === 'producer');
-    const rate = (s: LocationState) => cycleRate(s, this.cfg.cycles);
-    const target = producers.reduce((a, p) => a + rate(p), 0) * cfg.openShare;
-    let open = shops.reduce((a, s) => a + openPallets(s), 0);
+    const target = Math.max(cfg.minOpen, this.trucks.trucks.length * cfg.openPerTruck);
+    const demand = new Array(goods).fill(0);
+    for (const q of shops) if (q.order) q.order.wants.forEach((w, g) => (demand[g] += w));
+    const supply = new Array(goods).fill(0);
+    for (const p of producers) if (p.order) supply[p.good] += p.stock;
+    let open = demand.reduce((a, b) => a + b, 0);
     const freeSites = this.town.locations.filter((l) => l.kind === 'depot' && !this.depotOwner.has(l.id));
     const nearSite = (s: LocationState) => {
       const node = this.town.locations[s.id].node;
       return freeSites.some((site) => this.siteDist(site.id)[node] <= this.cfg.depots.districtBlocks);
     };
+    // Goods short of demand: lots of supply on offer (or producers that could offer it) and little wanted.
+    const producersOf = new Array(goods).fill(0);
+    for (const p of producers) producersOf[p.good]++;
+    const short = (g: number) => (producersOf[g] + supply[g]) / (1 + demand[g]);
     for (let guard = 0; open < target && guard < 50; guard++) {
-      const shop = pickOrderShop(shops, producers, this.t, nearSite, cfg, this.rng, rate);
+      const shop = pickOrderShop(shops, this.t, short, nearSite, cfg, this.rng);
       if (!shop) break;
-      postOrder(shop, this.companies.length, this.t, cfg, this.rng);
+      postOrder(shop, goods, this.companies.length, this.t, cfg, this.rng);
+      shop.order!.wants.forEach((w, g) => (demand[g] += w));
       open += shop.demand;
-      this.emit('all', { type: 'orderPosted', t: this.t, location: shop.id, size: shop.order!.size });
+      this.emit('all', { type: 'orderPosted', t: this.t, location: shop.id, size: shop.order!.size, wants: [...shop.order!.wants] });
+    }
+    // Lots: for each good, until what's on offer covers what's wanted. Producers near the shops that
+    // want it go first.
+    for (let g = 0; g < goods; g++) {
+      const wanting = shops.filter((q) => q.order && q.order.wants[g] > 0);
+      const nearby = (p: LocationState) => {
+        const d = this.distFrom(this.town.locations[p.id].node);
+        return wanting.reduce((a, q) => a + (d[this.town.locations[q.id].node] <= 8 ? q.order!.wants[g] : 0), 0);
+      };
+      for (let guard = 0; supply[g] < demand[g] * cfg.supplyShare && guard < 50; guard++) {
+        const p = pickLotProducer(producers, g, this.t, nearby, this.rng);
+        if (!p) break;
+        postLot(p, this.companies.length, this.t, cfg, this.rng);
+        supply[g] += p.stock;
+        this.emit('all', { type: 'lotPosted', t: this.t, location: p.id, size: p.stock });
+      }
     }
   }
 
@@ -841,6 +877,15 @@ export class Game {
       this.companies[c].pot += b * this.cfg.money.deliveryToPot;
     });
     this.emit('all', { type: 'orderDone', t: this.t, location, size: done.size, delivered: [...done.delivered], bonus });
+    if (done.grew) this.emit('all', { type: 'grew', t: this.t, location, tier: s.tier });
+  }
+
+  /** A pallet picked up from a producer's lot: count it; the last one ends the lot. */
+  private creditPickup(location: number, company: number) {
+    const p = this.locById.get(location);
+    if (!p) return;
+    const done = creditLot(p, company, this.t, this.cfg.orders, this.rng);
+    if (done?.grew) this.emit('all', { type: 'grew', t: this.t, location, tier: p.tier });
   }
 
   /** Pallets of a shop's order still free to claim: wanted, less trucks already sent for them. */
@@ -968,7 +1013,8 @@ export class Game {
       const trip = this.plan.get(t.id);
       if (!trip) continue;
       const s = this.locById.get(trip.consumer);
-      if (!s || !s.order || s.demand - (this.claimed.get(trip.consumer) ?? 0) < 1) {
+      const key = claimKey(trip.consumer, trip.good);
+      if (!s || !s.order || (s.order.wants[trip.good] ?? 0) - (this.claimed.get(key) ?? 0) < 1) {
         // Its pallet's gone (filled, or claimed): plan again next second.
         this.plan.delete(t.id);
         this.replan = true;
@@ -977,7 +1023,7 @@ export class Game {
       this.sendOnRoute(t, trip.depot, trip.producer, trip.consumer);
       this.plan.delete(t.id);
       this.eta.set(t.id, this.t + trip.duration);
-      this.claimed.set(trip.consumer, (this.claimed.get(trip.consumer) ?? 0) + 1);
+      this.claimed.set(key, (this.claimed.get(key) ?? 0) + 1);
     }
   }
 
@@ -990,22 +1036,28 @@ export class Game {
     this.planFreeAt.clear();
     const speed = this.cfg.trucks.speed;
     const extra = 2 * this.cfg.trucks.serviceSec + (this.cfg.trucks.viaDepot === 'none' ? 0 : this.cfg.trucks.signOffSec);
-    // Pallets each shop has claimed (trucks sent and not yet unloading there).
+    // Pallets each shop has claimed, good by good (trucks sent and not yet unloading there).
     this.claimed.clear();
     for (const t of this.trucks.trucks) {
       const u = t.orders.find((o) => o.action === 'unload');
       if (!u) continue;
       if (t.state === 'servicing' && t.serving?.action === 'unload' && t.at === u.location) continue;
-      this.claimed.set(u.location, (this.claimed.get(u.location) ?? 0) + 1);
+      const load = t.orders.find((o) => o.action === 'load');
+      const good = t.cargo?.good ?? (load ? this.town.locations[load.location].good : null);
+      if (good === null || good === undefined) continue;
+      const key = claimKey(u.location, good);
+      this.claimed.set(key, (this.claimed.get(key) ?? 0) + 1);
     }
-    const shops = this.locations.filter((l) => l.kind === 'consumer' && !l.closed && l.order && l.demand - (this.claimed.get(l.id) ?? 0) > 0);
+    const unclaimed = (q: LocationState, g: number) => (q.order ? (q.order.wants[g] ?? 0) - (this.claimed.get(claimKey(q.id, g)) ?? 0) : 0);
+    const goods = this.cfg.town.goods.length;
+    const shops = this.locations.filter((l) => l.kind === 'consumer' && !l.closed && l.order && [...Array(goods).keys()].some((g) => unclaimed(l, g) > 0));
     if (shops.length === 0) return;
     const producers = this.locations.filter((l) => l.kind === 'producer' && !l.closed);
     // Each producer's pickups: its stock now, what it makes as time goes on, and the trucks already
     // on their way to load there. A pickup is planned only if there'll be a pallet when it arrives.
     const cyc = this.cfg.cycles;
-    const perSec = new Map(producers.map((p) => [p.id, cycleRate(p, cyc) / p.cycleSec]));
-    const capOf = (p: LocationState) => cycleRate(p, cyc) * cyc.carryCycles;
+    const perSec = new Map(producers.map((p) => [p.id, cyc.producerCycles ? cycleRate(p, cyc) / p.cycleSec : 0]));
+    const capOf = (p: LocationState) => (cyc.producerCycles ? cycleRate(p, cyc) * cyc.carryCycles : p.stock);
     const pickups = new Map<number, number>(producers.map((p) => [p.id, 0]));
     for (const t of this.trucks.trucks) {
       if (t.cargo !== null) continue;
@@ -1029,16 +1081,18 @@ export class Game {
     }
     // Every truck against every shop it serves: its best producer and factory, and when it'd arrive.
     // Better-paying and focused shops count as sooner (a pallet's worth is in the comparison).
-    const pairs: { a: number; shop: LocationState; producer: number; depot: number; duration: number; arrive: number; key: number }[] = [];
+    const pairs: { a: number; shop: LocationState; good: number; producer: number; depot: number; duration: number; arrive: number; key: number }[] = [];
     avail.forEach((v, a) => {
       const c = this.companies[v.truck.company];
       for (const q of shops) {
         if (!this.serves(c.id, q.id)) continue;
+        for (let g = 0; g < goods; g++) {
+        if (unclaimed(q, g) < 1) continue;
         let bestLen = Infinity;
         let producer = -1;
         let depot = -1;
         for (const p of producers) {
-          if (p.good !== q.good) continue;
+          if (p.good !== g || p.stock + perSec.get(p.id)! * 600 - pickups.get(p.id)! < 1) continue;
           for (const d of v.depots) {
             const len = this.tripLength(v.node, d, p.id, q.id);
             if (len < bestLen) {
@@ -1053,14 +1107,17 @@ export class Game {
         const arrive = v.at + duration;
         const focused = c.focus.includes(q.id) || c.focus.includes(producer);
         const worth = (q.price ?? this.cfg.money.palletPrice) / this.cfg.money.palletPrice;
-        pairs.push({ a, shop: q, producer, depot, duration, arrive, key: (arrive - this.t + 4) / worth / (focused ? 3 : 1) });
+        pairs.push({ a, shop: q, good: g, producer, depot, duration, arrive, key: (arrive - this.t + 4) / worth / (focused ? 3 : 1) });
+        }
       }
     });
-    pairs.sort((x, y) => x.key - y.key || x.a - y.a || x.shop.id - y.shop.id);
-    const open = new Map(shops.map((q) => [q.id, q.demand - (this.claimed.get(q.id) ?? 0)]));
+    pairs.sort((x, y) => x.key - y.key || x.a - y.a || x.shop.id - y.shop.id || x.good - y.good);
+    const open = new Map<number, number>();
+    for (const q of shops) for (let g = 0; g < goods; g++) open.set(claimKey(q.id, g), unclaimed(q, g));
     const taken = new Set<number>();
     for (const pr of pairs) {
-      if (taken.has(pr.a) || (open.get(pr.shop.id) ?? 0) < 1) continue;
+      const key = claimKey(pr.shop.id, pr.good);
+      if (taken.has(pr.a) || (open.get(key) ?? 0) < 1) continue;
       const v = avail[pr.a];
       // Its producer, or the next nearest that'll have a pallet when it gets there.
       const toP = (p: number) => v.at + this.distFrom(v.node)[this.town.locations[p].node] / speed;
@@ -1069,7 +1126,7 @@ export class Game {
         let altDepot = -1;
         let altLen = Infinity;
         for (const p of producers) {
-          if (p.good !== pr.shop.good || !hasPallet(p.id, toP(p.id))) continue;
+          if (p.good !== pr.good || !hasPallet(p.id, toP(p.id))) continue;
           for (const d of v.depots) {
             const len = this.tripLength(v.node, d, p.id, pr.shop.id);
             if (len < altLen) {
@@ -1085,10 +1142,10 @@ export class Game {
         pr.duration = altLen / speed + extra;
       }
       taken.add(pr.a);
-      open.set(pr.shop.id, open.get(pr.shop.id)! - 1);
+      open.set(key, open.get(key)! - 1);
       pickups.set(pr.producer, pickups.get(pr.producer)! + 1);
       const truck = avail[pr.a].truck;
-      this.plan.set(truck.id, { depot: pr.depot, producer: pr.producer, consumer: pr.shop.id, duration: pr.duration });
+      this.plan.set(truck.id, { depot: pr.depot, producer: pr.producer, consumer: pr.shop.id, good: pr.good, duration: pr.duration });
       this.planFreeAt.set(truck.id, avail[pr.a].at);
     }
     // Trucks with nothing planned: when they're due free, so one coming free unplanned triggers a replan.
@@ -1238,10 +1295,10 @@ export class Game {
   /** Shop orders: when each truck that's been sent is expected to have delivered. */
   private eta = new Map<number, number>();
   /** The delivery plan: each planned truck's next trip, and how long it takes. */
-  private plan = new Map<number, { depot: number; producer: number; consumer: number; duration: number }>();
+  private plan = new Map<number, { depot: number; producer: number; consumer: number; good: number; duration: number }>();
   /** When each truck was expected to be free, as of the last plan. */
   private planFreeAt = new Map<number, number>();
-  /** Pallets each shop has claimed by trucks already sent. */
+  /** Pallets each shop has claimed by trucks already sent, per good (key: claimKey). */
   private claimed = new Map<number, number>();
   /** Something the plan depends on changed. */
   private replan = true;

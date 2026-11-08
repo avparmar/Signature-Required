@@ -87,7 +87,7 @@ export function makeGameConfig(o: GameConfigOverrides = {}): GameConfig {
     seed,
     // The town shares the game's seed and has one starting depot per company.
     town: makeTownConfig({ seed, companies, ...o.town }),
-    cycles: { ...DEFAULT_CYCLES, shopCycles: !orders.enabled, ...o.cycles },
+    cycles: { ...DEFAULT_CYCLES, shopCycles: !orders.enabled, producerCycles: !orders.enabled, ...o.cycles },
     trucks: { ...DEFAULT_TRUCKS, oneTrip: orders.enabled, ...o.trucks },
     depots: { ...DEFAULT_DEPOTS, ...o.depots },
     money: { ...DEFAULT_MONEY, ...o.money },
