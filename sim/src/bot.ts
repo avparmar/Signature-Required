@@ -565,8 +565,8 @@ export class Bot {
     }
     const worthIt = saving
       ? false
-      : policy === 'greedy'
-        ? true
+      : policy === 'greedy' || policy === 'saver'
+        ? true // the saver buys trucks as eagerly as the spammer: they differ only in where they expand
         : this.cfg.orders.enabled
           ? idle === 0 && unclaimed >= 3 && this.truckReturn(obs) - upkeep >= nextTruck
           : this.truckReturn(obs) >= 0.25 * nextTruck && this.pickRoute(obs, company, load) !== null;
