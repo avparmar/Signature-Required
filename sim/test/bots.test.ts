@@ -56,7 +56,7 @@ describe('bots', () => {
 
 describe('speculator', () => {
   it('values shares optimistically and pays real money for its own company, even with no minimum bid', () => {
-    const g = newGame({ seed: 1, auctions: { openingBid: 0 } });
+    const g = newGame({ seed: 1, depots: { upkeepPerMin: 0 }, auctions: { openingBid: 0 } });
     g.step();
     const spec = new Bot(0, g.town, g.cfg, PERSONALITIES.speculator);
     const inv = new Bot(1, g.town, g.cfg, PERSONALITIES.balanced);

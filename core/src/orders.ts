@@ -104,7 +104,7 @@ export const DEFAULT_ORDERS: OrdersConfig = {
   demand: 'bands',
   bandEdges: [0.35, 0.68],
   bandDemand: [12, 22, 30],
-  migratePerPallet: 0.12,
+  migratePerPallet: 0.06,
   bandFloor: [1, 0.6, 0.35],
   bandTierCap: [4, 4, 2],
   bandRampSec: [0, 0, 0],
