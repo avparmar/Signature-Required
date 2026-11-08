@@ -14,8 +14,10 @@ import { distancesFrom, type RoadGraph } from './graph.js';
 import type { Location } from './town.js';
 
 export interface DepotConfig {
-  /** Running cost of each truck, dollars per minute, taken from the company's treasury (0 = none). */
+  /** Running cost of each truck, dollars per minute (0 = none)... */
   upkeepPerMin: number;
+  /** ...taken from the company's treasury, or from its dividend pot (so it comes out of what shareholders are paid). */
+  upkeepFrom: 'treasury' | 'pot';
   /** Trucks a depot can service. */
   capacity: number;
   /** Price of a truck. */
@@ -50,6 +52,7 @@ export const DEFAULT_DEPOTS: DepotConfig = {
   capacity: 8,
   truckPrice: 12,
   upkeepPerMin: 0.4,
+  upkeepFrom: 'treasury',
   pricing: 'subsidy',
   depotBase: 150,
   maxSubsidy: 0.6,

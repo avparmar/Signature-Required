@@ -347,7 +347,11 @@ export class Game {
     // Running costs: every truck costs its company a little each second, from the treasury.
     if (this.cfg.depots.upkeepPerMin > 0 && this.phase === 'running') {
       const per = (this.cfg.depots.upkeepPerMin * this.cfg.tickSec) / 60;
-      for (const t of this.trucks.trucks) this.companies[t.company].treasury -= per;
+      for (const t of this.trucks.trucks) {
+        const c = this.companies[t.company];
+        if (this.cfg.depots.upkeepFrom === 'pot') c.pot -= per;
+        else c.treasury -= per;
+      }
     }
     if (ending || this.tick % this.payoutTicks === 0) this.payDividends(ending);
     if (ending) {

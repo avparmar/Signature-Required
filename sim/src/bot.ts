@@ -297,6 +297,9 @@ export class Bot {
     return this.truckPerMin * Math.max(0, this.minutesLeft(obs) - 0.75);
   }
 
+  /** Experiments: how a company's trucks are bought ('greedy': whenever there's room and money). */
+  static truckPolicy: ((company: number) => 'greedy' | 'default') | null = null;
+
   /** Controller's company (decided at its first auction). */
   private controlTarget: number | null = null;
 
@@ -532,9 +535,13 @@ export class Bot {
     // no point while some of the fleet is standing idle: the town has no more work for it.
     const idle = obs.trucks.filter((t) => t.company === company && t.orders.length === 0 && t.cargo === null).length;
     const upkeep = this.cfg.depots.upkeepPerMin * this.minutesLeft(obs);
-    const worthIt = this.cfg.orders.enabled
-      ? idle === 0 && this.truckReturn(obs) - upkeep >= nextTruck
-      : this.truckReturn(obs) >= 0.25 * nextTruck && this.pickRoute(obs, company, load) !== null;
+    const policy = Bot.truckPolicy?.(company) ?? 'default';
+    const worthIt =
+      policy === 'greedy'
+        ? true
+        : this.cfg.orders.enabled
+          ? idle === 0 && this.truckReturn(obs) - upkeep >= nextTruck
+          : this.truckReturn(obs) >= 0.25 * nextTruck && this.pickRoute(obs, company, load) !== null;
     if (spare !== undefined && c.treasury >= nextTruck && worthIt) {
       out.push({ type: 'buyTruck', company, depot: spare });
       return out;
