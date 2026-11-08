@@ -8,7 +8,7 @@ import { minimumBid, shareFloor, type AuctionEvent, type Book, type CancelReason
 import { depotPrice, subsidisedPrice, truckPriceFor } from './depots.js';
 import { assignPrices, investCost, payPerShare } from './money.js';
 import { chooseOpening } from './openings.js';
-import { creditLot, creditOrder, pickLotProducer, pickOrderShop, postLot, postOrder } from './orders.js';
+import { creditLot, creditOrder, pickLotProducer, pickOrderShop, postLot, postOrder, townBand } from './orders.js';
 import { cycleRate, initLocations, newLocationState, raiseLevel, updateCycles, type CycleEvent, type LocationState } from './economy.js';
 import { distancesFrom } from './graph.js';
 import { Rng } from './rng.js';
@@ -259,6 +259,14 @@ export class Game {
     for (const l of this.locations) this.locById.set(l.id, l);
     const prices = assignPrices(this.locations.filter((l) => l.kind === 'consumer').map((l) => l.id), cfg.money, this.rng);
     for (const [id, price] of prices) this.locById.get(id)!.price = price;
+    // Bands of town: shops nearer the centre pay more, and centre shops (and producers) start bigger.
+    if (cfg.orders.enabled && cfg.orders.demand === 'bands')
+      for (const l of this.locations) {
+        const b = this.bandOf(l.id);
+        if (l.kind === 'consumer') l.price = Math.round(l.price * cfg.orders.bandPay[b] * 100) / 100;
+        if (b === 0) l.tier = Math.max(l.tier, cfg.orders.centreTier);
+      }
+    this.bandBudget = [...cfg.orders.bandDemand];
     for (const l of this.town.locations) if (l.startCompany !== null) this.depotOwner.set(l.id, l.startCompany);
     this.trucks = new TruckSystem(
       this.town.graph,
@@ -336,6 +344,15 @@ export class Game {
 
     this.tick++;
     const ending = this.tick >= this.totalTicks;
+    // Running costs: every truck costs its company a little each second, from the treasury.
+    if (this.cfg.depots.upkeepPerMin > 0 && this.phase === 'running') {
+      const per = (this.cfg.depots.upkeepPerMin * this.cfg.tickSec) / 60;
+      for (const t of this.trucks.trucks) {
+        const c = this.companies[t.company];
+        if (this.cfg.depots.upkeepFrom === 'pot') c.pot -= per;
+        else c.treasury -= per;
+      }
+    }
     if (ending || this.tick % this.payoutTicks === 0) this.payDividends(ending);
     if (ending) {
       this.phase = 'ended';
@@ -424,7 +441,7 @@ export class Game {
         if (this.depotOwner.get(action.depot) !== c.id) return reject('that depot belongs to someone else (or nobody)');
         if (this.trucksOf(c.id) >= this.truckLimit(c.id))
           return reject(`the fleet is full (${this.cfg.depots.capacity} trucks per factory): buy another factory`);
-        const price = truckPriceFor(this.cfg.depots, this.trucksOf(c.id));
+        const price = truckPriceFor(this.cfg.depots, this.trucksOf(c.id), this.trucks.trucks.length);
         if (c.treasury < price) return reject(`the treasury has $${c.treasury.toFixed(2)}; the next truck costs $${price.toFixed(2)}`);
         c.treasury -= price;
         c.assets += price;
@@ -822,12 +839,10 @@ export class Game {
     const live = this.locations.filter((l) => !l.closed);
     const shops = live.filter((l) => l.kind === 'consumer');
     const producers = live.filter((l) => l.kind === 'producer');
-    const target = Math.max(cfg.minOpen, this.trucks.trucks.length * cfg.openPerTruck);
     const demand = new Array(goods).fill(0);
     for (const q of shops) if (q.order) q.order.wants.forEach((w, g) => (demand[g] += w));
     const supply = new Array(goods).fill(0);
     for (const p of producers) if (p.order) supply[p.good] += p.stock;
-    let open = demand.reduce((a, b) => a + b, 0);
     const freeSites = this.town.locations.filter((l) => l.kind === 'depot' && !this.depotOwner.has(l.id));
     const nearSite = (s: LocationState) => {
       const node = this.town.locations[s.id].node;
@@ -837,13 +852,28 @@ export class Game {
     const producersOf = new Array(goods).fill(0);
     for (const p of producers) producersOf[p.good]++;
     const short = (g: number) => (producersOf[g] + supply[g]) / (1 + demand[g]);
-    for (let guard = 0; open < target && guard < 50; guard++) {
-      const shop = pickOrderShop(shops, this.t, short, nearSite, cfg, this.rng);
-      if (!shop) break;
-      postOrder(shop, goods, this.companies.length, this.t, cfg, this.rng);
-      shop.order!.wants.forEach((w, g) => (demand[g] += w));
-      open += shop.demand;
-      this.emit('all', { type: 'orderPosted', t: this.t, location: shop.id, size: shop.order!.size, wants: [...shop.order!.wants] });
+    // Each band of town (centre, middle, outer) keeps its own open demand up, a fixed amount: or,
+    // with demand following the fleet, the whole town as one.
+    const groups: { shops: LocationState[]; target: number; band: number }[] =
+      cfg.demand === 'bands'
+        ? [0, 1, 2].map((b) => {
+            const ramp = cfg.bandRampSec[b];
+            const share = ramp > 0 ? Math.min(1, 0.25 + (0.75 * this.t) / ramp) : 1;
+            return { shops: shops.filter((q) => this.bandOf(q.id) === b), target: this.bandBudget[b] * share * this.demandGrowth(), band: b };
+          })
+        : [{ shops, target: Math.max(cfg.minOpen, this.trucks.trucks.length * cfg.openPerTruck), band: -1 }];
+    for (const grp of groups) {
+      let open = grp.shops.reduce((a, q) => a + (q.order ? q.demand : 0), 0);
+      for (let guard = 0; open < grp.target && guard < 50; guard++) {
+        const shop = pickOrderShop(grp.shops, this.t, short, nearSite, cfg, this.rng);
+        if (!shop) break;
+        // A band whose demand has moved inward asks for less per order, as well as less in all.
+        const scale = grp.band >= 0 ? Math.min(1, this.bandBudget[grp.band] / cfg.bandDemand[grp.band]) : 1;
+        postOrder(shop, goods, this.companies.length, this.t, cfg, this.rng, scale);
+        shop.order!.wants.forEach((w, g) => (demand[g] += w));
+        open += shop.demand;
+        this.emit('all', { type: 'orderPosted', t: this.t, location: shop.id, size: shop.order!.size, wants: [...shop.order!.wants] });
+      }
     }
     // Lots: for each good, until what's on offer covers what's wanted. Producers near the shops that
     // want it go first.
@@ -867,7 +897,18 @@ export class Game {
   private creditDelivery(location: number, company: number) {
     const s = this.locById.get(location);
     if (!s) return;
-    const done = creditOrder(s, company, this.t, this.cfg.orders, this.rng);
+    // Bands: serving a band moves some of its demand one band in (down to the band's floor).
+    const ocfg = this.cfg.orders;
+    if (ocfg.demand === 'bands') {
+      const b = this.bandOf(location);
+      if (b > 0) {
+        const floor = ocfg.bandDemand[b] * ocfg.bandFloor[b];
+        const move = Math.min(ocfg.migratePerPallet, Math.max(0, this.bandBudget[b] - floor));
+        this.bandBudget[b] -= move;
+        this.bandBudget[b - 1] += move;
+      }
+    }
+    const done = creditOrder(s, company, this.t, this.cfg.orders, this.rng, this.bandOf(location));
     if (!done) return;
     const total = done.size * this.cfg.orders.bonusPerPallet;
     const bonus = done.delivered.map((n) => (total * n) / done.size);
@@ -879,6 +920,48 @@ export class Game {
     this.emit('all', { type: 'orderDone', t: this.t, location, size: done.size, delivered: [...done.delivered], bonus });
     if (done.grew) this.emit('all', { type: 'grew', t: this.t, location, tier: s.tier });
   }
+
+  /**
+   * Which band of town a place is in: 0 centre, 1 middle, 2 outer, by its distance from the middle
+   * of town against the furthest shop's.
+   */
+  bandOf(location: number): number {
+    let b = this.bands.get(location);
+    if (b === undefined) {
+      b = townBand(this.town, this.cfg.orders.bandEdges, location);
+      this.bands.set(location, b);
+    }
+    return b;
+  }
+  private bands = new Map<number, number>();
+
+  /**
+   * How much the town's demand has grown by now (1 at the start). It follows a curve made at the start
+   * of the game: up to a random level, in stretches of uneven pace (see OrdersConfig.growTo).
+   */
+  demandGrowth(): number {
+    const o = this.cfg.orders;
+    if (!this.growCurve) {
+      // Its own random numbers, so the rest of the game's draws are the same as without it.
+      const rng = new Rng(this.cfg.seed * 7919 + 13);
+      const base = o.bandDemand.reduce((a, b) => a + b, 0);
+      const [lo, hi] = o.growTo;
+      const end = hi > 0 ? (lo + rng.next() * (hi - lo)) / base : 1;
+      const paces = Array.from({ length: Math.max(1, o.growSteps) }, () => 0.3 + rng.next() * 1.4);
+      const total = paces.reduce((a, b) => a + b, 0);
+      let acc = 0;
+      this.growCurve = { end, at: [0, ...paces.map((p) => (acc += p) / total)] };
+    }
+    const { end, at } = this.growCurve;
+    if (end === 1 || o.growEndSec <= 0) return end;
+    const f = Math.min(1, Math.max(0, this.t / o.growEndSec)) * (at.length - 1);
+    const i = Math.min(at.length - 2, Math.floor(f));
+    const progress = at[i] + (at[i + 1] - at[i]) * (f - i);
+    return 1 + (end - 1) * progress;
+  }
+  private growCurve: { end: number; at: number[] } | null = null;
+  /** Bands: open demand each band keeps up now (it moves inward as the town is served). */
+  bandBudget: number[] = [];
 
   /** A pallet picked up from a producer's lot: count it; the last one ends the lot. */
   private creditPickup(location: number, company: number) {
@@ -1036,8 +1119,9 @@ export class Game {
     this.planFreeAt.clear();
     const speed = this.cfg.trucks.speed;
     const extra = 2 * this.cfg.trucks.serviceSec + (this.cfg.trucks.viaDepot === 'none' ? 0 : this.cfg.trucks.signOffSec);
-    // Pallets each shop has claimed, good by good (trucks sent and not yet unloading there).
+    // Pallets each shop has claimed, good by good (trucks sent and not yet unloading there), and by whom.
     this.claimed.clear();
+    const claimedBy = new Map<number, Map<number, number>>();
     for (const t of this.trucks.trucks) {
       const u = t.orders.find((o) => o.action === 'unload');
       if (!u) continue;
@@ -1047,6 +1131,9 @@ export class Game {
       if (good === null || good === undefined) continue;
       const key = claimKey(u.location, good);
       this.claimed.set(key, (this.claimed.get(key) ?? 0) + 1);
+      const by = claimedBy.get(key) ?? new Map<number, number>();
+      by.set(t.company, (by.get(t.company) ?? 0) + 1);
+      claimedBy.set(key, by);
     }
     const unclaimed = (q: LocationState, g: number) => (q.order ? (q.order.wants[g] ?? 0) - (this.claimed.get(claimKey(q.id, g)) ?? 0) : 0);
     const goods = this.cfg.town.goods.length;
@@ -1115,9 +1202,38 @@ export class Game {
     const open = new Map<number, number>();
     for (const q of shops) for (let g = 0; g < goods; g++) open.set(claimKey(q.id, g), unclaimed(q, g));
     const taken = new Set<number>();
-    for (const pr of pairs) {
+    // Territory (orders.contest 'territory'): a shop's pallets are shared out between the companies
+    // that could serve them in proportion to how close each one's nearest factory is, not by how many
+    // trucks each has about. Each company gets its share first; whatever's left goes to anyone.
+    const territory = this.cfg.orders.contest === 'territory';
+    const quota = new Map<number, Map<number, number>>();
+    if (territory) {
+      const who = new Map<number, Set<number>>();
+      for (const pr of pairs) {
+        const key = claimKey(pr.shop.id, pr.good);
+        (who.get(key) ?? who.set(key, new Set()).get(key)!).add(avail[pr.a].truck.company);
+      }
+      for (const [key, companies] of who) {
+        const shop = Math.floor(key / 16);
+        const node = this.town.locations[shop].node;
+        const weight = new Map<number, number>();
+        for (const c of companies) {
+          const d = Math.min(...this.depotsOf(c).map((s) => this.distFrom(this.town.locations[s].node)[node]));
+          weight.set(c, 1 / Math.pow(2 + d, this.cfg.orders.territoryPower));
+        }
+        const by = claimedBy.get(key) ?? new Map<number, number>();
+        const total = (open.get(key) ?? 0) + [...by.values()].reduce((x, y) => x + y, 0);
+        const sum = [...weight.values()].reduce((x, y) => x + y, 0);
+        const q = new Map<number, number>();
+        for (const [c, w] of weight) q.set(c, Math.max(0, Math.ceil((total * w) / sum) - (by.get(c) ?? 0)));
+        quota.set(key, q);
+      }
+    }
+    const assign = (pr: (typeof pairs)[number], keepToShares: boolean) => {
       const key = claimKey(pr.shop.id, pr.good);
-      if (taken.has(pr.a) || (open.get(key) ?? 0) < 1) continue;
+      if (taken.has(pr.a) || (open.get(key) ?? 0) < 1) return;
+      const company = avail[pr.a].truck.company;
+      if (keepToShares && (quota.get(key)?.get(company) ?? 0) < 1) return;
       const v = avail[pr.a];
       // Its producer, or the next nearest that'll have a pallet when it gets there.
       const toP = (p: number) => v.at + this.distFrom(v.node)[this.town.locations[p].node] / speed;
@@ -1136,18 +1252,21 @@ export class Game {
             }
           }
         }
-        if (alt < 0 || !Number.isFinite(altLen)) continue;
+        if (alt < 0 || !Number.isFinite(altLen)) return;
         pr.producer = alt;
         pr.depot = altDepot;
         pr.duration = altLen / speed + extra;
       }
       taken.add(pr.a);
+      if (keepToShares) quota.get(key)!.set(company, quota.get(key)!.get(company)! - 1);
       open.set(key, open.get(key)! - 1);
       pickups.set(pr.producer, pickups.get(pr.producer)! + 1);
       const truck = avail[pr.a].truck;
       this.plan.set(truck.id, { depot: pr.depot, producer: pr.producer, consumer: pr.shop.id, good: pr.good, duration: pr.duration });
       this.planFreeAt.set(truck.id, avail[pr.a].at);
-    }
+    };
+    if (territory) for (const pr of pairs) assign(pr, true);
+    for (const pr of pairs) assign(pr, false);
     // Trucks with nothing planned: when they're due free, so one coming free unplanned triggers a replan.
     for (const v of avail) if (!this.planFreeAt.has(v.truck.id)) this.planFreeAt.set(v.truck.id, v.at);
     // Free now with nothing to do: no point planning again just for them until something changes.
@@ -1328,6 +1447,8 @@ export class Game {
 
   /** What a depot site would cost this company now. */
   depotPriceFor(company: number, site: number): number {
+    // By band: a fixed price for everyone, dearer towards the centre.
+    if (this.cfg.depots.pricing === 'band') return this.cfg.depots.bandSitePrice[this.bandOf(site)];
     if (this.cfg.depots.pricing === 'subsidy') return subsidisedPrice(this.cfg.depots, this.districtShare(company, site));
     // Distance pricing, using the site's cached distances (roads are undirected).
     const d = this.siteDistances.get(site) ?? distancesFrom(this.town.graph, this.town.locations[site].node);

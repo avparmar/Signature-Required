@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_MONEY, distancesFrom, investCost, newGame, payPerShare, Rng, assignPrices, type Game, type GameEvent } from '../src/index.js';
 
 function setup(o: Parameters<typeof newGame>[0] = {}) {
-  const g = newGame({ seed: 7, autoRoutes: false, ...o, auctions: { openingRound: false, ...o.auctions } }); // routes set by hand here
+  const g = newGame({ seed: 7, autoRoutes: false, ...o, depots: { upkeepPerMin: 0, ...o.depots }, auctions: { openingRound: false, ...o.auctions } }); // routes set by hand here
   const home = g.town.locations.find((l) => l.startCompany === 0)!;
   const d = distancesFrom(g.town.graph, home.node);
   const producer = g.town.locations.filter((l) => l.kind === 'producer').sort((a, b) => d[a.node] - d[b.node])[0];
@@ -100,7 +100,7 @@ describe('deliveries and dividends', () => {
   });
 
   it('purchases count as assets for the final payout', () => {
-    const { g, home } = setup({ depots: { truckPrice: 30 } });
+    const { g, home } = setup({ depots: { truckPrice: 30, townPriceStep: 0 } });
     g.companies[0].shares = [0, null, null, null, null];
     g.companies[0].treasury = 60;
     g.act(0, { type: 'buyTruck', company: 0, depot: home.id });
@@ -129,7 +129,7 @@ describe('location investment', () => {
   });
 
   it("can't invest without the cash, or in a depot site", () => {
-    const { g, producer, home } = setup({ cycles: { startLevel: 3, maxLevel: 5, growAbove: 0.75, shrinkBelow: 0.5, shopShare: 1 } });
+    const { g, producer, home } = setup({ startingCash: 100, cycles: { startLevel: 3, maxLevel: 5, growAbove: 0.75, shrinkBelow: 0.5, shopShare: 1 } });
     g.act(0, { type: 'invest', location: producer.id }); // $60, leaves $40
     g.act(0, { type: 'invest', location: producer.id }); // $90: too much
     g.act(1, { type: 'invest', location: home.id });

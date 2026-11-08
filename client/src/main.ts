@@ -832,7 +832,7 @@ function truckOffer(obs: Observation, id: number) {
   const trucks = obs.trucks.filter((t) => t.company === id).length;
   const sites = Object.entries(obs.depots).filter(([, o]) => o === id).map(([site]) => Number(site));
   const limit = sites.length * g.cfg.depots.capacity;
-  const price = g.cfg.depots.truckPrice + g.cfg.depots.truckPriceStep * trucks;
+  const price = Math.round(g.cfg.depots.truckPrice + g.cfg.depots.truckPriceStep * trucks + g.cfg.depots.townPriceStep * obs.trucks.length);
   return { trucks, limit, price, home: sites[0] as number | undefined, full: trucks >= limit, afford: obs.companies[id].treasury >= price };
 }
 
@@ -977,7 +977,7 @@ function refreshMyCompanies(obs: Observation) {
     html += `<div class="row small quick-stats"><span title="${trucks.length} trucks (${free} free), room for ${limit}: each factory adds ${g.cfg.depots.capacity}">🚚 <b>${trucks.length}</b>/${limit}</span><span title="Factories: ${factorySites.map(at).join(', ')}">🏭 <b>${factorySites.length}</b></span><span title="What its deliveries earned per minute over the last ${RATE_WINDOW / 60} minutes (half to the treasury, half to dividends)"><span class="muted">Income</span> ${!trucks.length ? '<span class="muted">—</span>' : rate === null ? '<span class="muted">earning…</span>' : `<b>${money(rate)}</b>/min`}</span></div>`;
     // Spending: a truck, or a factory (the nearest free sites, at its price).
     const full = trucks.length >= limit;
-    const nextTruck = g.cfg.depots.truckPrice + g.cfg.depots.truckPriceStep * trucks.length;
+    const nextTruck = Math.round(g.cfg.depots.truckPrice + g.cfg.depots.truckPriceStep * trucks.length + g.cfg.depots.townPriceStep * obs.trucks.length);
     const home = factorySites[0];
     const truckBtn = home === undefined ? '' : `<button data-truck="${id}:${home}" ${full || c.treasury < nextTruck ? 'disabled' : ''} title="${full ? `Fleet full: each factory adds ${g.cfg.depots.capacity}` : c.treasury < nextTruck ? 'Not enough in the treasury' : 'Another truck: more deliveries'}">Buy truck <b>${money(nextTruck)}</b></button>`;
     const sites = Object.keys(obs.depotPrices).map(Number);

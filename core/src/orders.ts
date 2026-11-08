@@ -23,6 +23,26 @@
  */
 import type { LocationState } from './economy.js';
 import type { Rng } from './rng.js';
+import type { Town } from './town.js';
+
+const reachCache = new WeakMap<Town, number>();
+/**
+ * Which band of town a place is in: 0 centre, 1 middle, 2 outer, by its distance from the middle of
+ * town against the furthest producer's or shop's. `edges`: where the centre and middle bands end.
+ */
+export function townBand(town: Town, edges: [number, number], location: number): number {
+  const cx = town.cfg.blocksX / 2;
+  const cy = town.cfg.blocksY / 2;
+  let reach = reachCache.get(town);
+  if (reach === undefined) {
+    reach = 0;
+    for (const l of town.locations) if (l.kind === 'consumer' || l.kind === 'producer') reach = Math.max(reach, Math.hypot(l.x - cx, l.y - cy));
+    reachCache.set(town, reach);
+  }
+  const l = town.locations[location];
+  const f = Math.hypot(l.x - cx, l.y - cy) / Math.max(1e-9, reach);
+  return f <= edges[0] ? 0 : f <= edges[1] ? 1 : 2;
+}
 
 export interface OrdersConfig {
   /** Shops take orders and producers offer lots (true), or both run on cycles (false). */
@@ -39,7 +59,42 @@ export interface OrdersConfig {
   quietSec: [number, number];
   /** Seconds a producer rests after its lot is collected, inclusive range. */
   lotQuietSec: [number, number];
-  /** Open demand the town keeps up, in pallets per truck in town (all companies)... */
+  /**
+   * How open demand is set: 'bands' (a fixed amount in each band of town, centre to edge: the town's
+   * appetite doesn't grow with the fleets), or 'fleet' (in step with the trucks in town).
+   */
+  demand: 'bands' | 'fleet';
+  /** Bands: where the centre and middle bands end, as a share of the furthest shop's distance from the centre. */
+  bandEdges: [number, number];
+  /** Bands: open demand kept up in the centre, middle and outer bands (pallets). */
+  bandDemand: [number, number, number];
+  /** Bands: seconds each band's demand takes to build up to its full amount (from a quarter), centre, middle, outer (0 = full from the start). */
+  bandRampSec: [number, number, number];
+  /**
+   * Bands: demand moves inward as it's served. Each pallet delivered in the outer (or middle) band
+   * moves this much of that band's open demand to the next band in (outer -> middle -> centre).
+   */
+  migratePerPallet: number;
+  /** Bands: a band's demand never drops below this share of what it started with, centre, middle, outer. */
+  bandFloor: [number, number, number];
+  /**
+   * Bands: the town's demand grows over the game. By `growEndSec` its total open demand reaches a
+   * level drawn at random each game from `growTo` (pallets; the bands start at their bandDemand
+   * total), and stays there. On the way it grows in `growSteps` stretches at uneven, random paces,
+   * so how big the town will get can only be guessed from how it's going. [0, 0] turns this off.
+   */
+  growTo: [number, number];
+  growEndSec: number;
+  growSteps: number;
+  /** Bands: the tallest shops can grow in each band (suburbs stay low), centre, middle, outer. */
+  bandTierCap: [number, number, number];
+  /** Bands: what shops pay per pallet, as a multiple of their usual price, centre, middle, outer. */
+  bandPay: [number, number, number];
+  /** Bands: seconds a shop rests after its order is filled, centre, middle, outer (inclusive ranges). */
+  bandQuietSec: [[number, number], [number, number], [number, number]];
+  /** Bands: the tier centre shops start at (the town's busiest spot from the start). */
+  centreTier: number;
+  /** Fleet: open demand in pallets per truck in town (all companies)... */
   openPerTruck: number;
   /** ...but never less than this. */
   minOpen: number;
@@ -49,6 +104,13 @@ export interface OrdersConfig {
   bonusPerPallet: number;
   /** How much likelier a shop near an unclaimed factory site (within its district) gets an order. */
   nearSiteWeight: number;
+  /**
+   * Who gets a pallet several companies could deliver: 'soonest' (whichever truck would get it there
+   * first), or 'territory' (shared out by how close each company's nearest factory is: see Game.makePlan).
+   */
+  contest: 'soonest' | 'territory';
+  /** Territory: how sharply closeness counts (a company's weight is 1 / (2 + distance)^power). */
+  territoryPower: number;
   /** Replan if a truck is free this many seconds later than the plan expected (and with nothing planned). */
   lateSec: number;
   /** Replan at least this often anyway (seconds), to catch drift. */
@@ -75,11 +137,30 @@ export const DEFAULT_ORDERS: OrdersConfig = {
   tierUpAfter: [1, 2, 3],
   quietSec: [60, 180],
   lotQuietSec: [15, 45],
+  demand: 'bands',
+  bandEdges: [0.25, 0.45],
+  bandDemand: [12, 22, 30],
+  migratePerPallet: 0.06,
+  bandFloor: [1, 0.6, 0.35],
+  bandTierCap: [4, 4, 2],
+  growTo: [80, 130],
+  growEndSec: 720,
+  growSteps: 8,
+  bandRampSec: [0, 0, 0],
+  bandPay: [1.25, 1.1, 1],
+  bandQuietSec: [
+    [45, 90],
+    [60, 150],
+    [90, 210],
+  ],
+  centreTier: 2,
   openPerTruck: 1.3,
   minOpen: 40,
   supplyShare: 1.1,
   bonusPerPallet: 0.6,
   nearSiteWeight: 3,
+  contest: 'soonest',
+  territoryPower: 2,
   lateSec: 8,
   replanSec: 20,
   batchSec: 5,
@@ -121,11 +202,12 @@ const sizeAt = (ranges: [number, number][], tier: number, rng: Rng) => {
 };
 
 /** Post an order at a shop: its own good, plus others from tier 3 (other goods drawn at random). */
-export function postOrder(s: LocationState, goods: number, companies: number, t: number, cfg: OrdersConfig, rng: Rng) {
+export function postOrder(s: LocationState, goods: number, companies: number, t: number, cfg: OrdersConfig, rng: Rng, scale = 1) {
   const wants = new Array(goods).fill(0);
   const n = Math.min(goods, cfg.orderGoods[Math.min(cfg.orderGoods.length, s.tier) - 1] ?? 1);
   const others = rng.shuffle([...Array(goods).keys()].filter((g) => g !== s.good));
-  for (const g of [s.good, ...others.slice(0, n - 1)]) wants[g] = sizeAt(cfg.orderSize, s.tier, rng);
+  // `scale`: a band whose demand has moved inward asks for less per order (at least 2 pallets).
+  for (const g of [s.good, ...others.slice(0, n - 1)]) wants[g] = Math.max(2, Math.round(sizeAt(cfg.orderSize, s.tier, rng) * scale));
   const size = wants.reduce((a, b) => a + b, 0);
   s.order = { size, wants, delivered: new Array(companies).fill(0), postedAt: t };
   s.demand = size;
@@ -143,13 +225,14 @@ export function postLot(p: LocationState, companies: number, t: number, cfg: Ord
 }
 
 /** Done: quiet for a while, and count towards the next tier. True if it moved up a tier. */
-function finish(s: LocationState, t: number, cfg: OrdersConfig, rng: Rng): boolean {
+function finish(s: LocationState, t: number, cfg: OrdersConfig, rng: Rng, band: number | null): boolean {
+  const cap = s.kind === 'consumer' && band !== null && cfg.demand === 'bands' ? cfg.bandTierCap[band] : 4;
   s.order = null;
-  const [lo, hi] = s.kind === 'producer' ? cfg.lotQuietSec : cfg.quietSec;
+  const [lo, hi] = s.kind === 'producer' ? cfg.lotQuietSec : band !== null && cfg.demand === 'bands' ? cfg.bandQuietSec[band] : cfg.quietSec;
   s.quietUntil = t + lo + rng.next() * (hi - lo);
   s.completed++;
   const need = cfg.tierUpAfter[s.tier - 1];
-  if (need !== undefined && s.completed >= need) {
+  if (need !== undefined && s.completed >= need && s.tier < cap) {
     s.tier++;
     s.completed = 0;
     return true;
@@ -161,13 +244,13 @@ function finish(s: LocationState, t: number, cfg: OrdersConfig, rng: Rng): boole
  * Credit a delivery to a shop's order. When it was the last pallet, the order is done: returns it
  * (and whether the shop moved up a tier), and the shop goes quiet.
  */
-export function creditOrder(s: LocationState, company: number, t: number, cfg: OrdersConfig, rng: Rng) {
+export function creditOrder(s: LocationState, company: number, t: number, cfg: OrdersConfig, rng: Rng, band: number | null = null) {
   if (!s.order) return null;
   s.order.delivered[company]++;
   if (s.order.delivered.reduce((a, b) => a + b, 0) < s.order.size) return null;
   const done = s.order;
   s.demand = 0;
-  const grew = finish(s, t, cfg, rng);
+  const grew = finish(s, t, cfg, rng, band);
   return { size: done.size, delivered: done.delivered, grew };
 }
 
@@ -178,6 +261,6 @@ export function creditLot(p: LocationState, company: number, t: number, cfg: Ord
   if (p.order.delivered.reduce((a, b) => a + b, 0) < p.order.size) return null;
   const done = p.order;
   p.stock = 0;
-  const grew = finish(p, t, cfg, rng);
+  const grew = finish(p, t, cfg, rng, null);
   return { size: done.size, delivered: done.delivered, grew };
 }

@@ -14,12 +14,18 @@ import { distancesFrom, type RoadGraph } from './graph.js';
 import type { Location } from './town.js';
 
 export interface DepotConfig {
+  /** Running cost of each truck, dollars per minute (0 = none)... */
+  upkeepPerMin: number;
+  /** ...taken from the company's treasury, or from its dividend pot (so it comes out of what shareholders are paid). */
+  upkeepFrom: 'treasury' | 'pot';
   /** Trucks a depot can service. */
   capacity: number;
   /** Price of a truck. */
   truckPrice: number;
   /** How depot sites are priced: local subsidy (default) or distance from your depots (older rule). */
-  pricing: 'subsidy' | 'distance';
+  pricing: 'subsidy' | 'distance' | 'band';
+  /** Band pricing: what a site costs in the centre, middle and outer bands of town (the same for every company). */
+  bandSitePrice: [number, number, number];
   /** Full price of a depot site (subsidy pricing), or the price close to your network (distance pricing). */
   depotBase: number;
   /** Subsidy pricing: the full discount, for a company that reaches the service target in a site's district. */
@@ -37,6 +43,8 @@ export interface DepotConfig {
   /** A new unclaimed factory site appears this often (seconds; 0 for never), from that long in until the last two minutes. */
   newSiteEverySec: number;
   /** Each truck costs this much more than the company's previous one (0: every truck costs truckPrice). */
+  /** A truck costs this much more for every truck in town (all companies): shared, rising prices. */
+  townPriceStep: number;
   truckPriceStep: number;
   /** Drive distance (blocks) from your nearest depot that still costs only the base price. */
   depotFreeBlocks: number;
@@ -45,9 +53,12 @@ export interface DepotConfig {
 }
 
 export const DEFAULT_DEPOTS: DepotConfig = {
-  capacity: 16,
-  truckPrice: 6,
-  pricing: 'subsidy',
+  capacity: 8,
+  truckPrice: 12,
+  upkeepPerMin: 0.7,
+  upkeepFrom: 'pot',
+  pricing: 'band',
+  bandSitePrice: [220, 130, 70],
   depotBase: 150,
   maxSubsidy: 0.6,
   districtBlocks: 5,
@@ -56,6 +67,7 @@ export const DEFAULT_DEPOTS: DepotConfig = {
   subsidyTarget: 60,
   newSiteEverySec: 0,
   truckPriceStep: 0,
+  townPriceStep: 0.1,
   depotFreeBlocks: 4,
   depotPerBlock: 10,
 };
@@ -83,8 +95,8 @@ export function depotSites(locations: Location[]): Location[] {
  * of the recent service in the site's district. Whole dollars.
  */
 /** What a company's next truck costs, given how many it already has. */
-export function truckPriceFor(cfg: DepotConfig, owned: number): number {
-  return cfg.truckPrice + cfg.truckPriceStep * owned;
+export function truckPriceFor(cfg: DepotConfig, owned: number, inTown = 0): number {
+  return Math.round(cfg.truckPrice + cfg.truckPriceStep * owned + cfg.townPriceStep * inTown);
 }
 
 export function subsidisedPrice(cfg: DepotConfig, progress: number): number {

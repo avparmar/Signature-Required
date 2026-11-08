@@ -12,6 +12,7 @@
  * - Spare cash: occasionally levels up the bottleneck location on a route its companies run.
  */
 import {
+  townBand,
   truckPriceFor,
   minimumBid,
   distanceToNetwork,
@@ -248,7 +249,7 @@ export class Bot {
     const mins = Math.max(0, Math.round(this.minutesLeft(obs) - 1)); // the last stretch is discounted
     const buy = () => {
       for (;;) {
-        const tp = truckPriceFor(d, fleet);
+        const tp = truckPriceFor(d, fleet, obs.trucks.length);
         if (fleet < Math.min(cap, routeCap) && cash >= tp) {
           cash -= tp;
           assets += tp;
@@ -296,6 +297,9 @@ export class Bot {
   truckReturn(obs: Observation): number {
     return this.truckPerMin * Math.max(0, this.minutesLeft(obs) - 0.75);
   }
+
+  /** Experiments: how a company's trucks are bought ('greedy': whenever there's room and money). */
+  static truckPolicy: ((company: number) => 'greedy' | 'saver' | 'default') | null = null;
 
   /** Controller's company (decided at its first auction). */
   private controlTarget: number | null = null;
@@ -527,8 +531,45 @@ export class Bot {
     const fleet = obs.trucks.filter((t) => t.company === company).length;
     const spare = fleet < myDepots.length * cfg.capacity ? [...myDepots].sort((a, b) => perDepot(a) - perDepot(b))[0] : undefined;
     // The next truck's price (it rises with the fleet when trucks cost more and more).
-    const nextTruck = truckPriceFor(cfg, fleet);
-    const worthIt = this.truckReturn(obs) >= 0.25 * nextTruck && this.pickRoute(obs, company, load) !== null;
+    const nextTruck = truckPriceFor(cfg, fleet, obs.trucks.length);
+    // With orders, a truck has to pay for itself (and its running cost) before the end, and there's
+    // no point while some of the fleet is standing idle: the town has no more work for it.
+    const idle = obs.trucks.filter((t) => t.company === company && t.orders.length === 0 && t.cargo === null).length;
+    const upkeep = this.cfg.depots.upkeepPerMin * this.minutesLeft(obs);
+    const policy = Bot.truckPolicy?.(company) ?? 'default';
+    // Saver: until it has a factory in the middle or centre of town, it fills its first factory and saves
+    // its treasury for one (the cheapest free), buying it as soon as it can afford it with a truck.
+    const band = (site: number) => townBand(this.town, this.cfg.orders.bandEdges, site);
+    let saving = false;
+    if (policy === 'saver' && !myDepots.some((s) => band(s) <= 1)) {
+      const inward = Object.entries(obs.depotPrices)
+        .map(([site, p]) => ({ site: Number(site), price: p[company] }))
+        .filter((x) => band(x.site) <= 1)
+        .sort((a, b) => a.price - b.price || a.site - b.site)[0];
+      if (inward) {
+        if (c.treasury >= inward.price + nextTruck) {
+          out.push({ type: 'buyDepot', company, site: inward.site });
+          return out;
+        }
+        saving = fleet >= cfg.capacity; // fills its first factory while it saves
+      }
+    }
+    // Lean (with orders): only when there's work nobody is on yet: pallets wanted across town that no
+    // truck has been sent for (a new truck mostly takes pallets from rivals otherwise), none of its
+    // own trucks is idle, and it pays for itself (and its running cost) before the end.
+    let unclaimed = 0;
+    if (this.cfg.orders.enabled) {
+      const wanted = obs.locations.reduce((a, l) => a + (l.kind === 'consumer' && l.order ? l.demand : 0), 0);
+      const sent = obs.trucks.filter((t) => t.orders.some((o) => o.action === 'unload')).length;
+      unclaimed = wanted - sent;
+    }
+    const worthIt = saving
+      ? false
+      : policy === 'greedy' || policy === 'saver'
+        ? true // the saver buys trucks as eagerly as the spammer: they differ only in where they expand
+        : this.cfg.orders.enabled
+          ? idle === 0 && unclaimed >= 3 && this.truckReturn(obs) - upkeep >= nextTruck
+          : this.truckReturn(obs) >= 0.25 * nextTruck && this.pickRoute(obs, company, load) !== null;
     if (spare !== undefined && c.treasury >= nextTruck && worthIt) {
       out.push({ type: 'buyTruck', company, depot: spare });
       return out;
@@ -541,6 +582,8 @@ export class Bot {
       let cheapest: { site: number; price: number; dist: number } | null = null;
       for (const [siteId, prices] of Object.entries(obs.depotPrices)) {
         const l = this.town.locations[Number(siteId)];
+        // A saver keeps expanding inward while there are sites there.
+        if (policy === 'saver' && band(l.id) > 1 && Object.keys(obs.depotPrices).some((x) => band(Number(x)) <= 1)) continue;
         // Only a site with an uncrowded route of its own (a new factory opens new routes).
         if (!this.siteHasRoute(obs, l, load)) continue;
         const price = prices[company];
@@ -571,9 +614,9 @@ export class Bot {
       const room = Math.max(0, Math.min(myDepots.length * cfg.capacity, routes * this.perRoute) - fleet);
       const want =
         room > 0
-          ? Array.from({ length: Math.min(room, 4) }, (_, i) => truckPriceFor(cfg, fleet + i)).reduce((a, b) => a + b, 0)
+          ? Array.from({ length: Math.min(room, 4) }, (_, i) => truckPriceFor(cfg, fleet + i, obs.trucks.length + i)).reduce((a, b) => a + b, 0)
           : Number.isFinite(cheapestSite) && factoryWorthIt
-            ? cheapestSite + nextTruck + truckPriceFor(cfg, fleet + 1)
+            ? cheapestSite + nextTruck + truckPriceFor(cfg, fleet + 1, obs.trucks.length + 1)
             : 0;
       const need = want - c.treasury;
       if (need >= nextTruck) {
