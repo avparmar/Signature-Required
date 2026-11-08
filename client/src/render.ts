@@ -855,6 +855,29 @@ export class Renderer {
           ctx.fillText('$', ccx, ccy + 0.5);
         }
       }
+      // Shop orders (placeholder look): an open order is a ring that fills as pallets arrive, with
+      // what's still wanted; a quiet shop (no order) is faded.
+      if (st && st.kind === 'consumer' && this.orders) {
+        if (st.order) {
+          const done = st.order.size - st.demand;
+          const rr = r * 1.45;
+          ctx.lineWidth = Math.max(2.5, r * 0.22);
+          ctx.strokeStyle = 'rgba(35,32,27,0.15)';
+          ctx.beginPath();
+          ctx.arc(x, y, rr, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.strokeStyle = '#2e8a3e';
+          ctx.beginPath();
+          ctx.arc(x, y, rr, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * done) / st.order.size);
+          ctx.stroke();
+          label(ctx, `${st.demand}`, x + rr * 0.8, y - rr * 0.8, '#1f5f29');
+        } else {
+          ctx.fillStyle = 'rgba(244,241,234,0.6)';
+          ctx.beginPath();
+          ctx.arc(x, y, r * 1.15, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
       // Closing: a slow, soft pulse rather than a hard blink (it's news, not an alarm).
       if (closing) ring(ctx, x, y, r * 1.6, `rgba(209, 52, 47, ${0.25 + 0.5 * (0.5 + 0.5 * Math.sin(now * 2.2))})`, 2.5);
       if (picked || hovered) ring(ctx, x, y, r * 1.6, picked ? INK : '#8a8273');
@@ -1026,6 +1049,8 @@ export class Renderer {
   palletPrice = 2.4;
   /** Whether businesses have levels to show (off when they're all fixed at one). */
   levelled = true;
+  /** Whether shops take orders (draw each order's progress, and fade quiet shops). */
+  orders = false;
 
   /** How long loading/unloading and factory processing take (seconds), for the progress pies. */
   serviceSec = 3;

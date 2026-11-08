@@ -93,6 +93,7 @@ renderer.serviceSec = session.cfg.trucks.serviceSec;
 renderer.processSec = session.cfg.trucks.signOffSec;
 renderer.palletPrice = session.cfg.money.palletPrice;
 renderer.levelled = session.cfg.cycles.maxLevel > session.cfg.cycles.startLevel;
+renderer.orders = session.cfg.orders.enabled;
 let last = performance.now();
 let lastUi = 0;
 
@@ -412,11 +413,15 @@ function tooltip(obs: Observation) {
       // At a glance: level (when businesses have levels), this cycle's progress, and when the next cycle comes.
       const prod = s.kind === 'producer';
       html = `<b>${cap(prod ? n.source : n.shop)} ${at(l.id)}</b>`;
-      html += `<div class="tip-stats">${fixedLevels() ? '' : `<div><span>Level</span><b>${s.level}/${g.cfg.cycles.maxLevel}</b></div>`}<div><span>${prod ? 'Shipped / made' : 'Received / needed'}</span><b>${s.served}/${s.cycleAmount}</b></div><div><span>Next cycle</span><b>${fmtClock(Math.max(0, s.nextCycleAt - obs.t))}</b></div></div>`;
+      if (prod || !g.cfg.orders.enabled) html += `<div class="tip-stats">${fixedLevels() ? '' : `<div><span>Level</span><b>${s.level}/${g.cfg.cycles.maxLevel}</b></div>`}<div><span>${prod ? 'Shipped / made' : 'Received / needed'}</span><b>${s.served}/${s.cycleAmount}</b></div><div><span>Next cycle</span><b>${fmtClock(Math.max(0, s.nextCycleAt - obs.t))}</b></div></div>`;
       html += prod
         ? `<div class="muted">${s.stock} load${s.stock === 1 ? '' : 's'} of ${n.raw} waiting · a factory makes it into ${n.product}</div>`
         : `<div class="muted">Pays ${cents(s.price)} a pallet${s.price > g.cfg.money.palletPrice ? ' (premium)' : ''}</div>`;
-      if (recent !== null) html += `<div class="muted">${recent}% served lately</div>`;
+      if (!prod && g.cfg.orders.enabled)
+        html += s.order
+          ? `<div>Order: <b>${s.order.size - s.demand} of ${s.order.size}</b> ${n.product} delivered · bonus ${money(s.order.size * g.cfg.orders.bonusPerPallet)} when filled</div>`
+          : `<div class="muted">No order${s.quietUntil > obs.t ? ` for at least ${fmtClock(s.quietUntil - obs.t)}` : ' (yet)'}</div>`;
+      if (recent !== null && (prod || !g.cfg.orders.enabled)) html += `<div class="muted">${recent}% served lately</div>`;
       if (s.closingIn !== null) html += `<div class="bad">Closing in ${s.closingIn} cycle${s.closingIn === 1 ? '' : 's'} unless served</div>`;
       const servers = [...new Set(obs.routes.filter((r) => r.producer === l.id || r.consumer === l.id).map((r) => r.company))];
       if (servers.length) html += `<div class="muted">Served by ${servers.map(coName).join(', ')}</div>`;
@@ -1652,6 +1657,7 @@ function beginMatch(m: Match) {
   renderer.processSec = session.cfg.trucks.signOffSec;
   renderer.palletPrice = session.cfg.money.palletPrice;
   renderer.levelled = session.cfg.cycles.maxLevel > session.cfg.cycles.startLevel;
+renderer.orders = session.cfg.orders.enabled;
   renderer.resize(true);
   viewMoved = false;
   logList.innerHTML = '';

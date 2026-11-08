@@ -1001,14 +1001,23 @@ export class Game {
     const shops = this.locations.filter((l) => l.kind === 'consumer' && !l.closed && l.order && l.demand - (this.claimed.get(l.id) ?? 0) > 0);
     if (shops.length === 0) return;
     const producers = this.locations.filter((l) => l.kind === 'producer' && !l.closed);
-    // Trucks a producer can keep busy at once (it makes a few pallets a cycle), less those already on
-    // their way to load there.
-    const room = new Map(producers.map((p) => [p.id, this.placeCap(p.id)]));
+    // Each producer's pickups: its stock now, what it makes as time goes on, and the trucks already
+    // on their way to load there. A pickup is planned only if there'll be a pallet when it arrives.
+    const cyc = this.cfg.cycles;
+    const perSec = new Map(producers.map((p) => [p.id, cycleRate(p, cyc) / p.cycleSec]));
+    const capOf = (p: LocationState) => cycleRate(p, cyc) * cyc.carryCycles;
+    const pickups = new Map<number, number>(producers.map((p) => [p.id, 0]));
     for (const t of this.trucks.trucks) {
       if (t.cargo !== null) continue;
       const l = t.orders.find((o) => o.action === 'load');
-      if (l && room.has(l.location)) room.set(l.location, room.get(l.location)! - 1);
+      if (l && pickups.has(l.location)) pickups.set(l.location, pickups.get(l.location)! + 1);
     }
+    const prodById = new Map(producers.map((p) => [p.id, p]));
+    const hasPallet = (producer: number, at: number) => {
+      const p = prodById.get(producer)!;
+      const made = Math.min(capOf(p), p.stock + perSec.get(producer)! * Math.max(0, at - this.t));
+      return made - pickups.get(producer)! >= 1;
+    };
     // When and where each truck is next free: now and here, or at its shop when it delivers.
     const avail: { truck: Truck; at: number; node: number; depots: number[] }[] = [];
     for (const t of this.trucks.trucks) {
@@ -1029,7 +1038,7 @@ export class Game {
         let producer = -1;
         let depot = -1;
         for (const p of producers) {
-          if (p.good !== q.good || room.get(p.id)! < 1) continue;
+          if (p.good !== q.good) continue;
           for (const d of v.depots) {
             const len = this.tripLength(v.node, d, p.id, q.id);
             if (len < bestLen) {
@@ -1051,10 +1060,33 @@ export class Game {
     const open = new Map(shops.map((q) => [q.id, q.demand - (this.claimed.get(q.id) ?? 0)]));
     const taken = new Set<number>();
     for (const pr of pairs) {
-      if (taken.has(pr.a) || (open.get(pr.shop.id) ?? 0) < 1 || room.get(pr.producer)! < 1) continue;
+      if (taken.has(pr.a) || (open.get(pr.shop.id) ?? 0) < 1) continue;
+      const v = avail[pr.a];
+      // Its producer, or the next nearest that'll have a pallet when it gets there.
+      const toP = (p: number) => v.at + this.distFrom(v.node)[this.town.locations[p].node] / speed;
+      if (!hasPallet(pr.producer, toP(pr.producer))) {
+        let alt = -1;
+        let altDepot = -1;
+        let altLen = Infinity;
+        for (const p of producers) {
+          if (p.good !== pr.shop.good || !hasPallet(p.id, toP(p.id))) continue;
+          for (const d of v.depots) {
+            const len = this.tripLength(v.node, d, p.id, pr.shop.id);
+            if (len < altLen) {
+              altLen = len;
+              alt = p.id;
+              altDepot = d;
+            }
+          }
+        }
+        if (alt < 0 || !Number.isFinite(altLen)) continue;
+        pr.producer = alt;
+        pr.depot = altDepot;
+        pr.duration = altLen / speed + extra;
+      }
       taken.add(pr.a);
       open.set(pr.shop.id, open.get(pr.shop.id)! - 1);
-      room.set(pr.producer, room.get(pr.producer)! - 1);
+      pickups.set(pr.producer, pickups.get(pr.producer)! + 1);
       const truck = avail[pr.a].truck;
       this.plan.set(truck.id, { depot: pr.depot, producer: pr.producer, consumer: pr.shop.id, duration: pr.duration });
       this.planFreeAt.set(truck.id, avail[pr.a].at);
