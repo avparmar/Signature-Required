@@ -8,8 +8,9 @@
  * shop chosen by a weighted draw: favouring goods whose producers have the least open demand,
  * shops near unclaimed factory sites (a reason to build there), and never a shop that's still quiet.
  *
- * Trucks reserve a pallet of an order when they're sent out (the game's routing counts trucks
- * already headed for a shop), so nobody drives for a pallet the shop no longer wants.
+ * Trucks claim a pallet when they're sent, following a delivery plan made across every company's
+ * trucks (see Game.makePlan): each pallet goes to whichever truck would get it there soonest, so
+ * nobody drives for a pallet the shop no longer wants, and nobody is ever turned back.
  */
 import type { LocationState } from './economy.js';
 import type { Rng } from './rng.js';
@@ -28,8 +29,12 @@ export interface OrdersConfig {
   bonusPerPallet: number;
   /** How much likelier a shop near an unclaimed factory site (within its district) gets an order. */
   nearSiteWeight: number;
-  /** A truck takes a scheduled truck's place at a shop only if it would get there this many seconds sooner. */
-  bumpSec: number;
+  /** Replan if a truck is free this many seconds later than the plan expected (and with nothing planned). */
+  lateSec: number;
+  /** Replan at least this often anyway (seconds), to catch drift. */
+  replanSec: number;
+  /** Changes are batched: replan at most this often (seconds), unless a free truck has nothing planned. */
+  batchSec: number;
 }
 
 export const DEFAULT_ORDERS: OrdersConfig = {
@@ -39,7 +44,9 @@ export const DEFAULT_ORDERS: OrdersConfig = {
   openShare: 1,
   bonusPerPallet: 0.6,
   nearSiteWeight: 3,
-  bumpSec: 10,
+  lateSec: 8,
+  replanSec: 20,
+  batchSec: 5,
 };
 
 /** Pallets an order still wants (not yet delivered, or being unloaded). */

@@ -32,6 +32,9 @@ function variant(label: string, extra: GameConfigOverrides) {
     let bumped = 0;
     let idleSum = 0;
     let idleN = 0;
+    let lastPlans = 0;
+    const deliveredTo = new Map<number, Set<number>>();
+    const allShops = new Set<number>();
     let warnSum = 0;
     let warnN = 0;
     let warnMax = 0;
@@ -42,12 +45,18 @@ function variant(label: string, extra: GameConfigOverrides) {
     const r = runGame({ ...extra, seed: 1 + i }, [], (g: Game) => {
       const t = Math.floor(g.t);
       for (const e of g.peekEvents(0)) {
+        if (e.type === 'delivered') {
+          const tr = g.trucks.trucks[e.truck];
+          const k = e.company * 10000 + tr.depot;
+          (deliveredTo.get(k) ?? deliveredTo.set(k, new Set()).get(k)!).add(e.location);
+          allShops.add(e.location);
+        }
         if (e.type === 'orderDone') {
           done++;
           if (e.delivered.filter((n) => n > 0).length > 1) multi++;
         }
-        if (e.type === 'bumped') bumped++;
       }
+      lastPlans = g.plans;
       if (t === lastSample || t % 15 !== 0 || g.phase !== 'running') return;
       lastSample = t;
       const all = g.trucks.trucks;
@@ -74,8 +83,8 @@ function variant(label: string, extra: GameConfigOverrides) {
       for (const set of byDepot.values()) perFactory.push(set.size);
       served.push(new Set(routes.map((rt) => rt.consumer)).size);
     });
-    shopsPerFactory.push(avg(perFactory));
-    shopsServed.push(avg(served));
+    shopsPerFactory.push(avg([...deliveredTo.values()].map((x) => x.size)));
+    shopsServed.push(allShops.size);
     warnings.push(warnN ? warnSum / warnN : 0);
     maxWarnings.push(warnMax);
     deliveries.push(r.companies.reduce((s, c) => s + c.deliveries, 0));
@@ -85,6 +94,7 @@ function variant(label: string, extra: GameConfigOverrides) {
     closed.push(r.closed);
     cash.push(avg(r.cash));
     businesses.push(liveBiz);
+    bumped = lastPlans;
     ordersDone.push(done);
     shared.push(done ? multi / done : 0);
     bumps.push(bumped);
@@ -97,7 +107,7 @@ function variant(label: string, extra: GameConfigOverrides) {
 
 const dense = { producersPerGood: [6, 8] as [number, number], consumersPerGood: [11, 16] as [number, number] };
 console.log(`\nDensity experiment (${games} games per variant, bots, automatic routes)\n`);
-console.log('| Variant | Shops per factory | Shops served (all cos.) | Deliveries | Trucks (all cos.) | Factories | Dividends paid | Avg final cash | Businesses at end | Closure warnings up (avg, max) | Closed | Orders filled | Bumps | Trucks free |');
+console.log('| Variant | Shops per factory (whole game) | Shops delivered to (whole game) | Deliveries | Trucks (all cos.) | Factories | Dividends paid | Avg final cash | Businesses at end | Closure warnings up (avg, max) | Closed | Orders filled | Plans made | Trucks free |');
 console.log('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|');
 const which = process.argv[3] ?? 'economy';
 const none = { startingTrucks: 0 };
@@ -128,8 +138,8 @@ if (which === 'economy') {
 } else if (which === 'orders') {
   variant('#89 defaults (shops want 2 every cycle)', { orders: { enabled: false } });
   variant('Shop orders (4-12, quiet 1-3 min)', {});
-  variant('Shop orders, open demand 1.5x', { orders: { openShare: 1.5 } });
-  variant('Shop orders, bump only if 30 s sooner', { orders: { bumpSec: 30 } });
+  variant('Shop orders, bonus $0.25 a pallet', { orders: { bonusPerPallet: 0.25 } });
+  variant('Shop orders, replan every second', { orders: { replanSec: 1, batchSec: 0 } });
 } else if (which === 'dense2') {
   const dense2 = { producersPerGood: [8, 10] as [number, number], consumersPerGood: [14, 22] as [number, number] };
   variant('Fixed level 2 + cheap/big fleets + 2× density', { depots: { truckPrice: 6, capacity: 16 }, town: dense2, cycles: fixed(2) });

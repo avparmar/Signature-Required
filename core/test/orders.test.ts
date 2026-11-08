@@ -64,6 +64,31 @@ describe('shop orders', () => {
     expect(events.some((e) => e.type === 'dropped')).toBe(false);
   });
 
+  it('a truck that has been sent keeps its trip: none turns back', () => {
+    const g = setup(16);
+    const sentFor = new Map<number, number>();
+    for (let k = 0; k < 1500; k++) {
+      g.step();
+      // A truck that delivered this step may already be on its next trip.
+      const delivered = new Set(g.peekEvents(0).filter((e) => e.type === 'delivered').map((e) => (e as { truck: number }).truck));
+      for (const t of g.trucks.trucks) {
+        const u = t.orders.find((o) => o.action === 'unload');
+        if (u) {
+          if (sentFor.has(t.id) && !delivered.has(t.id)) expect(sentFor.get(t.id)).toBe(u.location);
+          sentFor.set(t.id, u.location);
+        } else sentFor.delete(t.id);
+      }
+      g.drainEvents(0);
+    }
+  });
+
+  it('plans only when something changes, not every second', () => {
+    const g = setup(12);
+    run(g, 300);
+    expect(g.plans).toBeGreaterThan(0);
+    expect(g.plans).toBeLessThan(300);
+  });
+
   it('is deterministic', () => {
     const a = setup(8);
     const b = setup(8);

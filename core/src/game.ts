@@ -124,8 +124,6 @@ export type GameEvent =
   | { type: 'orderPosted'; t: number; location: number; size: number }
   /** A shop's order was filled: each company's deliveries towards it, and its share of the bonus. */
   | { type: 'orderDone'; t: number; location: number; size: number; delivered: number[]; bonus: number[] }
-  /** A truck gave up its place on a shop's schedule to one that would get there sooner. */
-  | { type: 'bumped'; t: number; truck: number; company: number; location: number }
   | { type: 'start'; t: number }
   | { type: 'boughtTruck'; t: number; company: number; truck: number; depot: number; price: number }
   | { type: 'boughtDepot'; t: number; company: number; site: number; price: number }
@@ -370,6 +368,7 @@ export class Game {
           if (c.focus.length >= this.cfg.maxFocus) return reject(`a company can focus on ${this.cfg.maxFocus} places at once: unfocus one first`);
           c.focus = [...c.focus, action.location];
         }
+        this.replan = true;
         break;
       }
       case 'assignRoute':
@@ -598,6 +597,8 @@ export class Game {
   private emit(to: Audience, e: GameEvent) {
     if (to === 'all') for (const q of this.events) q.push(e);
     else this.events[to].push(e);
+    // (A filled order needs no new plan: nothing was planned beyond its last pallet.)
+    if (e.type === 'orderPosted' || e.type === 'areaChanged' || e.type === 'boughtTruck' || e.type === 'boughtDepot') this.replan = true;
   }
 
   /** Events for a player not yet drained (read only: for measuring in experiments). */
@@ -885,6 +886,7 @@ export class Game {
     for (const c of this.companies) {
       const depots = [...this.depotOwner].filter(([, o]) => o === c.id).map(([s]) => s).sort((a, b) => a - b);
       const mine = this.trucks.trucks.filter((t) => t.company === c.id);
+      if (this.cfg.orders.enabled) continue; // the plan handles orders (a sent truck finishes its trip)
       // Out of the area: finish up and come free.
       for (const t of mine) {
         if (!t.route || t.homing) continue;
@@ -902,120 +904,165 @@ export class Game {
       if (depots.length === 0) continue;
       for (const t of mine) if (t.orders.length === 0 && t.cargo === null && !t.route) free.push({ truck: t, depots });
     }
-    this.assignTrucks(free, load, live);
+    if (this.cfg.orders.enabled) this.dispatchPlanned();
+    else this.assignTrucks(free, load, live);
   }
 
   /**
-   * Give free trucks (every company's) a trip each. Each truck wants the best trip it can get (better
-   * pay, shorter, focused first); where trucks want the same scarce pallets, the one that would get
-   * there soonest goes first. With shop orders, a shop only takes as many trucks as it still has
-   * pallets unclaimed (a truck claims one when it's sent).
+   * Routes (shops that always want more): give free trucks a route each. Each truck takes the best
+   * route it can (better pay, shorter, focused first), and a place stops taking trucks once it has
+   * as many as it can keep busy.
    */
   private assignTrucks(free: { truck: Truck; depots: number[] }[], load: Map<number, number>, live: LocationState[]) {
-    const orders = this.cfg.orders.enabled;
-    // Each shop's schedule: the trucks sent for its pallets, with when each should get there. A
-    // truck that hasn't loaded yet can lose its place to one that would arrive clearly sooner.
-    const reserved = new Map<number, number>();
-    const schedule = new Map<number, { truck: Truck; eta: number }[]>();
-    if (orders)
-      for (const t of this.trucks.trucks) {
-        const u = t.orders.find((o) => o.action === 'unload');
-        if (!u) continue;
-        if (t.state === 'servicing' && t.serving?.action === 'unload' && t.at === u.location) continue; // already counted off
-        reserved.set(u.location, (reserved.get(u.location) ?? 0) + 1);
-        const list = schedule.get(u.location) ?? [];
-        list.push({ truck: t, eta: this.eta.get(t.id) ?? this.t });
-        schedule.set(u.location, list);
-      }
-    const speed = this.cfg.trucks.speed;
-    const margin = this.cfg.orders.bumpSec;
-    // The latest truck on a shop's schedule that someone arriving at `eta` could take the place of.
-    const bumpable = (shop: number, eta: number) => {
-      let worst: { truck: Truck; eta: number } | null = null;
-      for (const r of schedule.get(shop) ?? []) {
-        const loaded = r.truck.cargo !== null || (r.truck.state === 'servicing' && r.truck.serving?.action === 'load');
-        if (loaded || r.eta < eta + margin) continue;
-        if (!worst || r.eta > worst.eta) worst = r;
-      }
-      return worst;
-    };
-    const best = (truck: Truck, depots: number[]) => {
+    for (const { truck, depots } of free) {
       const c = this.companies[truck.company];
-      // Where it would start from: its next intersection (a free truck may be on its way home).
-      const at = truck.state === 'driving' && truck.path.length ? truck.path[0] : truck.node;
-      let pick: { depot: number; producer: number; consumer: number; score: number; arrive: number } | null = null;
+      let best: { depot: number; producer: number; consumer: number; score: number } | null = null;
       for (const q of live) {
         if (q.kind !== 'consumer' || !this.serves(c.id, q.id)) continue;
-        const full = orders && this.openSlots(q.id, reserved) < 1;
         for (const p of live) {
           if (p.kind !== 'producer' || p.good !== q.good) continue;
-          const busy = orders
-            ? (load.get(p.id) ?? 0) / this.placeCap(p.id)
-            : Math.max((load.get(p.id) ?? 0) / this.placeCap(p.id), (load.get(q.id) ?? 0) / this.placeCap(q.id));
+          const busy = Math.max((load.get(p.id) ?? 0) / this.placeCap(p.id), (load.get(q.id) ?? 0) / this.placeCap(q.id));
           if (busy >= 1) continue;
           let depot = depots[0];
           let length = Infinity;
-          let arrive = Infinity;
           for (const d of depots) {
-            // One trip from where the truck is (orders), or a round trip from the factory (routes).
-            const len = orders ? this.tripLength(at, d, p.id, q.id) : this.routeLength(d, p.id, q.id);
+            const len = this.routeLength(d, p.id, q.id);
             if (len < length) {
               length = len;
               depot = d;
-              arrive = orders ? len : this.routeLength(d, p.id, q.id);
             }
           }
           if (!Number.isFinite(length)) continue;
-          // A full schedule: only if it would get there clearly before someone already on it.
-          if (full && !bumpable(q.id, this.t + arrive / speed)) continue;
           const focused = c.focus.includes(p.id) || c.focus.includes(q.id);
           const score = ((q.price ?? this.cfg.money.palletPrice) / (length + 4)) * (1 - busy) * (focused ? 10 : 1);
-          if (!pick || score > pick.score) pick = { depot, producer: p.id, consumer: q.id, score, arrive };
+          if (!best || score > best.score) best = { depot, producer: p.id, consumer: q.id, score };
         }
       }
-      return pick;
-    };
-    // Repeatedly: every waiting truck's best trip; send the one that would arrive soonest; recount.
-    let waiting = free;
-    while (waiting.length) {
-      let first: { i: number; pick: NonNullable<ReturnType<typeof best>> } | null = null;
-      const keep: typeof waiting = [];
-      for (const w of waiting) {
-        const pick = best(w.truck, w.depots);
-        if (!pick) continue; // nothing for it this second
-        keep.push(w);
-        if (!first || pick.arrive < first.pick.arrive || (pick.arrive === first.pick.arrive && w.truck.id < waiting[first.i].truck.id))
-          first = { i: waiting.indexOf(w), pick };
-      }
-      if (!first) break;
-      const { truck } = waiting[first.i];
-      const { depot, producer, consumer } = first.pick;
-      const eta = this.t + first.pick.arrive / speed;
-      if (orders && this.openSlots(consumer, reserved) < 1) {
-        // Taking a later truck's place: it gives up its pallet and looks for another trip.
-        const out = bumpable(consumer, eta)!;
-        const list = schedule.get(consumer)!;
-        list.splice(list.indexOf(out), 1);
-        reserved.set(consumer, reserved.get(consumer)! - 1);
-        const pOut = out.truck.orders.find((o) => o.action === 'load');
-        if (pOut) load.set(pOut.location, (load.get(pOut.location) ?? 1) - 1);
-        this.trucks.sendHome(out.truck, this.t);
-        this.eta.delete(out.truck.id);
-        this.emit('all', { type: 'bumped', t: this.t, truck: out.truck.id, company: out.truck.company, location: consumer });
-      }
-      this.sendOnRoute(truck, depot, producer, consumer);
-      if (orders) {
-        this.eta.set(truck.id, eta);
-        const list = schedule.get(consumer) ?? [];
-        list.push({ truck, eta });
-        schedule.set(consumer, list);
-      }
-      load.set(producer, (load.get(producer) ?? 0) + 1);
-      load.set(consumer, (load.get(consumer) ?? 0) + 1);
-      if (orders) reserved.set(consumer, (reserved.get(consumer) ?? 0) + 1);
-      waiting = keep.filter((w) => w.truck !== truck);
-      // (A bumped truck is free again from the next second.)
+      if (!best) continue;
+      this.sendOnRoute(truck, best.depot, best.producer, best.consumer);
+      load.set(best.producer, (load.get(best.producer) ?? 0) + 1);
+      load.set(best.consumer, (load.get(best.consumer) ?? 0) + 1);
     }
+  }
+
+  // ---------------------------------------------------------------- the delivery plan (shop orders)
+
+  /**
+   * The plan: for every pallet still unclaimed in an open order, the truck that would get it there
+   * soonest, counting trucks still on a trip from when and where they'll be free. Trucks that are
+   * free now are sent on their planned trip; the rest wait for theirs. Only a truck that's been sent
+   * has a pallet: plans for later can change at no cost, so nobody ever turns back.
+   *
+   * Replanned only when something it depends on changes: an order posted or filled, an area or
+   * focus changed, a truck or factory bought, or a truck freeing up noticeably earlier or later than
+   * planned (or with nothing planned for it). Otherwise a free truck just takes its planned trip.
+   */
+  private dispatchPlanned() {
+    const free = this.trucks.trucks.filter((t) => t.orders.length === 0 && t.cargo === null && !t.route && this.depotsOf(t.company).length > 0);
+    // A truck free with no plan for it (bought, sent home, or ahead of schedule): plan again.
+    if (!this.replan && free.some((t) => !this.plan.has(t.id) && this.planFreeAt.get(t.id) !== undefined && this.t > this.planFreeAt.get(t.id)! + this.cfg.orders.lateSec)) this.replan = true;
+    // Changes are batched: plan at most every few seconds, unless a free truck has nothing to do.
+    const idleFree = free.some((t) => !this.plan.has(t.id) && !this.idleAtPlan.has(t.id));
+    if ((this.replan && (idleFree || this.t >= this.lastPlanAt + this.cfg.orders.batchSec)) || this.t >= this.nextReplanAt) this.makePlan();
+    for (const t of free) {
+      const trip = this.plan.get(t.id);
+      if (!trip) continue;
+      const s = this.locById.get(trip.consumer);
+      if (!s || !s.order || s.demand - (this.claimed.get(trip.consumer) ?? 0) < 1) {
+        // Its pallet's gone (filled, or claimed): plan again next second.
+        this.plan.delete(t.id);
+        this.replan = true;
+        continue;
+      }
+      this.sendOnRoute(t, trip.depot, trip.producer, trip.consumer);
+      this.plan.delete(t.id);
+      this.eta.set(t.id, this.t + trip.duration);
+      this.claimed.set(trip.consumer, (this.claimed.get(trip.consumer) ?? 0) + 1);
+    }
+  }
+
+  private makePlan() {
+    this.replan = false;
+    this.lastPlanAt = this.t;
+    this.nextReplanAt = this.t + this.cfg.orders.replanSec;
+    this.plans++;
+    this.plan.clear();
+    this.planFreeAt.clear();
+    const speed = this.cfg.trucks.speed;
+    const extra = 2 * this.cfg.trucks.serviceSec + (this.cfg.trucks.viaDepot === 'none' ? 0 : this.cfg.trucks.signOffSec);
+    // Pallets each shop has claimed (trucks sent and not yet unloading there).
+    this.claimed.clear();
+    for (const t of this.trucks.trucks) {
+      const u = t.orders.find((o) => o.action === 'unload');
+      if (!u) continue;
+      if (t.state === 'servicing' && t.serving?.action === 'unload' && t.at === u.location) continue;
+      this.claimed.set(u.location, (this.claimed.get(u.location) ?? 0) + 1);
+    }
+    const shops = this.locations.filter((l) => l.kind === 'consumer' && !l.closed && l.order && l.demand - (this.claimed.get(l.id) ?? 0) > 0);
+    if (shops.length === 0) return;
+    const producers = this.locations.filter((l) => l.kind === 'producer' && !l.closed);
+    // Trucks a producer can keep busy at once (it makes a few pallets a cycle), less those already on
+    // their way to load there.
+    const room = new Map(producers.map((p) => [p.id, this.placeCap(p.id)]));
+    for (const t of this.trucks.trucks) {
+      if (t.cargo !== null) continue;
+      const l = t.orders.find((o) => o.action === 'load');
+      if (l && room.has(l.location)) room.set(l.location, room.get(l.location)! - 1);
+    }
+    // When and where each truck is next free: now and here, or at its shop when it delivers.
+    const avail: { truck: Truck; at: number; node: number; depots: number[] }[] = [];
+    for (const t of this.trucks.trucks) {
+      const depots = this.depotsOf(t.company);
+      if (depots.length === 0) continue;
+      const u = t.orders.find((o) => o.action === 'unload');
+      if (u) avail.push({ truck: t, at: Math.max(this.t, this.eta.get(t.id) ?? this.t), node: this.town.locations[u.location].node, depots });
+      else if (t.cargo === null) avail.push({ truck: t, at: this.t, node: t.state === 'driving' && t.path.length ? t.path[0] : t.node, depots });
+    }
+    // Every truck against every shop it serves: its best producer and factory, and when it'd arrive.
+    // Better-paying and focused shops count as sooner (a pallet's worth is in the comparison).
+    const pairs: { a: number; shop: LocationState; producer: number; depot: number; duration: number; arrive: number; key: number }[] = [];
+    avail.forEach((v, a) => {
+      const c = this.companies[v.truck.company];
+      for (const q of shops) {
+        if (!this.serves(c.id, q.id)) continue;
+        let bestLen = Infinity;
+        let producer = -1;
+        let depot = -1;
+        for (const p of producers) {
+          if (p.good !== q.good || room.get(p.id)! < 1) continue;
+          for (const d of v.depots) {
+            const len = this.tripLength(v.node, d, p.id, q.id);
+            if (len < bestLen) {
+              bestLen = len;
+              producer = p.id;
+              depot = d;
+            }
+          }
+        }
+        if (!Number.isFinite(bestLen)) continue;
+        const duration = bestLen / speed + extra;
+        const arrive = v.at + duration;
+        const focused = c.focus.includes(q.id) || c.focus.includes(producer);
+        const worth = (q.price ?? this.cfg.money.palletPrice) / this.cfg.money.palletPrice;
+        pairs.push({ a, shop: q, producer, depot, duration, arrive, key: (arrive - this.t + 4) / worth / (focused ? 3 : 1) });
+      }
+    });
+    pairs.sort((x, y) => x.key - y.key || x.a - y.a || x.shop.id - y.shop.id);
+    const open = new Map(shops.map((q) => [q.id, q.demand - (this.claimed.get(q.id) ?? 0)]));
+    const taken = new Set<number>();
+    for (const pr of pairs) {
+      if (taken.has(pr.a) || (open.get(pr.shop.id) ?? 0) < 1 || room.get(pr.producer)! < 1) continue;
+      taken.add(pr.a);
+      open.set(pr.shop.id, open.get(pr.shop.id)! - 1);
+      room.set(pr.producer, room.get(pr.producer)! - 1);
+      const truck = avail[pr.a].truck;
+      this.plan.set(truck.id, { depot: pr.depot, producer: pr.producer, consumer: pr.shop.id, duration: pr.duration });
+      this.planFreeAt.set(truck.id, avail[pr.a].at);
+    }
+    // Trucks with nothing planned: when they're due free, so one coming free unplanned triggers a replan.
+    for (const v of avail) if (!this.planFreeAt.has(v.truck.id)) this.planFreeAt.set(v.truck.id, v.at);
+    // Free now with nothing to do: no point planning again just for them until something changes.
+    this.idleAtPlan = new Set(avail.filter((v) => v.at <= this.t && !this.plan.has(v.truck.id)).map((v) => v.truck.id));
   }
 
   /** Drive distance from a node to a producer, through a factory, to a shop (one trip). */
@@ -1156,8 +1203,21 @@ export class Game {
     return counts;
   }
   private districtCache: { t: number; counts: Map<number, number[]> } = { t: -1, counts: new Map() };
-  /** Shop orders: when each dispatched truck is expected at its shop (for the shops' schedules). */
+  /** Shop orders: when each truck that's been sent is expected to have delivered. */
   private eta = new Map<number, number>();
+  /** The delivery plan: each planned truck's next trip, and how long it takes. */
+  private plan = new Map<number, { depot: number; producer: number; consumer: number; duration: number }>();
+  /** When each truck was expected to be free, as of the last plan. */
+  private planFreeAt = new Map<number, number>();
+  /** Pallets each shop has claimed by trucks already sent. */
+  private claimed = new Map<number, number>();
+  /** Something the plan depends on changed. */
+  private replan = true;
+  private nextReplanAt = 0;
+  private lastPlanAt = -Infinity;
+  private idleAtPlan = new Set<number>();
+  /** How many times the plan's been made (for measuring). */
+  plans = 0;
 
   /** Drive distances from a depot site (cached). */
   private siteDist(site: number): Float64Array {
