@@ -1119,8 +1119,9 @@ export class Game {
     this.planFreeAt.clear();
     const speed = this.cfg.trucks.speed;
     const extra = 2 * this.cfg.trucks.serviceSec + (this.cfg.trucks.viaDepot === 'none' ? 0 : this.cfg.trucks.signOffSec);
-    // Pallets each shop has claimed, good by good (trucks sent and not yet unloading there).
+    // Pallets each shop has claimed, good by good (trucks sent and not yet unloading there), and by whom.
     this.claimed.clear();
+    const claimedBy = new Map<number, Map<number, number>>();
     for (const t of this.trucks.trucks) {
       const u = t.orders.find((o) => o.action === 'unload');
       if (!u) continue;
@@ -1130,6 +1131,9 @@ export class Game {
       if (good === null || good === undefined) continue;
       const key = claimKey(u.location, good);
       this.claimed.set(key, (this.claimed.get(key) ?? 0) + 1);
+      const by = claimedBy.get(key) ?? new Map<number, number>();
+      by.set(t.company, (by.get(t.company) ?? 0) + 1);
+      claimedBy.set(key, by);
     }
     const unclaimed = (q: LocationState, g: number) => (q.order ? (q.order.wants[g] ?? 0) - (this.claimed.get(claimKey(q.id, g)) ?? 0) : 0);
     const goods = this.cfg.town.goods.length;
@@ -1198,9 +1202,38 @@ export class Game {
     const open = new Map<number, number>();
     for (const q of shops) for (let g = 0; g < goods; g++) open.set(claimKey(q.id, g), unclaimed(q, g));
     const taken = new Set<number>();
-    for (const pr of pairs) {
+    // Territory (orders.contest 'territory'): a shop's pallets are shared out between the companies
+    // that could serve them in proportion to how close each one's nearest factory is, not by how many
+    // trucks each has about. Each company gets its share first; whatever's left goes to anyone.
+    const territory = this.cfg.orders.contest === 'territory';
+    const quota = new Map<number, Map<number, number>>();
+    if (territory) {
+      const who = new Map<number, Set<number>>();
+      for (const pr of pairs) {
+        const key = claimKey(pr.shop.id, pr.good);
+        (who.get(key) ?? who.set(key, new Set()).get(key)!).add(avail[pr.a].truck.company);
+      }
+      for (const [key, companies] of who) {
+        const shop = Math.floor(key / 16);
+        const node = this.town.locations[shop].node;
+        const weight = new Map<number, number>();
+        for (const c of companies) {
+          const d = Math.min(...this.depotsOf(c).map((s) => this.distFrom(this.town.locations[s].node)[node]));
+          weight.set(c, 1 / Math.pow(2 + d, this.cfg.orders.territoryPower));
+        }
+        const by = claimedBy.get(key) ?? new Map<number, number>();
+        const total = (open.get(key) ?? 0) + [...by.values()].reduce((x, y) => x + y, 0);
+        const sum = [...weight.values()].reduce((x, y) => x + y, 0);
+        const q = new Map<number, number>();
+        for (const [c, w] of weight) q.set(c, Math.max(0, Math.ceil((total * w) / sum) - (by.get(c) ?? 0)));
+        quota.set(key, q);
+      }
+    }
+    const assign = (pr: (typeof pairs)[number], keepToShares: boolean) => {
       const key = claimKey(pr.shop.id, pr.good);
-      if (taken.has(pr.a) || (open.get(key) ?? 0) < 1) continue;
+      if (taken.has(pr.a) || (open.get(key) ?? 0) < 1) return;
+      const company = avail[pr.a].truck.company;
+      if (keepToShares && (quota.get(key)?.get(company) ?? 0) < 1) return;
       const v = avail[pr.a];
       // Its producer, or the next nearest that'll have a pallet when it gets there.
       const toP = (p: number) => v.at + this.distFrom(v.node)[this.town.locations[p].node] / speed;
@@ -1219,18 +1252,21 @@ export class Game {
             }
           }
         }
-        if (alt < 0 || !Number.isFinite(altLen)) continue;
+        if (alt < 0 || !Number.isFinite(altLen)) return;
         pr.producer = alt;
         pr.depot = altDepot;
         pr.duration = altLen / speed + extra;
       }
       taken.add(pr.a);
+      if (keepToShares) quota.get(key)!.set(company, quota.get(key)!.get(company)! - 1);
       open.set(key, open.get(key)! - 1);
       pickups.set(pr.producer, pickups.get(pr.producer)! + 1);
       const truck = avail[pr.a].truck;
       this.plan.set(truck.id, { depot: pr.depot, producer: pr.producer, consumer: pr.shop.id, good: pr.good, duration: pr.duration });
       this.planFreeAt.set(truck.id, avail[pr.a].at);
-    }
+    };
+    if (territory) for (const pr of pairs) assign(pr, true);
+    for (const pr of pairs) assign(pr, false);
     // Trucks with nothing planned: when they're due free, so one coming free unplanned triggers a replan.
     for (const v of avail) if (!this.planFreeAt.has(v.truck.id)) this.planFreeAt.set(v.truck.id, v.at);
     // Free now with nothing to do: no point planning again just for them until something changes.

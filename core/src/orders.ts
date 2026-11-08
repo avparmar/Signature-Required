@@ -104,6 +104,13 @@ export interface OrdersConfig {
   bonusPerPallet: number;
   /** How much likelier a shop near an unclaimed factory site (within its district) gets an order. */
   nearSiteWeight: number;
+  /**
+   * Who gets a pallet several companies could deliver: 'soonest' (whichever truck would get it there
+   * first), or 'territory' (shared out by how close each company's nearest factory is: see Game.makePlan).
+   */
+  contest: 'soonest' | 'territory';
+  /** Territory: how sharply closeness counts (a company's weight is 1 / (2 + distance)^power). */
+  territoryPower: number;
   /** Replan if a truck is free this many seconds later than the plan expected (and with nothing planned). */
   lateSec: number;
   /** Replan at least this often anyway (seconds), to catch drift. */
@@ -152,6 +159,8 @@ export const DEFAULT_ORDERS: OrdersConfig = {
   supplyShare: 1.1,
   bonusPerPallet: 0.6,
   nearSiteWeight: 3,
+  contest: 'soonest',
+  territoryPower: 2,
   lateSec: 8,
   replanSec: 20,
   batchSec: 5,

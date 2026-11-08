@@ -537,7 +537,7 @@ export class Bot {
     const idle = obs.trucks.filter((t) => t.company === company && t.orders.length === 0 && t.cargo === null).length;
     const upkeep = this.cfg.depots.upkeepPerMin * this.minutesLeft(obs);
     const policy = Bot.truckPolicy?.(company) ?? 'default';
-    // Saver: until it has a factory in the middle or centre of town, it keeps a small fleet and saves
+    // Saver: until it has a factory in the middle or centre of town, it fills its first factory and saves
     // its treasury for one (the cheapest free), buying it as soon as it can afford it with a truck.
     const band = (site: number) => townBand(this.town, this.cfg.orders.bandEdges, site);
     let saving = false;
@@ -551,7 +551,7 @@ export class Bot {
           out.push({ type: 'buyDepot', company, site: inward.site });
           return out;
         }
-        saving = fleet >= 4;
+        saving = fleet >= cfg.capacity; // fills its first factory while it saves
       }
     }
     // Lean (with orders): only when there's work nobody is on yet: pallets wanted across town that no
