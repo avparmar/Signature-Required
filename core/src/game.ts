@@ -8,7 +8,7 @@ import { minimumBid, shareFloor, type AuctionEvent, type Book, type CancelReason
 import { depotPrice, subsidisedPrice, truckPriceFor } from './depots.js';
 import { assignPrices, investCost, payPerShare } from './money.js';
 import { chooseOpening } from './openings.js';
-import { creditLot, creditOrder, pickLotProducer, pickOrderShop, postLot, postOrder } from './orders.js';
+import { creditLot, creditOrder, pickLotProducer, pickOrderShop, postLot, postOrder, townBand } from './orders.js';
 import { cycleRate, initLocations, newLocationState, raiseLevel, updateCycles, type CycleEvent, type LocationState } from './economy.js';
 import { distancesFrom } from './graph.js';
 import { Rng } from './rng.js';
@@ -927,17 +927,10 @@ export class Game {
    */
   bandOf(location: number): number {
     let b = this.bands.get(location);
-    if (b !== undefined) return b;
-    const { blocksX, blocksY } = this.cfg.town;
-    const cx = blocksX / 2;
-    const cy = blocksY / 2;
-    if (this.bandReach === 0)
-      for (const l of this.town.locations) if (l.kind === 'consumer' || l.kind === 'producer') this.bandReach = Math.max(this.bandReach, Math.hypot(l.x - cx, l.y - cy));
-    const l = this.town.locations[location];
-    const f = Math.hypot(l.x - cx, l.y - cy) / Math.max(1e-9, this.bandReach);
-    const [a, z] = this.cfg.orders.bandEdges;
-    b = f <= a ? 0 : f <= z ? 1 : 2;
-    this.bands.set(location, b);
+    if (b === undefined) {
+      b = townBand(this.town, this.cfg.orders.bandEdges, location);
+      this.bands.set(location, b);
+    }
     return b;
   }
   private bands = new Map<number, number>();
@@ -969,7 +962,6 @@ export class Game {
   private growCurve: { end: number; at: number[] } | null = null;
   /** Bands: open demand each band keeps up now (it moves inward as the town is served). */
   bandBudget: number[] = [];
-  private bandReach = 0;
 
   /** A pallet picked up from a producer's lot: count it; the last one ends the lot. */
   private creditPickup(location: number, company: number) {
@@ -1419,6 +1411,8 @@ export class Game {
 
   /** What a depot site would cost this company now. */
   depotPriceFor(company: number, site: number): number {
+    // By band: a fixed price for everyone, dearer towards the centre.
+    if (this.cfg.depots.pricing === 'band') return this.cfg.depots.bandSitePrice[this.bandOf(site)];
     if (this.cfg.depots.pricing === 'subsidy') return subsidisedPrice(this.cfg.depots, this.districtShare(company, site));
     // Distance pricing, using the site's cached distances (roads are undirected).
     const d = this.siteDistances.get(site) ?? distancesFrom(this.town.graph, this.town.locations[site].node);

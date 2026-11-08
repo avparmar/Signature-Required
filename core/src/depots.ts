@@ -23,7 +23,9 @@ export interface DepotConfig {
   /** Price of a truck. */
   truckPrice: number;
   /** How depot sites are priced: local subsidy (default) or distance from your depots (older rule). */
-  pricing: 'subsidy' | 'distance';
+  pricing: 'subsidy' | 'distance' | 'band';
+  /** Band pricing: what a site costs in the centre, middle and outer bands of town (the same for every company). */
+  bandSitePrice: [number, number, number];
   /** Full price of a depot site (subsidy pricing), or the price close to your network (distance pricing). */
   depotBase: number;
   /** Subsidy pricing: the full discount, for a company that reaches the service target in a site's district. */
@@ -55,7 +57,8 @@ export const DEFAULT_DEPOTS: DepotConfig = {
   truckPrice: 12,
   upkeepPerMin: 0.7,
   upkeepFrom: 'pot',
-  pricing: 'subsidy',
+  pricing: 'band',
+  bandSitePrice: [220, 130, 70],
   depotBase: 150,
   maxSubsidy: 0.6,
   districtBlocks: 5,

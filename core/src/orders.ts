@@ -23,6 +23,26 @@
  */
 import type { LocationState } from './economy.js';
 import type { Rng } from './rng.js';
+import type { Town } from './town.js';
+
+const reachCache = new WeakMap<Town, number>();
+/**
+ * Which band of town a place is in: 0 centre, 1 middle, 2 outer, by its distance from the middle of
+ * town against the furthest producer's or shop's. `edges`: where the centre and middle bands end.
+ */
+export function townBand(town: Town, edges: [number, number], location: number): number {
+  const cx = town.cfg.blocksX / 2;
+  const cy = town.cfg.blocksY / 2;
+  let reach = reachCache.get(town);
+  if (reach === undefined) {
+    reach = 0;
+    for (const l of town.locations) if (l.kind === 'consumer' || l.kind === 'producer') reach = Math.max(reach, Math.hypot(l.x - cx, l.y - cy));
+    reachCache.set(town, reach);
+  }
+  const l = town.locations[location];
+  const f = Math.hypot(l.x - cx, l.y - cy) / Math.max(1e-9, reach);
+  return f <= edges[0] ? 0 : f <= edges[1] ? 1 : 2;
+}
 
 export interface OrdersConfig {
   /** Shops take orders and producers offer lots (true), or both run on cycles (false). */
@@ -111,7 +131,7 @@ export const DEFAULT_ORDERS: OrdersConfig = {
   quietSec: [60, 180],
   lotQuietSec: [15, 45],
   demand: 'bands',
-  bandEdges: [0.35, 0.68],
+  bandEdges: [0.25, 0.45],
   bandDemand: [12, 22, 30],
   migratePerPallet: 0.06,
   bandFloor: [1, 0.6, 0.35],

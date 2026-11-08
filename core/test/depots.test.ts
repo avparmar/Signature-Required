@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { depotPrice, distancesFrom, DEFAULT_DEPOTS, newGame, subsidisedPrice, type DepotConfig, type Game } from '../src/index.js';
 
 function setup(depots: Partial<DepotConfig> = {}) {
-  // Pins $30 trucks and 3-truck depots, which these checks were written against.
-  const g = newGame({ seed: 7, autoRoutes: false, startingTrucks: 0, auctions: { openingRound: false }, depots: { truckPrice: 30, capacity: 3, upkeepPerMin: 0, townPriceStep: 0, ...depots } });
+  // Pins $30 trucks, 3-truck depots and subsidy pricing, which these checks were written against.
+  const g = newGame({ seed: 7, autoRoutes: false, startingTrucks: 0, auctions: { openingRound: false }, depots: { truckPrice: 30, capacity: 3, upkeepPerMin: 0, townPriceStep: 0, pricing: 'subsidy', ...depots } });
   g.companies[0].shares = [0, null, null, null, null]; // player 0 is president of company 0
   const home = g.town.locations.find((l) => l.startCompany === 0)!;
   return { g, home };
@@ -28,6 +28,21 @@ describe('depot pricing by distance (older rule)', () => {
     const near = free.sort((a, b) => d[a.node] - d[b.node])[0];
     expect(g.depotPriceFor(0, near.id)).toBeLessThan(g.depotPriceFor(0, far.id));
     expect(g.depotPriceFor(0, far.id)).toBe(depotPrice(g.cfg.depots, d[far.node]));
+  });
+});
+
+describe('depot pricing by band', () => {
+  it('a site costs the same for every company, dearer the nearer the centre of town', () => {
+    const { g } = setup({ pricing: 'band' });
+    const sites = g.town.locations.filter((l) => l.kind === 'depot' && l.startCompany === null);
+    for (const site of sites) {
+      const price = g.cfg.depots.bandSitePrice[g.bandOf(site.id)];
+      for (let c = 0; c < g.cfg.companies; c++) expect(g.depotPriceFor(c, site.id)).toBe(price);
+    }
+    const [centre, middle, outer] = g.cfg.depots.bandSitePrice;
+    expect(centre).toBeGreaterThan(middle);
+    expect(middle).toBeGreaterThan(outer);
+    expect(new Set(sites.map((s) => g.bandOf(s.id))).size).toBeGreaterThan(1);
   });
 });
 
